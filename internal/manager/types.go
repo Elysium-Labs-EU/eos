@@ -1,0 +1,33 @@
+package manager
+
+import (
+	"deploy-cli/internal/types"
+	"os"
+)
+
+type ServiceManager interface {
+	// AddService(service *types.ServiceConfig) error
+	// GetServiceStatus(name string) (types.ServiceStatus, error)
+	GetServiceInstance(name string) (types.ServiceRuntime, bool, error)
+	// RemoveService(name string) error
+	// GetService(name string) (types.Service, error)
+	// GetServices() []types.Service
+	RemoveServiceInstance(name string) (bool, error)
+
+	ForceStopService(name string) (StopResult, error)
+	RestartService(name string) (int, error)
+	StartService(name string) (int, error)
+	StopService(name string) (StopResult, error)
+
+	AddServiceCatalogEntry(service *types.ServiceCatalogEntry) error
+	GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)
+	GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error)
+	IsServiceRegistered(name string) (bool, error)
+	RemoveServiceCatalogEntry(name string) (bool, error)
+	UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error
+
+	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
+
+	CreateServiceLogFiles(serviceName string) (*os.File, *os.File, error)
+	GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error)
+}

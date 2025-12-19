@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: govet
+      run: go vet
+
+    - name: tests
+      run: go test ./cmd ./internal/** -v
+      interactive: true
