@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"deploy-cli/cmd/helpers"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/types"
+	"eos/cmd/helpers"
+	"eos/internal/manager"
+	"eos/internal/types"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +30,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			if numberOfRegisteredServices == 0 {
 				cmd.Println("No services registered")
-				cmd.Println("Use 'deploy-cli add <path>' to register services")
+				cmd.Println("Use 'eos add <path>' to register services")
 				return
 			}
 

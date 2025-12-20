@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"bufio"
-	"deploy-cli/internal/manager"
+	"eos/internal/manager"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -27,8 +27,8 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			if !exists {
 				cmd.Println("The service isn't registered")
-				cmd.Println("- Use 'deploy-cli add <path>' to register services")
-				cmd.Println("- Use 'deploy-cli status' to view registered services")
+				cmd.Println("- Use 'eos add <path>' to register services")
+				cmd.Println("- Use 'eos status' to view registered services")
 				return
 			}
 

@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"deploy-cli/internal/config"
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/manager"
+	"eos/internal/config"
+	"eos/internal/database"
+	"eos/internal/manager"
 	"fmt"
 	"os"
 
@@ -12,7 +12,7 @@ import (
 
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "deploy-cli",
+		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
 		Long: `Deploy CLI is a modern deployment orchestration tool.
 			It manages services, handles deployments, and provides monitoring
@@ -20,7 +20,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Println("Deploy CLI - Test version")
-			cmd.Println("Use 'deploy-cli help' to see available commands")
+			cmd.Println("Use 'eos help' to see available commands")
 		},
 	}
 
@@ -46,7 +46,7 @@ func newRootCmd() *cobra.Command {
 	var cleanup func()
 
 	rootCmd := &cobra.Command{
-		Use:   "deploy-cli",
+		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
 		Long: `Deploy CLI is a modern deployment orchestration tool.
 	It manages services, handles deployments, and provides monitoring
@@ -54,7 +54,7 @@ func newRootCmd() *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Println("Deploy CLI v0.1.0")
-			cmd.Println("Use 'deploy-cli help' to see available commands")
+			cmd.Println("Use 'eos help' to see available commands")
 		},
 
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {

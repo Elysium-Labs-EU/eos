@@ -1,8 +1,8 @@
 package manager
 
 import (
-	"deploy-cli/internal/testutil"
-	"deploy-cli/internal/types"
+	"eos/internal/testutil"
+	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strings"

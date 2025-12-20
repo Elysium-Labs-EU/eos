@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/types"
+	"eos/internal/manager"
+	"eos/internal/types"
 	"errors"
 	"fmt"
 	"os"
@@ -94,7 +94,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 				cmd.Printf("Service '%s' is already registered.\n", config.Name)
-				cmd.Printf("Use 'deploy-cli remove %s' first to re-register.\n", config.Name)
+				cmd.Printf("Use 'eos remove %s' first to re-register.\n", config.Name)
 				return
 			} else if err != nil {
 				cmd.Printf("Error registering service: %v\n", err)
@@ -106,7 +106,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			cmd.Printf("Config: %s\n", filepath.Base(yamlFile))
 			cmd.Println()
 			// TODO: Add deploy in between if needed
-			cmd.Printf("Use 'deploy-cli start %s' to start the service\n", config.Name)
+			cmd.Printf("Use 'eos start %s' to start the service\n", config.Name)
 		},
 	}
 }

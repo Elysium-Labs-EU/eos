@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/manager"
+	"eos/internal/database"
+	"eos/internal/manager"
 	"errors"
 
 	"github.com/spf13/cobra"

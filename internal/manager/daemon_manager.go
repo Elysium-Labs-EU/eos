@@ -1,9 +1,9 @@
 package manager
 
 import (
-	"deploy-cli/internal/config"
-	"deploy-cli/internal/types"
 	"encoding/json"
+	"eos/internal/config"
+	"eos/internal/types"
 	"fmt"
 	"net"
 	"os"

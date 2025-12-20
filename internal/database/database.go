@@ -2,7 +2,7 @@ package database
 
 import (
 	"database/sql"
-	"deploy-cli/internal/types"
+	"eos/internal/types"
 	"errors"
 	"fmt"
 	"os"
@@ -43,10 +43,10 @@ func NewDB() (*DB, error) {
 		return nil, fmt.Errorf("could not get user home directory: %w", err)
 	}
 
-	deployDir := filepath.Join(homeDir, ".deploy-cli")
+	deployDir := filepath.Join(homeDir, ".eos")
 	err = os.MkdirAll(deployDir, 0755)
 	if err != nil {
-		return nil, fmt.Errorf("could not create deploy-cli directory: %w", err)
+		return nil, fmt.Errorf("could not create eos directory: %w", err)
 	}
 
 	dbPath := filepath.Join(deployDir, "state.db")

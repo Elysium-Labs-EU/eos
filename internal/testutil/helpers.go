@@ -1,7 +1,7 @@
 package testutil
 
 import (
-	"deploy-cli/internal/database"
+	"eos/internal/database"
 	"path/filepath"
 	"testing"
 )

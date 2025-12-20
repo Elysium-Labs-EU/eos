@@ -1,9 +1,9 @@
 package process
 
 import (
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/testutil"
-	"deploy-cli/internal/types"
+	"eos/internal/manager"
+	"eos/internal/testutil"
+	"eos/internal/types"
 	"strings"
 	"testing"
 )

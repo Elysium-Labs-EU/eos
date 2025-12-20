@@ -1,7 +1,7 @@
 package database
 
 import (
-	"deploy-cli/internal/util"
+	"eos/internal/util"
 	"path/filepath"
 	"testing"
 	"time"

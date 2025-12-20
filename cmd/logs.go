@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"deploy-cli/internal/manager"
+	"eos/internal/manager"
 	"fmt"
 	"os/exec"
 

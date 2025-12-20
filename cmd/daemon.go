@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"deploy-cli/internal/config"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/process"
+	"eos/internal/config"
+	"eos/internal/manager"
+	"eos/internal/process"
 	"fmt"
 	"os"
 	"os/exec"

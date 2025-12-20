@@ -1,10 +1,10 @@
 package monitor
 
 import (
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/types"
-	"deploy-cli/internal/util"
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/types"
+	"eos/internal/util"
 	"fmt"
 	"math"
 	"net"

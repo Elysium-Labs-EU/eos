@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"deploy-cli/cmd/helpers"
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/manager"
+	"eos/cmd/helpers"
+	"eos/internal/database"
+	"eos/internal/manager"
 	"errors"
 	"path/filepath"
 

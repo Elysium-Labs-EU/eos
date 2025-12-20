@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"bytes"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/testutil"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 	"strings"
 	"testing"
 )
@@ -81,7 +81,7 @@ func TestStatusCommmandWithServices(t *testing.T) {
 
 	if !strings.Contains(output, "Display the current status of all configured services") {
 		t.Errorf("Expected status help to describe the command, got: %s", output)
-	} else if !strings.Contains(output, "deploy-cli status") {
+	} else if !strings.Contains(output, "eos status") {
 		t.Errorf("Expected status help to show usage, got: %s", output)
 	}
 }

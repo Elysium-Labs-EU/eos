@@ -28,11 +28,11 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 
 test-files/*
-deploy-cli
+eos
 logs/*
 
 # misc

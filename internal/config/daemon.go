@@ -1,6 +1,6 @@
 package config
 
 const (
-	DaemonSocketPath = "/tmp/deploy-cli.sock"
-	DaemonPIDFile    = "/tmp/deploy-cli.pid"
+	DaemonSocketPath = "/tmp/eos.sock"
+	DaemonPIDFile    = "/tmp/eos.pid"
 )

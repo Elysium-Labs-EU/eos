@@ -1,7 +1,7 @@
 package util
 
 import (
-	"deploy-cli/internal/types"
+	"eos/internal/types"
 	"time"
 )
 

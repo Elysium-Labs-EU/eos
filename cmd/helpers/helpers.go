@@ -1,7 +1,7 @@
 package helpers
 
 import (
-	"deploy-cli/internal/types"
+	"eos/internal/types"
 
 	"github.com/dustin/go-humanize"
 )

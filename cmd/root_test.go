@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"bytes"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/testutil"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 	"strings"
 	"testing"
 )
@@ -31,7 +31,7 @@ func TestRootCommand(t *testing.T) {
 
 		if !strings.Contains(output, "Deploy CLI - Test version") {
 			t.Errorf("Expected output to contain 'Deploy CLI - Test version', got %s", output)
-		} else if !strings.Contains(output, "Use 'deploy-cli help'") {
+		} else if !strings.Contains(output, "Use 'eos help'") {
 			t.Errorf("Expected output to contain help text, got: %s", output)
 		}
 	}

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"deploy-cli/cmd"
+	"eos/cmd"
 )
 
 func main() {

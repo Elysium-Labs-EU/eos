@@ -1,13 +1,13 @@
 package process
 
 import (
-	"deploy-cli/internal/config"
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/manager"
-	"deploy-cli/internal/monitor"
-	"deploy-cli/internal/types"
-	"deploy-cli/internal/util"
 	"encoding/json"
+	"eos/internal/config"
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/monitor"
+	"eos/internal/types"
+	"eos/internal/util"
 	"errors"
 	"fmt"
 	"net"

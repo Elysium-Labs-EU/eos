@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"deploy-cli/internal/manager"
+	"eos/internal/manager"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -26,8 +26,8 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			} else if !exists {
 				cmd.Println("The service isn't registered")
-				cmd.Println("- Use 'deploy-cli add <path>' to register services")
-				cmd.Println("- Use 'deploy-cli status' to view registered services")
+				cmd.Println("- Use 'eos add <path>' to register services")
+				cmd.Println("- Use 'eos status' to view registered services")
 				return
 			} else {
 				yamlFile, err := determineYamlFile(newProjectPath)

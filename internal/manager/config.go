@@ -1,7 +1,7 @@
 package manager
 
 import (
-	"deploy-cli/internal/types"
+	"eos/internal/types"
 	"fmt"
 	"os"
 	"strings"

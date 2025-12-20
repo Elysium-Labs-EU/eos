@@ -1,9 +1,9 @@
 package manager
 
 import (
-	"deploy-cli/internal/database"
-	"deploy-cli/internal/types"
-	"deploy-cli/internal/util"
+	"eos/internal/database"
+	"eos/internal/types"
+	"eos/internal/util"
 	"errors"
 	"fmt"
 	"os"

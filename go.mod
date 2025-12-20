@@ -1,4 +1,4 @@
-module deploy-cli
+module eos
 
 go 1.25.5
 
