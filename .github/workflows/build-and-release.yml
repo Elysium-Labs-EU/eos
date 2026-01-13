@@ -1,0 +1,164 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g., v1.0.0)"
+        required: false
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact: eos-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            artifact: eos-linux-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -o ${{ matrix.artifact }} -ldflags="-s -w" .
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
+      - name: Verify binary
+        run: |
+          ls -lh ${{ matrix.artifact }}
+          file ${{ matrix.artifact }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Display downloaded files
+        run: |
+          echo "=== Artifact structure ==="
+          ls -R artifacts/
+          find artifacts -type f
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f -name "eos-linux-*" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum eos-linux-* > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: |
+            release/eos-linux-amd64
+            release/eos-linux-arm64
+            release/sha256sums.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Eos ${{ steps.version.outputs.version }}
+
+            Service Orchestration Tool - Manage and monitor your services with ease.
+
+            ### Quick Installation
+
+            ```bash
+            curl -sSL https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh | sudo bash
+            ```
+
+            ### Manual Installation
+
+            Download the appropriate binary for your architecture:
+            - **Linux AMD64**: `eos-linux-amd64`
+            - **Linux ARM64**: `eos-linux-arm64`
+
+            Then:
+            ```bash
+            chmod +x eos-linux-amd64  # or eos-linux-arm64
+            sudo cp eos-linux-amd64 /usr/local/bin/eos
+            ```
+
+            ### Verify Download
+
+            Check the `sha256sums.txt` file and verify:
+            ```bash
+            sha256sum -c sha256sums.txt
+            ```
+
+            ### What's New
+
+            Eos is a service orchestration tool that combines:
+            - **Fast Registry**: SQLite-based service discovery
+            - **Live Configuration**: Always-current config from filesystem
+            - **Process Management**: Start, stop, and monitor services
+            - **Health Monitoring**: Track service health and logs
+            - **Systemd Integration**: Automatic restart and boot integration
+
+            See the [README](https://github.com/Elysium-Labs-EU/eos/blob/main/README.md) for full documentation.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

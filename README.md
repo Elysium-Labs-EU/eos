@@ -2,7 +2,26 @@
 
 ## Usage
 
-### Installation
+### Quick Install (Recommended)
+
+Using curl
+```bash
+curl -sSL https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh -o install.sh
+sudo bash install.sh
+```
+
+Using wget
+```bash
+wget https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh
+sudo bash install.sh
+```
+
+
+### Manual Installation
+
+If you prefer to build from source:
+
+
 ```bash
 # Clone and build
 go build -o eos
@@ -11,6 +30,7 @@ go build -o eos
 ```
 
 ### Quick Reference
+
 ```bash
 # See all commands
 ./eos --help
@@ -25,6 +45,7 @@ rm ~/.eos/state.db
 ### Commands
 
 #### Register a Service
+
 ```bash
 # Register from directory (looks for service.yaml inside)
 ./eos add ./path/to/project
@@ -36,6 +57,7 @@ rm ~/.eos/state.db
 **Expected:** Service registered in SQLite database at `~/.eos/state.db`
 
 #### List All Services
+
 ```bash
 ./eos status
 ```
@@ -43,6 +65,7 @@ rm ~/.eos/state.db
 **Shows:** All registered services with their current config (loaded live from filesystem)
 
 #### Start a Service
+
 ```bash
 ./eos start <service-name>
 ```
@@ -52,6 +75,7 @@ rm ~/.eos/state.db
 ### Service Configuration File
 
 Each service needs a `service.yaml` (or `service.yml`) file:
+
 ```yaml
 name: "cms"
 command: "/home/user/start-script.sh"
@@ -67,17 +91,19 @@ The CLI finds this file automatically when you register a directory.
 ### Key Design Decision: Hybrid Approach
 
 **Database for Registry (Fast Discovery)**
+
 - SQLite stores: service name, path, config file location
 - Purpose: O(1) lookup without filesystem scanning
 - Single source of truth for "what services exist"
 
 **Filesystem for Live Config (Always Current)**
+
 - Service details read from `service.yaml` on each status check
 - Purpose: No state drift - config changes are immediately reflected
 - No complex database sync needed
 
-
 ### Data Flow
+
 ```
 add command:
   1. Parse service.yaml
@@ -93,18 +119,20 @@ status command:
 
 ## What's Next?
 
-### Implemented ✅
+### Implemented
+
 - Health monitoring
 - Log management
 - Process detection (check if service actually running)
-- Service listing (status)  
+- Service listing (status)
 - Service registration (add)
 - Service removal (remove)
 - Service update (update)
 - Start command (launch services)
 - Stop command (terminate services)
 
-### TODO 🚧
+### TODO
+
 - Auto complete on commands
 - CPU / Memory bounds
 - Deployment workflows
@@ -114,3 +142,4 @@ status command:
 - Port range for rolling deploying
 - Support static services
 - Update binary flow
+- Integrate eos into server boot sequence

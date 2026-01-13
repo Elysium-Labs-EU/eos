@@ -73,7 +73,11 @@ func StartDaemon(logToFileAndConsole bool, baseDir string) error {
 
 	logger.Log(manager.LogLevelInfo, "Daemon started successfully")
 	for {
-		sig := <-sigChan
+		sig, ok := <-sigChan
+
+		if !ok {
+			return nil
+		}
 
 		switch sig {
 		case syscall.SIGCHLD:

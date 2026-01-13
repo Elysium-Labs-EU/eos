@@ -17,7 +17,8 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Use:   "logs",
 		Short: "Shows service logs",
 		Long:  "Shows the logs for a specific service",
-		Args:  cobra.ExactArgs(1),
+		// TODO: Double check this
+		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()
