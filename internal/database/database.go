@@ -65,10 +65,15 @@ func NewTestDB(dbPath string) (*DB, error) {
 }
 
 func openDB(dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", dbPath)
+	conn, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not open database: %w", err)
 	}
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("could not connect to database: %w", err)
+	}
+
 	db := &DB{conn: conn}
 
 	err = db.initTables()
@@ -81,7 +86,10 @@ func openDB(dbPath string) (*DB, error) {
 }
 
 func (db *DB) CloseDBConnection() error {
-	return db.conn.Close()
+	if err := db.conn.Close(); err != nil {
+		return fmt.Errorf("error closing database: %w", err)
+	}
+	return nil
 }
 
 func (db *DB) initTables() error {
