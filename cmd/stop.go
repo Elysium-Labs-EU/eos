@@ -50,11 +50,11 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 
 				if !removed {
-					cmd.Print("Service was not running")
+					cmd.Println("Service was not running")
 					return
 				}
 
-				cmd.Print("Successfully stopped and cleaned up service")
+				cmd.Println("Successfully stopped and cleaned up service")
 				return
 			}
 
@@ -67,11 +67,11 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 
 				if !removed {
-					cmd.Print("Service was not running")
+					cmd.Println("Service was not running")
 					return
 				}
 
-				cmd.Print("Successfully stopped and cleaned up service")
+				cmd.Println("Successfully stopped and cleaned up service")
 				return
 			}
 
@@ -115,11 +115,11 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					}
 
 					if !removed {
-						cmd.Print("Service was not running")
+						cmd.Println("Service was not running")
 						return
 					}
 
-					cmd.Print("Successfully stopped and cleaned up service")
+					cmd.Println("Successfully stopped and cleaned up service")
 					return
 
 				} else {
@@ -134,10 +134,10 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			if !removed {
-				cmd.Print("Service was not running")
+				cmd.Println("Service was not running")
 				return
 			}
 
-			cmd.Print("Successfully stopped and cleaned up service")
+			cmd.Println("Successfully stopped and cleaned up service")
 		}}
 }

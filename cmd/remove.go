@@ -16,6 +16,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
+			cmd.Printf("INFO: This does not stop the service if it's running.\n")
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.Printf("Error checking service: %v\n", err)
@@ -40,10 +41,10 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					return
 				}
 				if !removedInstance {
-					cmd.Print("Unable to remove service instance")
+					cmd.Println("Unable to remove service instance")
 					return
 				}
-				cmd.Print("Successfully removed service instance")
+				cmd.Println("Successfully removed service instance")
 			}
 
 			removed, err := mgr.RemoveServiceCatalogEntry(serviceName)
