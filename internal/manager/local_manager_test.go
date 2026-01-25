@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"eos/internal/database"
 	"eos/internal/testutil"
 	"eos/internal/types"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestNewManager(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	if manager == nil {
@@ -28,7 +29,7 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestAddService(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
@@ -43,16 +44,18 @@ func TestAddService(t *testing.T) {
 		services, err := manager.GetAllServiceCatalogEntries()
 		if err != nil {
 			t.Fatalf("Getting all service catalog entries should not error: %v", err)
-		} else if len(services) != 1 {
+		}
+		if len(services) != 1 {
 			t.Errorf("Expected 1 service catalog entry, got %d", len(services))
-		} else if services[0].Name != "test-service" {
+		}
+		if services[0].Name != "test-service" {
 			t.Errorf("Expected service name 'test-service', got '%s'", services[0].Name)
 		}
 	}
 }
 
 func TestAddServiceMultipleTimes(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
@@ -76,7 +79,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 }
 
 func TestGetService(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
@@ -94,7 +97,7 @@ func TestGetService(t *testing.T) {
 }
 
 func TestGetInvalidServiceInstance(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	_, exists, error := manager.GetServiceInstance("non-existent")
@@ -107,7 +110,7 @@ func TestGetInvalidServiceInstance(t *testing.T) {
 }
 
 func TestStartService(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
 	runtime := types.Runtime{

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 	"eos/internal/types"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestLogsCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
@@ -80,7 +81,7 @@ func TestLogsCommand(t *testing.T) {
 }
 
 func TestLogsNeverRanServiceCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
@@ -133,7 +134,7 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 }
 
 func TestLogsNonExistingServiceCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 

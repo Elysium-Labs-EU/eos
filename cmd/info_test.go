@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 	"eos/internal/types"
@@ -16,7 +17,7 @@ import (
 
 // TODO: Add actual node env here?
 // func TestInfoCommand(t *testing.T) {
-// 	db, tempDir := testutil.SetupTestDB(t)
+// db, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 // 	manager := manager.NewLocalManager(db, tempDir)
 // 	cmd := newTestRootCmd(manager)
 // 	var buf bytes.Buffer
@@ -95,7 +96,7 @@ import (
 // }
 
 func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
@@ -160,7 +161,7 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 }
 
 func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
@@ -208,7 +209,7 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 }
 
 func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
@@ -230,7 +231,7 @@ func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
 }
 
 func TestInfoNonExistentServiceCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 

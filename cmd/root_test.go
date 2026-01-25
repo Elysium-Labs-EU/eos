@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 	"strings"
@@ -11,7 +12,7 @@ import (
 func TestRootCommand(t *testing.T) {
 	var buf bytes.Buffer
 
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
@@ -29,8 +30,8 @@ func TestRootCommand(t *testing.T) {
 		t.Logf("Buffer length: %d", len(output))
 		t.Logf("Buffer content: %q", output)
 
-		if !strings.Contains(output, "Deploy CLI - Test version") {
-			t.Errorf("Expected output to contain 'Deploy CLI - Test version', got %s", output)
+		if !strings.Contains(output, "eos - Test version") {
+			t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
 		} else if !strings.Contains(output, "Use 'eos help'") {
 			t.Errorf("Expected output to contain help text, got: %s", output)
 		}
@@ -40,7 +41,7 @@ func TestRootCommand(t *testing.T) {
 func TestHelpCommand(t *testing.T) {
 	var buf bytes.Buffer
 
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
@@ -58,7 +59,7 @@ func TestHelpCommand(t *testing.T) {
 		t.Logf("Buffer length: %d", len(output))
 		t.Logf("Buffer content: %q", output)
 
-		if !strings.Contains(output, "Deploy CLI is a modern deployment") {
+		if !strings.Contains(output, "eos is a modern deployment") {
 			t.Errorf("Expected help to contain description, got: '%s'", output)
 		}
 	}

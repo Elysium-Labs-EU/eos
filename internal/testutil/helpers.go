@@ -1,18 +1,20 @@
 package testutil
 
 import (
+	"database/sql"
+	"embed"
 	"eos/internal/database"
 	"path/filepath"
 	"testing"
 )
 
-func SetupTestDB(t *testing.T) (*database.DB, string) {
+func SetupTestDB(t *testing.T, migrationsFS embed.FS, migrationsPath string) (*database.DB, *sql.DB, string) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 
-	db, err := database.NewTestDB(dbPath)
+	db, dbConn, err := database.NewTestDB(dbPath, migrationsFS, migrationsPath)
 	if err != nil {
-		t.Fatalf("Unable to create test database: %v", err)
+		t.Fatalf("Unable to create test database 3: %v", err)
 	}
-	return db, tempDir
+	return db, dbConn, tempDir
 }

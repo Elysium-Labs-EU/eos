@@ -34,3 +34,13 @@ func DetermineUptime(mostRecentProcess *types.ProcessHistory) string {
 
 	return humanize.Time(*mostRecentProcess.StartedAt)
 }
+
+func DetermineError(errorStringPtr *string) string {
+	if errorStringPtr == nil {
+		return "-"
+	}
+	if *errorStringPtr == "" {
+		return "-"
+	}
+	return *errorStringPtr
+}

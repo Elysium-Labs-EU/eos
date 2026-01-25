@@ -87,27 +87,29 @@ func (hm *HealthMonitor) checkStartProcess(
 	process *types.ProcessHistory,
 ) {
 	if !hm.isProcessAlive(process.PID) {
-		hm.logger.Log(manager.LogLevelError, fmt.Sprintf("Service %s (PID %d) died during startup",
-			service.Name, process.PID))
+		errorString := fmt.Sprintf("Service %s (PID %d) died during startup", service.Name, process.PID)
 
+		hm.mgr.LogToServiceStderr(service.Name, errorString)
+		hm.logger.Log(manager.LogLevelError, errorString)
 		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 			State:     util.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: util.TimePtr(time.Now()),
+			Error:     util.StringPtr(errorString),
 		})
 		return
 	}
 
-	// TODO: Determine a clause for this, what is too long?
+	// TODO: Determine a clause for this, what is too long? Let the user pass it in via local config?
 	if time.Since(*process.StartedAt) > 30*time.Second {
-		hm.logger.Log(manager.LogLevelWarn,
-			fmt.Sprintf("Service %s taking too long to start", service.Name))
+		errorString := fmt.Sprintf("Service %s taking too long to start", service.Name)
 
+		hm.mgr.LogToServiceStderr(service.Name, errorString)
+		hm.logger.Log(manager.LogLevelWarn, errorString)
 		// TODO: Add more handeling to this
-
 		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 			State:     util.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr("Service taking too long to start"),
+			Error:     util.StringPtr(errorString),
 		})
 		return
 	}
@@ -120,34 +122,29 @@ func (hm *HealthMonitor) checkStartProcess(
 		return
 	}
 
-	if !hm.canConnectToPort(config.Port) {
-		hm.logger.Log(manager.LogLevelInfo,
-			fmt.Sprintf("Service %s is not running on port %d",
-				service.Name, config.Port))
+	// TODO: Enhance this whenever the port isnt defined.
+	if config.Port != 0 && !hm.canConnectToPort(config.Port) {
+		errorString := fmt.Sprintf("Service %s is not running on port %d", service.Name, config.Port)
+
+		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.mgr.LogToServiceStderr(service.Name, errorString)
 		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 			State:     util.ProcessStatePtr(types.ProcessStateStopped),
 			StoppedAt: util.TimePtr(time.Now()),
+			Error:     util.StringPtr(errorString),
 		})
 		return
 	}
 
-	if !hm.isProcessAlive(process.PID) {
-		hm.logger.Log(manager.LogLevelInfo,
-			fmt.Sprintf("Process for service %s is not alive",
-				service.Name))
-		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateStopped),
-			StoppedAt: util.TimePtr(time.Now()),
-		})
-		return
+	if config.Port != 0 {
+		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("Service %s is now running on port %d", service.Name, config.Port))
+	} else {
+		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("Service %s is now running", service.Name))
 	}
-
-	hm.logger.Log(manager.LogLevelInfo,
-		fmt.Sprintf("Service %s is now running on port %d",
-			service.Name, config.Port))
 
 	hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 		State: util.ProcessStatePtr(types.ProcessStateRunning),
+		Error: util.StringPtr(""),
 	})
 }
 
@@ -162,9 +159,10 @@ func (hm *HealthMonitor) checkRunningProcess(service types.ServiceCatalogEntry, 
 	}
 
 	if !hm.isProcessAlive(process.PID) {
-		hm.logger.Log(manager.LogLevelInfo,
-			fmt.Sprintf("Service %s is not running on port %d",
-				service.Name, config.Port))
+		errorString := fmt.Sprintf("Service %s is not running on port %d", service.Name, config.Port)
+
+		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.mgr.LogToServiceStderr(service.Name, errorString)
 
 		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 			State:     util.ProcessStatePtr(types.ProcessStateFailed),
@@ -185,23 +183,29 @@ func (hm *HealthMonitor) checkFailedProcess(service types.ServiceCatalogEntry, p
 	}
 
 	if hm.isProcessAlive(process.PID) {
-		hm.logger.Log(manager.LogLevelInfo,
-			fmt.Sprintf("Service %s is not running on port %d",
-				service.Name, config.Port))
-
 		hm.db.UpdateProcessHistoryEntry(process.PID, database.ProcessHistoryUpdate{
 			State: util.ProcessStatePtr(types.ProcessStateRunning),
+			Error: util.StringPtr("-"),
 		})
 		return
 	}
 
-	// TODO: Do we want to incorporate instnace.last_health_check instead process?
+	// TODO: Do we want to incorporate instance.last_health_check instead process?
 	elapsed := time.Since(*process.StartedAt)
 	requiredDelay := calculateBackoffDelay(instance.RestartCount)
 
+	// TODO: Let user configure max restart count
 	if instance.RestartCount < 15 && elapsed >= requiredDelay {
-		hm.logger.Log(manager.LogLevelInfo,
-			fmt.Sprintf("Restarting service %s on port %d", service.Name, config.Port))
+		var errorString string
+
+		if config.Port != 0 {
+			errorString = fmt.Sprintf("Restarting service %s on port %d", service.Name, config.Port)
+		} else {
+			errorString = fmt.Sprintf("Restarting service %s", service.Name)
+		}
+
+		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.mgr.LogToServiceStderr(service.Name, errorString)
 		_, err := hm.mgr.RestartService(service.Name)
 
 		if err != nil {
@@ -226,7 +230,7 @@ func calculateBackoffDelay(restartCount int) time.Duration {
 
 func (hm *HealthMonitor) canConnectToPort(port int) bool {
 	address := fmt.Sprintf("localhost:%d", port)
-	conn, err := net.DialTimeout("tcp", address, 1*time.Second)
+	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
 	if err != nil {
 		return false
 	}

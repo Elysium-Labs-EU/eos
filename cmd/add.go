@@ -31,9 +31,14 @@ func findServiceFileInDirectory(dir string) string {
 
 func determineYamlFile(projectPath string) (string, error) {
 	fileInfo, err := os.Stat(projectPath)
-	if os.IsNotExist(err) {
-		return "", fmt.Errorf("directory or file on path %s does not exist", projectPath)
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("directory or file on path %s does not exist", projectPath)
+		}
+		return "", fmt.Errorf("unable to stat path %s: %w", projectPath, err)
 	}
+
 	if fileInfo.IsDir() {
 		yamlFile := findServiceFileInDirectory(projectPath)
 		if yamlFile == "" {
@@ -96,7 +101,9 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Printf("Service '%s' is already registered.\n", config.Name)
 				cmd.Printf("Use 'eos remove %s' first to re-register.\n", config.Name)
 				return
-			} else if err != nil {
+			}
+			if err != nil {
+				// TODO: Make the error more explicit type to be more helpful with suggestions.
 				cmd.Printf("Error registering service: %v\n", err)
 				return
 			}

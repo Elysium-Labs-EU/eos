@@ -42,17 +42,6 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 
 }
 
-// func (m *LocalManager) RemoveService(name string) error {
-// 	// TODO: All kills all services? or do that outside
-// 	err := m.db.RemoveService(name)
-// 	if err != nil {
-// 		return fmt.Errorf("unable to remove service, got: %v\n", err)
-// 	} else {
-// 		return nil
-// 	}
-
-// }
-
 func (m *LocalManager) RemoveServiceInstance(name string) (bool, error) {
 	removed, err := m.db.RemoveServiceInstance(name)
 	if err != nil {
@@ -73,11 +62,11 @@ func (m *LocalManager) IsServiceRegistered(name string) (bool, error) {
 	isRegistered, err := m.db.IsServiceRegistered(name)
 	if err != nil {
 		return false, fmt.Errorf("unable to check: \n %w", err)
-	} else if isRegistered {
-		return true, nil
-	} else {
-		return false, nil
 	}
+	if isRegistered {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (m *LocalManager) GetServiceInstance(name string) (types.ServiceRuntime, bool, error) {
@@ -216,6 +205,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 
 	startCommand := exec.Command("/bin/sh", "-c", config.Command)
 	// TODO: We are sourcing from a different object then the config here?
+	// TODO: Add dynamic PATH variable addition
 	startCommand.Dir = service.DirectoryPath
 	env, err := buildEnvironment(config)
 	if err != nil {

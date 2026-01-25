@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"embed"
 	"eos/internal/types"
 	"errors"
 	"fmt"
@@ -33,10 +34,15 @@ type Database interface {
 	RegisterProcessHistoryEntry(pid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
 	RemoveProcessHistoryEntryViaPid(pid int) (bool, error)
 	UpdateProcessHistoryEntry(pid int, updates ProcessHistoryUpdate) error
+
+	RunMigrations(migrationsFS embed.FS, migrationsPath string) error
+	GetCurrentVersion(migrationsFS embed.FS, migrationsPath string) (uint, bool, error)
+	RunDownMigration(migrationsFS embed.FS, migrationsPath string) error
 }
 
 var _ Database = (*DB)(nil)
 
+// TODO: Make it use baseDir instead of userhomedir? deployDir can be externalized
 func NewDB() (*DB, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -51,17 +57,53 @@ func NewDB() (*DB, error) {
 
 	dbPath := filepath.Join(deployDir, "state.db")
 
-	return openDB(dbPath)
+	db, err := openDB(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.RunMigrations(MigrationsFS, MigrationsPath); err != nil {
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+	version, dirty, err := db.GetCurrentVersion(MigrationsFS, MigrationsPath)
+	if err != nil {
+		return nil, fmt.Errorf("Warning: Could not get schema version: %v", err)
+	} else {
+		fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
+		if dirty {
+			return nil, fmt.Errorf("Database is in a dirty state. Manual intervention required.")
+		}
+	}
+
+	return db, nil
 }
 
-func NewTestDB(dbPath string) (*DB, error) {
+func NewTestDB(dbPath string, testMigrationsFS embed.FS, testMigrationsPath string) (*DB, *sql.DB, error) {
 	dir := filepath.Dir(dbPath)
 	err := os.MkdirAll(dir, 0755)
 	if err != nil {
-		return nil, fmt.Errorf("could not create test db directory: %w", err)
+		return nil, nil, fmt.Errorf("could not create test db directory: %w", err)
 	}
 
-	return openDB(dbPath)
+	db, err := openDB(dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := db.RunMigrations(testMigrationsFS, testMigrationsPath); err != nil {
+		return nil, nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+	version, dirty, err := db.GetCurrentVersion(testMigrationsFS, testMigrationsPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Warning: Could not get schema version: %v", err)
+	} else {
+		fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
+		if dirty {
+			return nil, nil, fmt.Errorf("Database is in a dirty state. Manual intervention required.")
+		}
+	}
+
+	return db, db.conn, nil
 }
 
 func openDB(dbPath string) (*DB, error) {
@@ -76,12 +118,6 @@ func openDB(dbPath string) (*DB, error) {
 
 	db := &DB{conn: conn}
 
-	err = db.initTables()
-
-	if err != nil {
-		return nil, fmt.Errorf("could not initialize tables: %w", err)
-	}
-
 	return db, nil
 }
 
@@ -89,63 +125,6 @@ func (db *DB) CloseDBConnection() error {
 	if err := db.conn.Close(); err != nil {
 		return fmt.Errorf("error closing database: %w", err)
 	}
-	return nil
-}
-
-func (db *DB) initTables() error {
-	serviceCatalogSQL := `
-	CREATE TABLE IF NOT EXISTS service_catalog (
-		name TEXT PRIMARY KEY,
-		path TEXT NOT NULL,
-  		config_file TEXT NOT NULL,
-		created_at DATETIME NOT NULL
-	);`
-
-	serviceInstancesSQL := `
-	CREATE TABLE IF NOT EXISTS service_instances (
-		name TEXT PRIMARY KEY,
-		restart_count INTEGER default 0,
-		last_health_check DATETIME,
-		created_at DATETIME NOT NULL,
-		started_at DATETIME,
-		updated_at DATETIME
-	);`
-
-	processHistorySQL := `
-	CREATE TABLE IF NOT EXISTS process_history (
-		pid INTEGER DEFAULT 0 PRIMARY KEY,
-		service_name TEXT NOT NULL,
-		state TEXT NOT NULL DEFAULT 'stopped',
-		error TEXT,
-		created_at DATETIME NOT NULL,
-		started_at DATETIME,
-		stopped_at DATETIME,
-		updated_at DATETIME,
-		FOREIGN KEY (service_name) REFERENCES service_instances(name)
-	);`
-
-	indexProcessesLookup := `CREATE INDEX IF NOT EXISTS idx_processes_lookup ON process_history(service_name, stopped_at);`
-
-	_, err := db.conn.Exec(serviceCatalogSQL)
-	if err != nil {
-		return fmt.Errorf("could not create service_catalog table: %w", err)
-	}
-
-	_, err = db.conn.Exec(serviceInstancesSQL)
-	if err != nil {
-		return fmt.Errorf("could not create service_instances table: %w", err)
-	}
-
-	_, err = db.conn.Exec(processHistorySQL)
-	if err != nil {
-		return fmt.Errorf("could not create process_history table: %w", err)
-	}
-
-	_, err = db.conn.Exec(indexProcessesLookup)
-	if err != nil {
-		return fmt.Errorf("could not create process_history index: %w", err)
-	}
-
 	return nil
 }
 
@@ -269,7 +248,7 @@ var ErrProcessHistoryNotFound = errors.New("process history not found")
 
 func (db *DB) GetProcessHistoryEntryByPid(pid int) (types.ProcessHistory, error) {
 	query := `
-	SELECT pid, service_name, state, error, created_at, started_at, stopped_at
+	SELECT pid, service_name, state, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE pid = ?
 	`
@@ -283,6 +262,7 @@ func (db *DB) GetProcessHistoryEntryByPid(pid int) (types.ProcessHistory, error)
 		&processHistory.Error,
 		&processHistory.CreatedAt,
 		&processHistory.StartedAt,
+		&processHistory.StoppedAt,
 		&processHistory.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return types.ProcessHistory{}, fmt.Errorf("%w: %v", ErrProcessHistoryNotFound, pid)

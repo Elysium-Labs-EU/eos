@@ -54,8 +54,8 @@ type ProcessHistory struct {
 	Error       *string      `json:"error,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 	StartedAt   *time.Time   `json:"started_at,omitzero"`
-	UpdatedAt   *time.Time   `json:"updated_at,omitzero"`
 	StoppedAt   *time.Time   `json:"stopped_at,omitzero"`
+	UpdatedAt   *time.Time   `json:"updated_at,omitzero"`
 }
 
 type RunningProcess struct {

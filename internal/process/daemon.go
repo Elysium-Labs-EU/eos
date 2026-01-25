@@ -95,34 +95,33 @@ func StartDaemon(logToFileAndConsole bool, baseDir string) error {
 					logger.Log(manager.LogLevelError, fmt.Sprintf("An error during cleaning up child process with PID '%d'", pid))
 					continue
 				}
-				if pid > 0 {
-					logger.Log(manager.LogLevelError, fmt.Sprintf("Reaped zombie process: %d\n", pid))
 
-					if status.ExitStatus() == 0 {
-						updates := database.ProcessHistoryUpdate{
-							State:     util.ProcessStatePtr(types.ProcessStateStopped),
-							StoppedAt: util.TimePtr(time.Now()),
-						}
-						err := db.UpdateProcessHistoryEntry(pid, updates)
-						if err != nil {
-							logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
-						}
-						continue
-					}
+				logger.Log(manager.LogLevelError, fmt.Sprintf("Reaped zombie process: %d\n", pid))
 
+				if status.ExitStatus() == 0 {
 					updates := database.ProcessHistoryUpdate{
-						State:     util.ProcessStatePtr(types.ProcessStateFailed),
+						State:     util.ProcessStatePtr(types.ProcessStateStopped),
 						StoppedAt: util.TimePtr(time.Now()),
-						Error:     util.StringPtr("Zombie process has been reaped"),
 					}
-
 					err := db.UpdateProcessHistoryEntry(pid, updates)
 					if err != nil {
 						logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
 					}
-
 					continue
 				}
+
+				updates := database.ProcessHistoryUpdate{
+					State:     util.ProcessStatePtr(types.ProcessStateFailed),
+					StoppedAt: util.TimePtr(time.Now()),
+					Error:     util.StringPtr("Zombie process has been reaped"),
+				}
+
+				err = db.UpdateProcessHistoryEntry(pid, updates)
+				if err != nil {
+					logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
+				}
+
+				continue
 			}
 
 		case syscall.SIGTERM, syscall.SIGINT:

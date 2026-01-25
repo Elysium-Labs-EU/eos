@@ -1,6 +1,7 @@
 package process
 
 import (
+	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 	"eos/internal/types"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestAllMethodsHandled(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 
 	for method := range types.ValidMethods {

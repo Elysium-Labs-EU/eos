@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 	"eos/internal/types"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestAddCommand(t *testing.T) {
-	db, tempDir := testutil.SetupTestDB(t)
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 

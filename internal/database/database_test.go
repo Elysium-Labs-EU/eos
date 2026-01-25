@@ -1,28 +1,23 @@
-package database
+package database_test
 
 import (
+	"eos/internal/database"
+	"eos/internal/testutil"
 	"eos/internal/util"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestUpdateServiceInstance(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
+	db, rawDBConn, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	db, err := NewTestDB(dbPath)
-	if err != nil {
-		t.Fatalf("Unable to create test database: %v", err)
-	}
+	rawDBConn.Exec(`INSERT INTO service_instances (name, created_at) VALUES ('cms', ?)`, time.Now())
 
-	db.conn.Exec(`INSERT INTO service_instances (name, created_at) VALUES ('cms', ?)`, time.Now())
-
-	updates := ServiceInstanceUpdate{
+	updates := database.ServiceInstanceUpdate{
 		RestartCount: util.IntPtr(5),
 		StartedAt:    util.TimePtr(time.Now()),
 	}
-	err = db.UpdateServiceInstance("cms", updates)
+	err := db.UpdateServiceInstance("cms", updates)
 
 	if err != nil {
 		t.Fatalf("updateServiceInstance failed got: %v\n", err)

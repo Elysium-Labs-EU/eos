@@ -14,12 +14,12 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
-		Long: `Deploy CLI is a modern deployment orchestration tool.
+		Long: `eos is a modern deployment orchestration tool.
 			It manages services, handles deployments, and provides monitoring
 			capabilities for your VPS infrastructure.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("Deploy CLI - Test version")
+			cmd.Println("eos - Test version")
 			cmd.Println("Use 'eos help' to see available commands")
 		},
 	}
@@ -48,12 +48,12 @@ func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
-		Long: `Deploy CLI is a modern deployment orchestration tool.
+		Long: `eos is a modern deployment orchestration tool.
 	It manages services, handles deployments, and provides monitoring
 	capabilities for your VPS infrastructure.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("Deploy CLI v0.1.0")
+			cmd.Println("eos v0.0.1")
 			cmd.Println("Use 'eos help' to see available commands")
 		},
 
@@ -113,6 +113,7 @@ func getManager(rootCmd *cobra.Command) (manager.ServiceManager, func(), error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to connect to database: %w", err)
 		}
+
 		mgr := manager.NewLocalManager(db, baseDir)
 		cleanup := func() { db.CloseDBConnection() }
 		return mgr, cleanup, nil

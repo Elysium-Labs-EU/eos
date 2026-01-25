@@ -41,6 +41,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				Started      string
 				Uptime       string
 				RestartCount int
+				Error        string
 			}
 			var activeServices []StatusServiceEntry
 
@@ -76,6 +77,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					Started:      humanize.Time(*serviceInstance.StartedAt),
 					Uptime:       helpers.DetermineUptime(mostRecentProcess),
 					RestartCount: serviceInstance.RestartCount,
+					Error:        helpers.DetermineError(mostRecentProcess.Error),
 				})
 			}
 
@@ -83,7 +85,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			t.SetOutputMirror(os.Stdout)
 			t.SetStyle(table.StyleRounded)
 			t.AppendHeader(table.Row{
-				"Name", "Status", "PID", "Uptime", "Restart Count", "Started",
+				"Name", "Status", "PID", "Uptime", "Restart Count", "Started", "Error",
 			})
 			t.SetColumnConfigs([]table.ColumnConfig{
 				{Number: 1, WidthMin: 25},
@@ -91,10 +93,12 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				{Number: 3, WidthMin: 15},
 				{Number: 4, WidthMin: 12},
 				{Number: 5, WidthMin: 20},
+				{Number: 6, WidthMin: 20},
 			})
 
 			if len(activeServices) == 0 {
 				t.AppendRow(table.Row{
+					"-",
 					"-",
 					"-",
 					"-",
@@ -112,6 +116,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					svc.Uptime,
 					svc.RestartCount,
 					svc.Started,
+					svc.Error,
 				})
 			}
 			t.Render()
