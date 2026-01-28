@@ -118,31 +118,7 @@ status command:
 ```
 
 ## What's Next?
-
-### Implemented
-
-- Health monitoring
-- Log management
-- Process detection (check if service actually running)
-- Service listing (status)
-- Service registration (add)
-- Service removal (remove)
-- Service update (update)
-- Start command (launch services)
-- Stop command (terminate services)
-
-### TODO
-
-- Auto complete on commands
-- CPU / Memory bounds
-- Deployment workflows
-- Env management
-- Nginx reading and updating
-- Optional process detection via systemd
-- Port range for rolling deploying
-- Support static services
-- Update binary flow
-- Integrate eos into server boot sequence
+Soon there will be issues listed to show a roadmap and to enable everyone to contribute to this project.
 
 ## License
 
