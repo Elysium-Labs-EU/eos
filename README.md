@@ -100,7 +100,6 @@ The CLI finds this file automatically when you register a directory.
 
 - Service details read from `service.yaml` on each status check
 - Purpose: No state drift - config changes are immediately reflected
-- No complex database sync needed
 
 ### Data Flow
 
