@@ -48,25 +48,35 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			for _, regService := range registeredServices {
 				configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
 				config, err := manager.LoadServiceConfig(configPath)
+				regServiceName := regService.Name
 
 				if err != nil {
-					cmd.Printf("%s: Error reading config '(%v)'\n", regService.Name, err)
+					cmd.Printf("%s: Error reading config '(%v)'\n", regServiceName, err)
+					continue
+				}
+				if config.Name != regServiceName {
+					cmd.Printf("%s: Name of services drifted\n", regServiceName)
 					continue
 				}
 
-				serviceInstance, found, err := mgr.GetServiceInstance(regService.Name)
+				serviceInstance, err := mgr.GetServiceInstance(regServiceName)
 				if err != nil {
-					cmd.Printf("%s: Unable to get service instance '(%v)'\n", regService.Name, err)
+					cmd.Printf("%s: Unable to get service instance '(%v)'\n", regServiceName, err)
 					continue
 				}
-				if !found {
-					cmd.Printf("%s: No active service instance found\n", regService.Name)
+				if serviceInstance == nil {
+					cmd.Printf("%s: No active service instance found\n", regServiceName)
 					continue
 				}
 
-				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regService.Name)
+				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
 				if err != nil {
-					fmt.Printf("Unable to get most recent process history for %s, got: \n %v\n", regService.Name, err)
+					fmt.Printf("Unable to get most recent process history for %s, got: \n %v\n", regServiceName, err)
+					continue
+				}
+
+				if mostRecentProcess == nil {
+					fmt.Printf("No process history found for %s\n", regServiceName)
 					continue
 				}
 

@@ -5,7 +5,6 @@ import (
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"eos/internal/types"
 	"strings"
 
 	"os"
@@ -20,11 +19,7 @@ func TestAddCommand(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
 
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "/home/user/start-script.sh",
-		Port:    1337,
-	}
+	testFile := testutil.CreateTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -40,7 +35,10 @@ func TestAddCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	var buf bytes.Buffer
 

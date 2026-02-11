@@ -34,8 +34,12 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			_, err = mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil {
+				cmd.Printf("Service unable to get recent process history entry, got: %v", err)
+				return
+			}
+			if processHistoryEntry == nil {
 				cmd.Printf("Service '%s' has never ran\n", serviceName)
 				return
 			}

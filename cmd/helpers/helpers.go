@@ -22,6 +22,9 @@ func DetermineServiceStatus(processState types.ProcessState) types.ServiceStatus
 }
 
 func DetermineUptime(mostRecentProcess *types.ProcessHistory) string {
+	if mostRecentProcess == nil {
+		return "-"
+	}
 	if mostRecentProcess.State == types.ProcessStateStopped {
 		return "-"
 	}

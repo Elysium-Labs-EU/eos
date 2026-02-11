@@ -2,7 +2,7 @@
 
 ## Usage
 
-### Quick Install (Recommended)
+### Quick Install
 
 Using curl
 ```bash

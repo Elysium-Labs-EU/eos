@@ -217,11 +217,11 @@ func (db *DB) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, er
 	err := row.Scan(&svc.Name, &svc.DirectoryPath, &svc.ConfigFileName, &svc.CreatedAt)
 	if err == sql.ErrNoRows {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
-	} else if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("could not scan service row: %w", err)
-	} else {
-		return svc, nil
 	}
+	if err != nil {
+		return types.ServiceCatalogEntry{}, fmt.Errorf("could not scan service row: %w", err)
+	}
+	return svc, nil
 }
 
 func (db *DB) GetServiceInstance(name string) (types.ServiceRuntime, error) {
@@ -237,11 +237,11 @@ func (db *DB) GetServiceInstance(name string) (types.ServiceRuntime, error) {
 	err := row.Scan(&svc.Name, &svc.RestartCount, &svc.LastHealthCheck, &svc.CreatedAt, &svc.StartedAt, &svc.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return types.ServiceRuntime{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
-	} else if err != nil {
-		return types.ServiceRuntime{}, fmt.Errorf("could not scan service row: %w", err)
-	} else {
-		return svc, nil
 	}
+	if err != nil {
+		return types.ServiceRuntime{}, fmt.Errorf("could not scan service row: %w", err)
+	}
+	return svc, nil
 }
 
 var ErrProcessHistoryNotFound = errors.New("process history not found")
@@ -266,16 +266,16 @@ func (db *DB) GetProcessHistoryEntryByPid(pid int) (types.ProcessHistory, error)
 		&processHistory.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return types.ProcessHistory{}, fmt.Errorf("%w: %v", ErrProcessHistoryNotFound, pid)
-	} else if err != nil {
-		return types.ProcessHistory{}, fmt.Errorf("could not scan process history row: %w", err)
-	} else {
-		return processHistory, nil
 	}
+	if err != nil {
+		return types.ProcessHistory{}, fmt.Errorf("could not scan process history row: %w", err)
+	}
+	return processHistory, nil
 }
 
 func (db *DB) GetProcessHistoryEntriesByServiceName(serviceName string) ([]types.ProcessHistory, error) {
 	query := `
-	SELECT pid, service_name, state, error, created_at, started_at, stopped_at
+	SELECT pid, service_name, state, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
 	ORDER BY pid
@@ -296,6 +296,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(serviceName string) ([]types
 			&processHistory.Error,
 			&processHistory.CreatedAt,
 			&processHistory.StartedAt,
+			&processHistory.StoppedAt,
 			&processHistory.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("could not scan process history row: %w", err)
@@ -426,11 +427,11 @@ func (db *DB) UpdateProcessHistoryEntry(pid int, updates ProcessHistoryUpdate) e
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("could not check update result: %w", err)
-	} else if rowsAffected == 0 {
-		return fmt.Errorf("process history entry with '%v' not found", pid)
-	} else {
-		return nil
 	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("process history entry with '%v' not found", pid)
+	}
+	return nil
 }
 
 func (db *DB) UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error {
@@ -448,11 +449,11 @@ func (db *DB) UpdateServiceCatalogEntry(name string, newDirectoryPath string, ne
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("could not check update result: %w", err)
-	} else if rowsAffected == 0 {
-		return fmt.Errorf("service '%s' not found", name)
-	} else {
-		return nil
 	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("service '%s' not found", name)
+	}
+	return nil
 }
 
 type ServiceInstanceUpdate struct {
@@ -499,9 +500,9 @@ func (db *DB) UpdateServiceInstance(name string, updates ServiceInstanceUpdate) 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("could not check update result: %w", err)
-	} else if rowsAffected == 0 {
-		return fmt.Errorf("service '%s' not found", name)
-	} else {
-		return nil
 	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("service '%s' not found", name)
+	}
+	return nil
 }

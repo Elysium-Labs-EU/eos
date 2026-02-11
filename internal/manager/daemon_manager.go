@@ -124,19 +124,19 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args []string) (ty
 	return response, nil
 }
 
-func (dm *DaemonManager) GetServiceInstance(name string) (types.ServiceRuntime, bool, error) {
+func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceRuntime, error) {
 	response, err := dm.sendRequest(types.MethodGetServiceInstance, []string{name})
 
 	if err != nil {
-		return types.ServiceRuntime{}, false, fmt.Errorf("the GetServiceInstance request errored, got:\n %v", err)
+		return nil, fmt.Errorf("the GetServiceInstance request errored, got:\n %v", err)
 	}
 
 	var result types.GetServiceInstanceResponse
 	if err := json.Unmarshal(response.Data, &result); err != nil {
-		return types.ServiceRuntime{}, false, fmt.Errorf("failed to parse response data: %w", err)
+		return nil, fmt.Errorf("failed to parse response data: %w", err)
 	}
 
-	return result.Instance, result.Found, nil
+	return &result.Instance, nil
 }
 
 // func (dm *DaemonManager) GetService(name string) (types.Service, error) {
@@ -335,32 +335,32 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.P
 		return nil, fmt.Errorf("the GetMostRecentProcessHistoryEntry request errored, got:\n %v", err)
 	}
 
-	var result *types.ProcessHistory
+	var result types.GetMostRecentProcessHistoryEntryResponse
 	if err := json.Unmarshal(response.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response data: %w", err)
 	}
 
-	return result, nil
+	return &result.ProcessEntry, nil
 }
 
 type ServiceLogFilesResult struct {
-	logFile      *os.File
-	errorLogFile *os.File
+	LogFilePath      string `json:"logFile"`
+	ErrorLogFilePath string `json:"errorLogFile"`
 }
 
-func (dm *DaemonManager) CreateServiceLogFiles(serviceName string) (*os.File, *os.File, error) {
+func (dm *DaemonManager) CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
 	response, err := dm.sendRequest(types.MethodCreateServiceLogFiles, []string{serviceName})
 
 	if err != nil {
-		return nil, nil, fmt.Errorf("the CreateServiceLogFiles request errored, got:\n %v", err)
+		return "", "", fmt.Errorf("the CreateServiceLogFiles request errored, got:\n %v", err)
 	}
 
 	var result ServiceLogFilesResult
 	if err := json.Unmarshal(response.Data, &result); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse response data: %w", err)
+		return "", "", fmt.Errorf("failed to parse response data: %w", err)
 	}
 
-	return result.logFile, result.errorLogFile, nil
+	return result.LogFilePath, result.ErrorLogFilePath, nil
 }
 
 func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error) {
@@ -388,7 +388,7 @@ func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool
 
 type DaemonLogger struct {
 	file         *os.File
-	logPath      string
+	LogPath      string
 	logDir       string
 	fileName     string
 	currentSize  int64
@@ -405,12 +405,11 @@ const (
 	LogLevelError LogLevel = "ERROR"
 )
 
-func NewDaemonLogger(logToFileAndConsole bool, baseDir string) (*DaemonLogger, error) {
-	logDir := CreateLogDir(baseDir)
+func NewDaemonLogger(logToFileAndConsole bool, baseDir string, fileName string) (*DaemonLogger, error) {
+	logDir := CreateLogDirPath(baseDir)
 
 	maxFiles := 5
 	fileSizeLimit := int64(10 * 1024 * 1024)
-	fileName := "daemon.log"
 	logPath := filepath.Join(logDir, fileName)
 
 	err := os.MkdirAll(logDir, 0755)
@@ -430,7 +429,7 @@ func NewDaemonLogger(logToFileAndConsole bool, baseDir string) (*DaemonLogger, e
 
 	return &DaemonLogger{
 		file:         f,
-		logPath:      logPath,
+		LogPath:      logPath,
 		logDir:       logDir,
 		fileName:     fileName,
 		currentSize:  fileInfo.Size(),
@@ -468,7 +467,7 @@ func (l *DaemonLogger) rotate() error {
 		return fmt.Errorf("failed to rename log files: %w", err)
 	}
 
-	newF, err := os.OpenFile(l.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	newF, err := os.OpenFile(l.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create new log file: %w", err)
 	}

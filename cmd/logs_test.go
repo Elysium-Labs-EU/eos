@@ -23,15 +23,7 @@ func TestLogsCommand(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+	testFile := testutil.CreateTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -47,7 +39,10 @@ func TestLogsCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	cmd.SetArgs([]string{"add", fullPath})
 	err = cmd.Execute()
@@ -75,8 +70,8 @@ func TestLogsCommand(t *testing.T) {
 	if strings.Contains(output, "An error occured during getting the log file, got") {
 		t.Errorf("Log file should be found")
 	}
-	if !strings.HasSuffix(output, "Checking the logs for cms \n") {
-		t.Errorf("Log file should be empty")
+	if !strings.HasSuffix(output, "Service 'cms' has never ran\n") {
+		t.Errorf("Service should not have started")
 	}
 }
 
@@ -109,7 +104,10 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	cmd.SetArgs([]string{"add", fullPath})
 	err = cmd.Execute()

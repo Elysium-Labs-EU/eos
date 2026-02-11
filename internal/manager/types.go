@@ -2,13 +2,12 @@ package manager
 
 import (
 	"eos/internal/types"
-	"os"
 )
 
 type ServiceManager interface {
 	// AddService(service *types.ServiceConfig) error
 	// GetServiceStatus(name string) (types.ServiceStatus, error)
-	GetServiceInstance(name string) (types.ServiceRuntime, bool, error)
+	GetServiceInstance(name string) (*types.ServiceRuntime, error)
 	// RemoveService(name string) error
 	// GetService(name string) (types.Service, error)
 	// GetServices() []types.Service
@@ -28,6 +27,6 @@ type ServiceManager interface {
 
 	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
 
-	CreateServiceLogFiles(serviceName string) (*os.File, *os.File, error)
+	CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error)
 	GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error)
 }

@@ -36,11 +36,14 @@ func TestLoadServiceConfig(t *testing.T) {
 	config, err := LoadServiceConfig(configFile)
 	if err != nil {
 		t.Fatalf("LoadServiceConfig should not error: %v", err)
-	} else if config.Name != "cms" {
+	}
+	if config.Name != "cms" {
 		t.Errorf("Expected name 'cms', got %s", config.Name)
-	} else if config.Command != "/home/user/start-script.sh" {
+	}
+	if config.Command != "/home/user/start-script.sh" {
 		t.Errorf("Expected command '/home/user/start-script.sh' got '%s'", config.Command)
-	} else if config.Port != 1337 {
+	}
+	if config.Port != 1337 {
 		t.Errorf("Expected port 1337, got %d", config.Port)
 	}
 }

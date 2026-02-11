@@ -28,13 +28,13 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			_, found, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil {
 				cmd.Printf("Error checking for service instance %v\n", err)
 				return
 			}
 
-			if found {
+			if serviceInstance != nil {
 				removedInstance, err := mgr.RemoveServiceInstance(serviceName)
 				if err != nil {
 					cmd.Printf("Error removing service instance %v\n", err)

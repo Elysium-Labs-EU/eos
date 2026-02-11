@@ -18,6 +18,7 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Manage the deployment daemon",
 	}
+	daemonLogFileName := "daemon.log"
 
 	startCmd := &cobra.Command{
 		Use:   "start",
@@ -41,7 +42,12 @@ func newDaemonCmd() *cobra.Command {
 			cmd.Println("Starting daemon in foreground...")
 			logToFileAndConsole := len(args) == 1 && args[0] == "logToFile"
 			baseDir, err := config.GetBaseDir()
-			if err := process.StartDaemon(logToFileAndConsole, baseDir); err != nil {
+
+			if err != nil {
+				cmd.PrintErrf("Failed to get base directory when starting up daemon: %v\n", err)
+			}
+
+			if err := process.StartDaemon(logToFileAndConsole, baseDir, daemonLogFileName); err != nil {
 				cmd.PrintErrf("Failed to start daemon: %v\n", err)
 			}
 		},
@@ -91,14 +97,13 @@ func newDaemonCmd() *cobra.Command {
 			cmd.Println("Reading logs of daemon...")
 
 			baseDir, err := config.GetBaseDir()
-			logDir := manager.CreateLogDir(baseDir)
+			logDir := manager.CreateLogDirPath(baseDir)
 			if err != nil {
 				cmd.Printf("An error occured during getting the log dir, got:\n%v", err)
 				return
 			}
 
-			fileName := "daemon.log"
-			logPath := filepath.Join(logDir, fileName)
+			logPath := filepath.Join(logDir, daemonLogFileName)
 
 			_, err = os.Stat(logPath)
 			if err != nil {

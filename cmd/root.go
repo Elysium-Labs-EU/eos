@@ -115,7 +115,13 @@ func getManager(rootCmd *cobra.Command) (manager.ServiceManager, func(), error) 
 		}
 
 		mgr := manager.NewLocalManager(db, baseDir)
-		cleanup := func() { db.CloseDBConnection() }
+		cleanup := func() {
+			err = db.CloseDBConnection()
+			if err != nil {
+				fmt.Printf("Error closing database connection on cleanup: %v\n", err)
+				os.Exit(1)
+			}
+		}
 		return mgr, cleanup, nil
 	}
 

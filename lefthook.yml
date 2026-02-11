@@ -1,8 +1,8 @@
 pre-commit:
   parallel: true
   jobs:
-    - name: govet
-      run: go vet
+    - name: golangci-lint
+      run: golangci-lint run --fast
 
     - name: tests
       run: go test ./cmd ./internal/** -v

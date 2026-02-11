@@ -13,9 +13,11 @@ import (
 func CreateServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("received an empty name for the service")
-	} else if strings.TrimSpace(path) == "" {
+	}
+	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("received an empty path for the service")
-	} else if strings.TrimSpace(configFile) == "" {
+	}
+	if strings.TrimSpace(configFile) == "" {
 		return nil, fmt.Errorf("received an empty configFile for the service")
 	}
 
@@ -42,13 +44,15 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
 		return nil, fmt.Errorf("yaml parsing failed with: %v", err)
-	} else if config.Name == "" {
-		return nil, fmt.Errorf("service name is required in %s", configFilePath)
-	} else if config.Command == "" {
-		return nil, fmt.Errorf("service command is required in %s", configFilePath)
-	} else if config.Runtime.Type == "" {
-		return nil, fmt.Errorf("service runtime type is required in %s", configFilePath)
-	} else {
-		return &config, nil
 	}
+	if config.Name == "" {
+		return nil, fmt.Errorf("service name is required in %s", configFilePath)
+	}
+	if config.Command == "" {
+		return nil, fmt.Errorf("service command is required in %s", configFilePath)
+	}
+	if config.Runtime.Type == "" {
+		return nil, fmt.Errorf("service runtime type is required in %s", configFilePath)
+	}
+	return &config, nil
 }

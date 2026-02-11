@@ -5,7 +5,6 @@ import (
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,15 +19,8 @@ func TestStartCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -113,15 +105,8 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -180,7 +165,6 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	}
 
 	output := buf.String()
-
 	if !strings.Contains(output, "Started with PID:") {
 		t.Errorf("The start command didn't complete successfully, no PID was returned")
 		return

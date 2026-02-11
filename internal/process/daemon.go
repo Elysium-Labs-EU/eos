@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-func StartDaemon(logToFileAndConsole bool, baseDir string) error {
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, baseDir)
+func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) error {
+	logger, err := manager.NewDaemonLogger(logToFileAndConsole, baseDir, logFileName)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to setup daemn logger: %w", err)
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
@@ -43,7 +43,12 @@ func StartDaemon(logToFileAndConsole bool, baseDir string) error {
 	}
 
 	myPID := os.Getpid()
-	os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0644)
+	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0644)
+	if err != nil {
+		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
+		logger.Log(manager.LogLevelInfo, errorMessage.Error())
+		return errorMessage
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGCHLD)
@@ -63,7 +68,11 @@ func StartDaemon(logToFileAndConsole bool, baseDir string) error {
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
-	defer db.CloseDBConnection()
+	defer func() {
+		if err := db.CloseDBConnection(); err != nil {
+			logger.Log(manager.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
+		}
+	}()
 
 	mgr := manager.NewLocalManager(db, baseDir)
 	go handleIncomingCommands(listener, mgr, logger)
@@ -250,13 +259,15 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 			return errorResponse("GetServiceInstance requires service name")
 		}
 
-		result, found, err := mgr.GetServiceInstance(request.Args[0])
+		result, err := mgr.GetServiceInstance(request.Args[0])
 		if err != nil {
 			return errorResponse(err.Error())
 		}
+		if result == nil {
+			return errorResponse("failed to get a result, returned nil")
+		}
 		data, err := json.Marshal(types.GetServiceInstanceResponse{
-			Instance: result,
-			Found:    found,
+			Instance: *result,
 		})
 		if err != nil {
 			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
@@ -462,10 +473,16 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		if err != nil {
 			return errorResponse(err.Error())
 		}
-		data, err := json.Marshal(result)
+		if result == nil {
+			return errorResponse("no process history entry found")
+		}
+		data, err := json.Marshal(types.GetMostRecentProcessHistoryEntryResponse{
+			ProcessEntry: *result,
+		})
 		if err != nil {
 			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
 		}
+
 		return types.DaemonResponse{
 			Success: true,
 			Data:    data,
@@ -476,12 +493,12 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 			return errorResponse("CreateServiceLogFiles requires service name")
 		}
 
-		logFile, errorLogFile, err := mgr.CreateServiceLogFiles(request.Args[0])
+		logPath, errorLogPath, err := mgr.CreateServiceLogFiles(request.Args[0])
 		if err != nil {
 			return errorResponse(err.Error())
 		}
 
-		data, err := json.Marshal(map[string]*os.File{"logFile": logFile, "errorLogFile": errorLogFile})
+		data, err := json.Marshal(map[string]string{"logPath": logPath, "errorLogPath": errorLogPath})
 		if err != nil {
 			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
 		}

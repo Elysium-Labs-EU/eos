@@ -7,34 +7,49 @@ import (
 	"time"
 )
 
-func (m *LocalManager) CreateServiceLogFiles(serviceName string) (*os.File, *os.File, error) {
-	logDir := CreateLogDir(m.baseDir)
-	logFilename := CreateOutputLogFilename(serviceName)
-	errorLogFilename := CreateErrorOutputLogFilename(serviceName)
-	logPath := filepath.Join(logDir, logFilename)
-	errorLogPath := filepath.Join(logDir, errorLogFilename)
+func (m *LocalManager) CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
+	logDir := CreateLogDirPath(m.baseDir)
 
-	err := os.MkdirAll(logDir, 0755)
+	err = os.MkdirAll(logDir, 0755)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not create the required folder: %w", err)
+		return "", "", fmt.Errorf("failed to create log directory %s: %w", logDir, err)
 	}
 
+	logPath = filepath.Join(logDir, CreateOutputLogFilename(serviceName))
+	errorLogPath = filepath.Join(logDir, CreateErrorOutputLogFilename(serviceName))
+
+	for _, path := range []string{logPath, errorLogPath} {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to create log file %s: %w", path, err)
+		}
+		f.Close()
+	}
+
+	return logPath, errorLogPath, nil
+}
+
+// logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// if err != nil {
+// 	return nil, nil, fmt.Errorf("could not open log file: %w", err)
+// }
+
+// errorLogFile, err := os.OpenFile(errorLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// if err != nil {
+// 	defer logFile.Close()
+// 	return nil, nil, fmt.Errorf("could not open error log file: %w", err)
+// }
+
+func OpenLogFile(logPath string) (*os.File, error) {
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not open log file: %w", err)
+		return nil, fmt.Errorf("could not open log file: %w", err)
 	}
-
-	errorLogFile, err := os.OpenFile(errorLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		defer logFile.Close()
-		return nil, nil, fmt.Errorf("could not open error log file: %w", err)
-	}
-
-	return logFile, errorLogFile, nil
+	return logFile, nil
 }
 
 func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error) {
-	logDir := CreateLogDir(m.baseDir)
+	logDir := CreateLogDirPath(m.baseDir)
 
 	if errorLog {
 		errorLogFilename := CreateErrorOutputLogFilename(serviceName)
@@ -97,7 +112,7 @@ func formatLogMessage(msg string) string {
 		time.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
-func CreateLogDir(baseDir string) string {
+func CreateLogDirPath(baseDir string) string {
 	logDir := filepath.Join(baseDir, "logs")
 	return logDir
 }

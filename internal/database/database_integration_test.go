@@ -4,6 +4,7 @@ import (
 	"eos/internal/database"
 	"eos/internal/testutil"
 	"eos/internal/types"
+	"errors"
 	"testing"
 	"time"
 )
@@ -88,9 +89,12 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when getting deleted service, got nil")
 	}
-	if err != nil && err != database.ErrServiceNotFound {
-		// Check if error contains "not found" message
-		// (the actual error might be wrapped)
+	_, err = db.GetServiceCatalogEntry(serviceName)
+	if err == nil {
+		t.Error("Expected error when getting deleted service, got nil")
+	}
+	if !errors.Is(err, database.ErrServiceNotFound) {
+		t.Errorf("Expected ErrServiceNotFound, got: %v", err)
 	}
 
 	// Try to delete again - should return false
@@ -195,11 +199,18 @@ func TestProcessHistoryCRUD(t *testing.T) {
 		t.Error("Expected error when getting deleted process history entry, got nil")
 	}
 
-	// Cleanup
-	db.RemoveServiceInstance(serviceName)
+	t.Cleanup(func() {
+		removed, err := db.RemoveServiceInstance(serviceName)
+		if err != nil {
+			t.Fatalf("Failed to remove service instance: %v", err)
+		}
+		if !removed {
+			t.Fatalf("Failed to remove service instance due to an unknown reason")
+		}
+	})
 }
 
-func TestIsServiceRegistered(t *testing.T) {
+func TestIsServiceRegistered_integration(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	serviceName := "registration-check-test"
 
@@ -227,8 +238,15 @@ func TestIsServiceRegistered(t *testing.T) {
 		t.Error("Expected service to be registered")
 	}
 
-	// Cleanup
-	db.RemoveServiceCatalogEntry(serviceName)
+	t.Cleanup(func() {
+		removed, err := db.RemoveServiceCatalogEntry(serviceName)
+		if err != nil {
+			t.Errorf("Failed to remove service catalog entry during cleanup, got: %v\n", err)
+		}
+		if !removed {
+			t.Errorf("Failed to remove service catalog entry during cleanup")
+		}
+	})
 }
 
 func TestServiceInstanceUpdates(t *testing.T) {
@@ -318,15 +336,21 @@ func TestServiceInstanceUpdates(t *testing.T) {
 		t.Error("Expected LastHealthCheck to be set after multi-field update")
 	}
 
-	// Cleanup
-	db.RemoveServiceInstance(serviceName)
+	t.Cleanup(func() {
+		removed, err := db.RemoveServiceInstance(serviceName)
+		if err != nil {
+			t.Errorf("Failed to remove service instance during cleanup, got: %v\n", err)
+		}
+		if !removed {
+			t.Errorf("Failed to remove service instance during cleanup")
+		}
+	})
 }
 
 func TestProcessHistoryUpdates(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	serviceName := "process-update-test"
 
-	// Create service instance
 	err := db.RegisterServiceInstance(serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
@@ -335,13 +359,11 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	pid := 54321
 	initialState := types.ProcessStateStarting
 
-	// Create process history entry
 	_, err = db.RegisterProcessHistoryEntry(pid, serviceName, initialState)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
 
-	// Update state
 	newState := types.ProcessStateRunning
 	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
 		State: &newState,
@@ -350,7 +372,6 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to update state: %v", err)
 	}
 
-	// Verify update
 	entry, err := db.GetProcessHistoryEntryByPid(pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
@@ -377,7 +398,6 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Error("Expected StartedAt to be set")
 	}
 
-	// Update error message
 	errorMsg := "test error message"
 	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
 		Error: &errorMsg,
@@ -386,7 +406,6 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to update error: %v", err)
 	}
 
-	// Verify update
 	entry, err = db.GetProcessHistoryEntryByPid(pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
@@ -395,7 +414,6 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Errorf("Expected error '%s', got '%v'", errorMsg, entry.Error)
 	}
 
-	// Update stopped_at
 	stopTime := time.Now()
 	stoppedState := types.ProcessStateStopped
 	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
@@ -406,7 +424,6 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to update stopped_at: %v", err)
 	}
 
-	// Verify update
 	entry, err = db.GetProcessHistoryEntryByPid(pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
@@ -418,9 +435,22 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Errorf("Expected state %v, got %v", stoppedState, entry.State)
 	}
 
-	// Cleanup
-	db.RemoveProcessHistoryEntryViaPid(pid)
-	db.RemoveServiceInstance(serviceName)
+	t.Cleanup(func() {
+		processRemoved, err := db.RemoveProcessHistoryEntryViaPid(pid)
+		if err != nil {
+			t.Fatalf("Failed to removed process history entry in cleanup, got: %v", err)
+		}
+		if !processRemoved {
+			t.Fatal("Failed to removed process history entry in cleanup")
+		}
+		instanceRemoved, err := db.RemoveServiceInstance(serviceName)
+		if err != nil {
+			t.Fatalf("Failed to removed service instance in cleanup, got: %v", err)
+		}
+		if !instanceRemoved {
+			t.Fatal("Failed to removed service instance in cleanup")
+		}
+	})
 }
 
 func TestProcessHistoryQueryByService(t *testing.T) {
@@ -467,9 +497,24 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 		}
 	}
 
-	// Cleanup
-	for _, pid := range pids {
-		db.RemoveProcessHistoryEntryViaPid(pid)
-	}
-	db.RemoveServiceInstance(serviceName)
+	t.Cleanup(func() {
+		for _, pid := range pids {
+			removed, err := db.RemoveProcessHistoryEntryViaPid(pid)
+			if err != nil {
+				t.Logf("Failed to remove process history entry in cleanup, got: %v", err)
+				continue
+			}
+			if !removed {
+				t.Logf("Failed to remove process history entry in cleanup")
+				continue
+			}
+		}
+		removed, err := db.RemoveServiceInstance(serviceName)
+		if err != nil {
+			t.Fatalf("Failed to remove service instance in cleanup, got: %v", err)
+		}
+		if !removed {
+			t.Fatalf("Failed to remove process history entry in cleanup")
+		}
+	})
 }

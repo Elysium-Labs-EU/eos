@@ -5,7 +5,6 @@ import (
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,15 +17,8 @@ func TestStopCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir)
 	cmd := newTestRootCmd(manager)
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

@@ -24,31 +24,31 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			if err != nil {
 				cmd.Printf("Error checking service: %v\n", err)
 				return
-			} else if !exists {
+			}
+			if !exists {
 				cmd.Println("The service isn't registered")
 				cmd.Println("- Use 'eos add <path>' to register services")
 				cmd.Println("- Use 'eos status' to view registered services")
 				return
+			}
+			yamlFile, err := determineYamlFile(newProjectPath)
+
+			if err != nil {
+				cmd.Printf("Error determining YAML file on %v\n", newProjectPath)
+				return
+			}
+
+			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
+			if err != nil {
+				cmd.Printf("Error getting absolute path: %v\n", err)
+				return
+			}
+
+			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
+			if err != nil {
+				cmd.Printf("Error updating the service: %v\n", err)
 			} else {
-				yamlFile, err := determineYamlFile(newProjectPath)
-
-				if err != nil {
-					cmd.Printf("Error determining YAML file on %v\n", newProjectPath)
-					return
-				}
-
-				absPath, err := filepath.Abs(filepath.Dir(yamlFile))
-				if err != nil {
-					cmd.Printf("Error getting absolute path: %v\n", err)
-					return
-				}
-
-				err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
-				if err != nil {
-					cmd.Printf("Error updating the service: %v\n", err)
-				} else {
-					cmd.Printf("Successfully updated the service %s", serviceName)
-				}
+				cmd.Printf("Successfully updated the service %s", serviceName)
 			}
 		}}
 }

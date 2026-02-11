@@ -92,7 +92,6 @@ import (
 // 	if !strings.Contains(output, "Runtime path: /test-project/bin") {
 // 		t.Errorf("Expected runtime path to be '/test-project/bin'")
 // 	}
-// 	fmt.Print(output)
 // }
 
 func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
@@ -102,16 +101,8 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	runtime := types.Runtime{
-		Type: "nodejs",
-		Path: "/path/to/node",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "/home/user/start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+
+	testFile := testutil.CreateTestServiceConfigFile(t)
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)
@@ -126,7 +117,10 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	cmd.SetArgs([]string{"add", fullPath})
 	err = cmd.Execute()
@@ -187,7 +181,10 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	cmd.SetArgs([]string{"add", fullPath})
 	err = cmd.Execute()

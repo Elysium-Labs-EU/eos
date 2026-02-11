@@ -35,7 +35,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Printf("An error occured when loading the service config:\n%v\n", err)
 			}
 
-			serviceInstance, serviceInstanceFound, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil {
 				cmd.Printf("An error occured when getting the service instance:\n%v\n", err)
 			}
@@ -83,7 +83,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			cmd.Println("")
 			cmd.Println("# Service instance information")
-			if serviceInstanceFound {
+			if serviceInstance != nil {
 				cmd.Printf("Restart Count: %d\n", serviceInstance.RestartCount)
 
 				if serviceInstance.LastHealthCheck != nil {

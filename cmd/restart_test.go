@@ -5,7 +5,6 @@ import (
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,15 +22,8 @@ func TestRestartCommand(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
+
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -84,10 +76,14 @@ func TestRestartCommand(t *testing.T) {
 	cmd.SetArgs([]string{"restart", testFile.Name})
 	err = cmd.Execute()
 
+	if err != nil {
+		t.Fatalf("Restart command execution error, got: %v", err)
+	}
+
 	output = buf.String()
 
 	if !strings.Contains(output, "Restarted with PID:") {
-		t.Errorf("The restart command didn't complete successfully, no PID was returned")
+		t.Fatalf("The restart command didn't complete successfully, no PID was returned")
 	}
 
 	pidPrefIndex := strings.Index(output, "PID:")

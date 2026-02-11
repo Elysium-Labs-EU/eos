@@ -5,7 +5,6 @@ import (
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,11 +19,7 @@ func TestRemoveCommand(t *testing.T) {
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
 
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
-	}
+	testFile := testutil.CreateTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -40,7 +35,10 @@ func TestRemoveCommand(t *testing.T) {
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	os.WriteFile(fullPath, yamlData, 0644)
+	err = os.WriteFile(fullPath, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
 
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)

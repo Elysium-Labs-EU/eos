@@ -86,7 +86,10 @@ func TestGetService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
 
 	found, error := manager.GetServiceCatalogEntry("test-service")
 	if error != nil {
@@ -100,8 +103,8 @@ func TestGetInvalidServiceInstance(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir)
 
-	_, exists, error := manager.GetServiceInstance("non-existent")
-	if exists {
+	serviceInstance, error := manager.GetServiceInstance("non-existent")
+	if serviceInstance != nil {
 		t.Error("Non-existent service should not exist")
 	}
 	if error != nil {
@@ -147,7 +150,11 @@ func TestStartService(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
 	pid, err := manager.StartService("test-service")
 
 	if err != nil {

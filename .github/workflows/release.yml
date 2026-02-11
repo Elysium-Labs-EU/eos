@@ -1,4 +1,4 @@
-name: Build and Release
+name: Release
 
 on:
   push:
@@ -14,8 +14,46 @@ on:
 permissions:
   contents: write
 
+env:
+  GO_VERSION: "1.25"
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test ./... -v -race
+
   build:
+    needs: [lint, test]
     strategy:
       matrix:
         include:
@@ -36,7 +74,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install dependencies
         run: go mod download
@@ -121,14 +159,22 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## Eos ${{ steps.version.outputs.version }}
+            ## eos ${{ steps.version.outputs.version }}
 
             Service Orchestration Tool - Manage and monitor your services with ease.
 
             ### Quick Installation
 
+            Using curl
             ```bash
-            curl -sSL https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh | sudo bash
+            curl -sSL https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh -o install.sh
+            sudo bash install.sh
+            ```
+
+            Using wget
+            ```bash
+            wget https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh
+            sudo bash install.sh
             ```
 
             ### Manual Installation
@@ -152,7 +198,7 @@ jobs:
 
             ### What's New
 
-            Eos is a service orchestration tool that combines:
+            eos is a service orchestration tool that combines:
             - **Fast Registry**: SQLite-based service discovery
             - **Live Configuration**: Always-current config from filesystem
             - **Process Management**: Start, stop, and monitor services

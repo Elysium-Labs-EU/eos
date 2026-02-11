@@ -74,5 +74,8 @@ func (r *DaemonRequest) Validate() error {
 
 type GetServiceInstanceResponse struct {
 	Instance ServiceRuntime `json:"instance"`
-	Found    bool           `json:"found"`
+}
+
+type GetMostRecentProcessHistoryEntryResponse struct {
+	ProcessEntry ProcessHistory `json:"process_entry"`
 }
