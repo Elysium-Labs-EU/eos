@@ -94,12 +94,16 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for socket")
 }
 
-func (dm *DaemonManager) sendRequest(method types.MethodName, args []string) (types.DaemonResponse, error) {
+func (dm *DaemonManager) sendRequest(method types.MethodName, args []string) (response types.DaemonResponse, err error) {
 	conn, err := net.Dial("unix", dm.socketPath)
 	if err != nil {
 		return types.DaemonResponse{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close daemon connection: %w", closeErr)
+		}
+	}()
 
 	request := types.DaemonRequest{
 		Method: method,
@@ -111,7 +115,6 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args []string) (ty
 		return types.DaemonResponse{}, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	var response types.DaemonResponse
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&response); err != nil {
 		return types.DaemonResponse{}, fmt.Errorf("failed to read response: %w", err)
@@ -460,9 +463,12 @@ func (l *DaemonLogger) Log(level LogLevel, message string) {
 }
 
 func (l *DaemonLogger) rotate() error {
-	l.file.Close()
+	err := l.file.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close the file: %w", err)
+	}
 
-	err := handleRenameExistingLogs(l.logDir, l.fileName)
+	err = handleRenameExistingLogs(l.logDir, l.fileName)
 	if err != nil {
 		return fmt.Errorf("failed to rename log files: %w", err)
 	}

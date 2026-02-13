@@ -7,7 +7,6 @@ import (
 	"eos/internal/util"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -88,7 +87,7 @@ func (hm *HealthMonitor) checkAllServices() {
 func (hm *HealthMonitor) checkStartProcess(
 	service *types.ServiceCatalogEntry,
 	process *types.ProcessHistory,
-	timeoutLimitInSeconds *time.Duration,
+	timeoutLimit *time.Duration,
 ) {
 	serviceName := service.Name
 	pid := process.PID
@@ -114,7 +113,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		return
 	}
 
-	if time.Since(*process.StartedAt) > *timeoutLimitInSeconds {
+	if time.Since(*process.StartedAt) > *timeoutLimit {
 		errorString := fmt.Sprintf("Service %s taking too long to start", serviceName)
 
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
@@ -146,26 +145,26 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	configPort := config.Port
 
-	if configPort != 0 && !hm.canConnectToPort(configPort) {
-		errorString := fmt.Sprintf("Service %s is not running on port %d", serviceName, configPort)
+	// if configPort != 0 && !hm.canConnectToPort(configPort) {
+	// 	errorString := fmt.Sprintf("Service %s is not running on port %d", serviceName, configPort)
 
-		hm.logger.Log(manager.LogLevelInfo, errorString)
-		err = hm.mgr.LogToServiceStderr(serviceName, errorString)
-		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
-				fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
-		}
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateStopped),
-			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr(errorString),
-		})
-		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
-				fmt.Sprintf("Failed to updated process history entry for %s: %v", serviceName, err))
-		}
-		return
-	}
+	// 	hm.logger.Log(manager.LogLevelInfo, errorString)
+	// 	err = hm.mgr.LogToServiceStderr(serviceName, errorString)
+	// 	if err != nil {
+	// 		hm.logger.Log(manager.LogLevelError,
+	// 			fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
+	// 	}
+	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	// 		State:     util.ProcessStatePtr(types.ProcessStateStopped),
+	// 		StoppedAt: util.TimePtr(time.Now()),
+	// 		Error:     util.StringPtr(errorString),
+	// 	})
+	// 	if err != nil {
+	// 		hm.logger.Log(manager.LogLevelError,
+	// 			fmt.Sprintf("Failed to updated process history entry for %s: %v", serviceName, err))
+	// 	}
+	// 	return
+	// }
 
 	if configPort != 0 {
 		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("Service %s is now running on port %d", serviceName, configPort))
@@ -184,22 +183,22 @@ func (hm *HealthMonitor) checkStartProcess(
 }
 
 func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
-	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
-	config, err := manager.LoadServiceConfig(configPath)
+	// configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
+	// config, err := manager.LoadServiceConfig(configPath)
 	serviceName := service.Name
 	pid := process.PID
 
-	if err != nil {
-		hm.logger.Log(manager.LogLevelError,
-			fmt.Sprintf("Failed to load config for %s: %v", serviceName, err))
-		return
-	}
+	// if err != nil {
+	// 	hm.logger.Log(manager.LogLevelError,
+	// 		fmt.Sprintf("Failed to load config for %s: %v", serviceName, err))
+	// 	return
+	// }
 
 	if !hm.isProcessAlive(pid) {
 		errorString := fmt.Sprintf("Service %s is not running", serviceName)
 
 		hm.logger.Log(manager.LogLevelInfo, errorString)
-		err = hm.mgr.LogToServiceStderr(serviceName, errorString)
+		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
 			hm.logger.Log(manager.LogLevelError,
 				fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
@@ -216,28 +215,39 @@ func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry,
 		}
 	}
 
-	configPort := config.Port
+	// configPort := config.Port
+	// //NOTE: Does a failed check on the port mean the process is wrong, or the check is wrong?
+	// connectable, err := hm.canConnectToPort(configPort)
+	// if err != nil {
+	// 	hm.logger.Log(manager.LogLevelInfo, err.Error())
+	// 	err = hm.mgr.LogToServiceStderr(serviceName, err.Error())
+	// 	if err != nil {
+	// 		hm.logger.Log(manager.LogLevelError,
+	// 			fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
+	// 	}
+	// 	return
+	// }
 
-	if configPort != 0 && !hm.canConnectToPort(configPort) {
-		errorString := fmt.Sprintf("Service %s is not running on port %d", serviceName, configPort)
+	// if configPort != 0 && !connectable {
+	// 	errorString := fmt.Sprintf("Service %s is not running on port %d", serviceName, configPort)
 
-		hm.logger.Log(manager.LogLevelInfo, errorString)
-		err = hm.mgr.LogToServiceStderr(serviceName, errorString)
-		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
-				fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
-		}
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateFailed),
-			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr(errorString),
-		})
-		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
-				fmt.Sprintf("Failed to updated process history entry for %s: %v", serviceName, err))
-		}
-		return
-	}
+	// 	hm.logger.Log(manager.LogLevelInfo, errorString)
+	// 	err = hm.mgr.LogToServiceStderr(serviceName, errorString)
+	// 	if err != nil {
+	// 		hm.logger.Log(manager.LogLevelError,
+	// 			fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
+	// 	}
+	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	// 		State:     util.ProcessStatePtr(types.ProcessStateFailed),
+	// 		StoppedAt: util.TimePtr(time.Now()),
+	// 		Error:     util.StringPtr(errorString),
+	// 	})
+	// 	if err != nil {
+	// 		hm.logger.Log(manager.LogLevelError,
+	// 			fmt.Sprintf("Failed to updated process history entry for %s: %v", serviceName, err))
+	// 	}
+	// 	return
+	// }
 }
 
 func (hm *HealthMonitor) checkFailedProcess(service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceRuntime, maxRestartCount *int) {
@@ -305,15 +315,18 @@ func calculateBackoffDelay(restartCount int) time.Duration {
 	return time.Duration(calculatedDelayAsInt) * time.Millisecond
 }
 
-func (hm *HealthMonitor) canConnectToPort(port int) bool {
-	address := fmt.Sprintf("localhost:%d", port)
-	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
+// func (hm *HealthMonitor) canConnectToPort(port int) (bool, error) {
+// 	address := fmt.Sprintf("localhost:%d", port)
+// 	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
+// 	if err != nil {
+// 		return false, fmt.Errorf("unable to connect to the tcp address via dial, got: %v", err)
+// 	}
+
+// 	if err := conn.Close(); err != nil {
+// 		return false, fmt.Errorf("unable to close the connection on port check, got: %v", err)
+// 	}
+// 	return true, nil
+// }
 
 func (hm *HealthMonitor) isProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)

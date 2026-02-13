@@ -4,6 +4,12 @@ pre-commit:
     - name: golangci-lint
       run: golangci-lint run --fast
 
+    - name: gosec
+      run: gosec ./...
+
+    - name: go-critic
+      run: gocritic check ./...
+
     - name: tests
       run: go test ./cmd ./internal/** -v
       interactive: true

@@ -67,11 +67,11 @@ func NewDB() (*DB, error) {
 	}
 	version, dirty, err := db.GetCurrentVersion(MigrationsFS, MigrationsPath)
 	if err != nil {
-		return nil, fmt.Errorf("Warning: Could not get schema version: %v", err)
+		return nil, fmt.Errorf("warning: Could not get schema version: %v", err)
 	} else {
 		fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
 		if dirty {
-			return nil, fmt.Errorf("Database is in a dirty state. Manual intervention required.")
+			return nil, fmt.Errorf("database is in a dirty state. Manual intervention required")
 		}
 	}
 
@@ -95,11 +95,11 @@ func NewTestDB(dbPath string, testMigrationsFS embed.FS, testMigrationsPath stri
 	}
 	version, dirty, err := db.GetCurrentVersion(testMigrationsFS, testMigrationsPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Warning: Could not get schema version: %v", err)
+		return nil, nil, fmt.Errorf("warning: Could not get schema version: %v", err)
 	} else {
 		fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
 		if dirty {
-			return nil, nil, fmt.Errorf("Database is in a dirty state. Manual intervention required.")
+			return nil, nil, fmt.Errorf("database is in a dirty state. Manual intervention required")
 		}
 	}
 
@@ -112,7 +112,9 @@ func openDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("could not open database: %w", err)
 	}
 	if err := conn.Ping(); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("error closing the connnection to database: %w", err)
+		}
 		return nil, fmt.Errorf("could not connect to database: %w", err)
 	}
 
@@ -187,7 +189,7 @@ func (db *DB) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)
 	if err != nil {
 		return nil, fmt.Errorf("could not query registered services: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var services []types.ServiceCatalogEntry
 	for rows.Next() {
@@ -197,6 +199,10 @@ func (db *DB) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)
 			return nil, fmt.Errorf("could not scan service row: %w", err)
 		}
 		services = append(services, service)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating service rows: %w", err)
 	}
 
 	return services, nil
@@ -285,7 +291,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(serviceName string) ([]types
 	if err != nil {
 		return nil, fmt.Errorf("could not query registered services: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var processHistoryEntries []types.ProcessHistory
 	for rows.Next() {
@@ -302,6 +308,10 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(serviceName string) ([]types
 			return nil, fmt.Errorf("could not scan process history row: %w", err)
 		}
 		processHistoryEntries = append(processHistoryEntries, processHistory)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating process history rows: %w", err)
 	}
 
 	return processHistoryEntries, nil

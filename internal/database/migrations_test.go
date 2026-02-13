@@ -135,7 +135,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close()
+		defer rows.Close() //nolint:errcheck
 
 		for rows.Next() {
 			var cid int
@@ -149,6 +149,10 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 			if _, exists := expectedColumns[name]; exists {
 				expectedColumns[name] = true
 			}
+		}
+
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error iterating service catalog table_info rows")
 		}
 
 		for col, found := range expectedColumns {
@@ -173,7 +177,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close()
+		defer rows.Close() //nolint:errcheck
 
 		for rows.Next() {
 			var cid int
@@ -187,6 +191,10 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 			if _, exists := expectedColumns[name]; exists {
 				expectedColumns[name] = true
 			}
+		}
+
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error iterating service catalog table_info rows")
 		}
 
 		for col, found := range expectedColumns {
@@ -213,7 +221,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close()
+		defer rows.Close() //nolint:errcheck
 
 		for rows.Next() {
 			var cid int
@@ -227,6 +235,10 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 			if _, exists := expectedColumns[name]; exists {
 				expectedColumns[name] = true
 			}
+		}
+
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error iterating service catalog process_history rows")
 		}
 
 		for col, found := range expectedColumns {

@@ -163,7 +163,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	}
 	if serviceInstance != nil {
 		// TODO: return found PID somehow instead?
-		return 0, fmt.Errorf("service instance already found for %s. Use 'restart' to start this service again.", name)
+		return 0, fmt.Errorf("service instance already found for %s. Use 'restart' to start this service again", name)
 	}
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(name)
@@ -188,21 +188,21 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		}
 	}
 
-	logPath, errorLogPath, err := m.CreateServiceLogFiles(service.Name)
+	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("unable to create service logs files, got:\n %v", err)
-	}
-	logFile, err := OpenLogFile(logPath)
-	if err != nil {
-		return 0, fmt.Errorf("opening log file errored, got:\n %v", err)
-	}
-	errorLogFile, err := OpenLogFile(errorLogPath)
-	if err != nil {
-		return 0, fmt.Errorf("opening error log file errored, got:\n %v", err)
+		return 0, fmt.Errorf("failed to prepare log files for %s: %w", name, err)
 	}
 
-	defer logFile.Close()
-	defer errorLogFile.Close()
+	defer func() {
+		if closeErr := logFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("closing the log file errored, got:\n %v", closeErr)
+		}
+	}()
+	defer func() {
+		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close error log file for %s: %w", name, closeErr)
+		}
+	}()
 
 	if config.Runtime.Path != "" {
 		if err := validateRuntimePath(config.Runtime); err != nil {
@@ -279,7 +279,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	return pid, nil
 }
 
-func (m *LocalManager) RestartService(name string) (int, error) {
+func (m *LocalManager) RestartService(name string) (pid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotFound) {
 		return 0, fmt.Errorf("service %s not found", name)
@@ -302,21 +302,21 @@ func (m *LocalManager) RestartService(name string) (int, error) {
 		return 0, fmt.Errorf("no service instance found for %s, got: %v", name, err)
 	}
 
-	logPath, errorLogPath, err := m.CreateServiceLogFiles(service.Name)
+	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("unable to create service logs files, got:\n %v", err)
-	}
-	logFile, err := OpenLogFile(logPath)
-	if err != nil {
-		return 0, fmt.Errorf("opening log file errored, got:\n %v", err)
-	}
-	errorLogFile, err := OpenLogFile(errorLogPath)
-	if err != nil {
-		return 0, fmt.Errorf("opening error log file errored, got:\n %v", err)
+		return 0, fmt.Errorf("failed to prepare log files for %s: %w", name, err)
 	}
 
-	defer logFile.Close()
-	defer errorLogFile.Close()
+	defer func() {
+		if closeErr := logFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("closing the log file errored, got:\n %v", closeErr)
+		}
+	}()
+	defer func() {
+		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close error log file for %s: %w", name, closeErr)
+		}
+	}()
 
 	if config.Runtime.Path != "" {
 		if err := validateRuntimePath(config.Runtime); err != nil {
@@ -392,6 +392,27 @@ func (m *LocalManager) RestartService(name string) (int, error) {
 	}
 }
 
+func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
+	logPath, errorLogPath, err := m.CreateServiceLogFiles(serviceName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create log file paths: %w", err)
+	}
+	logFile, err = OpenLogFile(logPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open log file: %w", err)
+	}
+	errorLogFile, err = OpenLogFile(errorLogPath)
+	if err != nil {
+		err = logFile.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to close log file - during clean up: %w", err)
+		}
+		return nil, nil, fmt.Errorf("failed to open error log file: %w", err)
+	}
+
+	return logFile, errorLogFile, nil
+}
+
 type StopResult struct {
 	Stopped []int
 	Failed  map[int]string
@@ -449,33 +470,33 @@ func validateRuntimePath(runtime types.Runtime) error {
 	if !filepath.IsAbs(runtime.Path) {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("failed to get homeDir during runtime validation, got: %v\n", err)
+			return fmt.Errorf("failed to get homeDir during runtime validation, got: %v", err)
 		}
 		runtimePath = filepath.Join(homeDir, runtime.Path)
 	}
 
 	dirInfo, err := os.Stat(runtimePath)
 	if err != nil {
-		return fmt.Errorf("the specified runtime path is not a valid location, got: %v\n", err)
+		return fmt.Errorf("the specified runtime path is not a valid location, got: %v", err)
 	}
 
 	if !dirInfo.IsDir() {
-		return fmt.Errorf("the specified runtime path is not a directory\n")
+		return fmt.Errorf("the specified runtime path is not a directory")
 	}
 
 	if runtime.Type == "nodejs" || runtime.Type == "node" {
 		nodePath := filepath.Join(runtimePath, "node")
 		nodeInfo, err := os.Stat(nodePath)
 		if err != nil {
-			return fmt.Errorf("unable to find node binary in specified path\n")
+			return fmt.Errorf("unable to find node binary in specified path")
 		}
 
 		if nodeInfo.IsDir() {
-			return fmt.Errorf("the constructed full path for the runtime is a directory\n")
+			return fmt.Errorf("the constructed full path for the runtime is a directory")
 		}
 
 		if nodeInfo.Mode()&0111 == 0 {
-			return fmt.Errorf("node binary is not executable: %s\n", nodePath)
+			return fmt.Errorf("node binary is not executable: %s", nodePath)
 		}
 
 		return nil

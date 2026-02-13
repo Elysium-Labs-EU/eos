@@ -23,7 +23,9 @@ func (m *LocalManager) CreateServiceLogFiles(serviceName string) (logPath string
 		if err != nil {
 			return "", "", fmt.Errorf("failed to create log file %s: %w", path, err)
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			return "", "", fmt.Errorf("failed to close log file %s: %w", path, err)
+		}
 	}
 
 	return logPath, errorLogPath, nil
@@ -56,7 +58,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 		errorLogPath := filepath.Join(logDir, errorLogFilename)
 		_, err := os.Stat(errorLogPath)
 		if err != nil {
-			return nil, fmt.Errorf("An error occured during getting the error log file, got:\n%v", err)
+			return nil, fmt.Errorf("an error occured during getting the error log file, got:\n%v", err)
 		}
 
 		return &errorLogPath, nil
@@ -67,7 +69,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 
 	_, err := os.Stat(logPath)
 	if err != nil {
-		return nil, fmt.Errorf("An error occured during getting the log file, got:\n%v", err)
+		return nil, fmt.Errorf("an error occured during getting the log file, got:\n%v", err)
 	}
 
 	return &logPath, nil
@@ -89,18 +91,22 @@ func (m *LocalManager) LogToServiceStderr(serviceName string, message string) er
 	return m.appendToFile(logPath, formatLogMessage(message))
 }
 
-func (m *LocalManager) appendToFile(filePath *string, content string) error {
-	file, err := os.OpenFile(*filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open log file %s: %w", *filePath, err)
+func (m *LocalManager) appendToFile(filePath *string, content string) (err error) {
+	file, openErr := os.OpenFile(*filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if openErr != nil {
+		return fmt.Errorf("failed to open log file %s: %w", *filePath, openErr)
 	}
-	defer file.Close()
+	defer func() {
+		if closeError := file.Close(); closeError != nil && err == nil {
+			err = fmt.Errorf("failed to close the file connection for %s: %w", *filePath, err)
+		}
+	}()
 
-	if _, err := file.WriteString(content); err != nil {
+	if _, err = file.WriteString(content); err != nil {
 		return fmt.Errorf("failed to write to log file %s: %w", *filePath, err)
 	}
 
-	if err := file.Sync(); err != nil {
+	if err = file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync log file %s: %w", *filePath, err)
 	}
 

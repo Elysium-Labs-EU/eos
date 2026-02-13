@@ -39,7 +39,11 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) e
 				return errorMessage
 			}
 		}
-		os.Remove(pidFile)
+		if err := os.Remove(pidFile); err != nil {
+			errorMessage := fmt.Errorf("unable to remove the socket path, got: %v", err)
+			logger.Log(manager.LogLevelError, errorMessage.Error())
+			return errorMessage
+		}
 	}
 
 	myPID := os.Getpid()
@@ -54,7 +58,13 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) e
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGCHLD)
 
 	socketPath := config.DaemonSocketPath
-	os.Remove(socketPath)
+
+	if err := os.Remove(socketPath); err != nil {
+		errorMessage := fmt.Errorf("unable to remove the socket path, got: %v", err)
+		logger.Log(manager.LogLevelError, errorMessage.Error())
+		return errorMessage
+	}
+
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
@@ -134,9 +144,16 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) e
 			}
 
 		case syscall.SIGTERM, syscall.SIGINT:
-			listener.Close()
-			os.Remove(socketPath)
-			os.Remove(pidFile)
+			if err := listener.Close(); err != nil {
+				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to close the listener, got: %v", err))
+			}
+
+			if err := os.Remove(socketPath); err != nil {
+				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove the socket path, got: %v", err))
+			}
+			if err := os.Remove(pidFile); err != nil {
+				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove pid file, got: %v", err))
+			}
 			return nil
 		}
 	}
@@ -234,7 +251,11 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 }
 
 func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager.DaemonLogger) {
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logger.Log(manager.LogLevelError, fmt.Sprintf("failed to close daemon socket: %v", err))
+		}
+	}()
 
 	var request types.DaemonRequest
 	decoder := json.NewDecoder(conn)
