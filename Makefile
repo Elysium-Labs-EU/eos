@@ -1,0 +1,141 @@
+.PHONY: help dev build install test lint clean docker-* release-local
+
+
+help:
+	@echo "Available targets:"
+	@echo "  make dev              - Run eos locally"
+	@echo "  make build            - Build binary with version info"
+	@echo "  make install          - Install to ~/.local/bin"
+	@echo "  make test             - Run tests"
+	@echo "  make lint             - Run all linters"
+	@echo "  make ci               - Run all CI checks locally"
+	@echo ""
+	@echo "Docker testing:"
+	@echo "  make docker-local     - Test with local Docker setup"
+	@echo "  make docker-vps       - Test install.sh in VPS simulator"
+	@echo "  make docker-clean     - Clean up Docker resources"
+	@echo ""
+	@echo "Release:"
+	@echo "  make release-local    - Build release binaries locally"
+
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
+LDFLAGS=-ldflags "-X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.buildDate=$(BUILD_DATE)' -w -s"
+
+
+BINARY_NAME=eos
+GOBIN=./bin
+INSTALL_PATH=~/.local/bin
+
+
+dev:
+	@echo "Running eos in development mode..."
+	go run . daemon
+
+
+build:
+	@echo "Building eos $(VERSION)..."
+	@mkdir -p $(GOBIN)
+	CGO_ENABLED=0 go build $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME) .
+	@echo "Binary built: $(GOBIN)/$(BINARY_NAME)"
+
+# Install locally
+install: build
+	@echo "Installing to $(INSTALL_PATH)..."
+	@mkdir -p $(INSTALL_PATH)
+	cp $(GOBIN)/$(BINARY_NAME) $(INSTALL_PATH)/
+	@echo "Installed! Run 'eos --help' to get started"
+
+test:
+	@echo "Running tests..."
+	go test ./cmd ./internal/... -v -race
+
+lint:
+	@echo "Running linters..."
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
+	golangci-lint run --timeout=5m
+	@command -v gosec >/dev/null 2>&1 || { echo "gosec not found. Install: go install github.com/securego/gosec/v2/cmd/gosec@latest"; exit 1; }
+	gosec ./...
+	@command -v gocritic >/dev/null 2>&1 || { echo "gocritic not found. Install: go install github.com/go-critic/go-critic/cmd/gocritic@latest"; exit 1; }
+	gocritic check ./...
+
+ci: lint test
+	@echo "✓ All CI checks passed!"
+
+# Docker - Local testing (nginx + eos container)
+docker-local:
+	@echo "Starting local Docker test environment..."
+	@mkdir -p test-files-local/nginx-logs
+	@sh -c 'docker compose -f test-files-local/docker-compose.yml up --build'
+
+docker-local-down:
+	docker compose -f test-files-local/docker-compose.yml down
+
+docker-local-logs:
+	docker compose -f test-files-local/docker-compose.yml logs -f
+
+# Docker - VPS simulator (test install.sh)
+docker-vps:
+	@echo "Starting VPS simulator..."
+	@echo "Once started, run: make docker-vps-test"
+	@sh -c 'docker compose -f test-files-vps/docker-compose.yml up --build -d'
+
+docker-vps-down:
+	docker compose -f test-files-vps/docker-compose.yml down
+
+docker-vps-test:
+	@echo "Testing install.sh in VPS simulator..."
+	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
+
+docker-vps-shell:
+	@echo "Opening shell in VPS simulator..."
+	docker exec -it vps-test-eos bash
+
+docker-vps-status:
+	@echo "Checking eos service status in VPS..."
+	docker exec -it vps-test-eos systemctl status eos
+
+docker-vps-logs:
+	@echo "Following eos logs in VPS..."
+	docker exec -it vps-test-eos journalctl -u eos -f
+
+# Clean up all Docker resources
+docker-clean:
+	@echo "Cleaning up Docker resources..."
+	docker compose -f test-files-local/docker-compose.yml down -v 2>/dev/null || true
+	docker compose -f test-files-vps/docker-compose.yml down -v 2>/dev/null || true
+	docker system prune -f
+	rm -rf test-files-local/nginx-logs
+
+# Build release binaries locally (for testing before actual release)
+release-local:
+	@echo "Building release binaries..."
+	@mkdir -p dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/eos-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/eos-linux-arm64 .
+	cd dist && sha256sum eos-linux-* > sha256sums.txt
+	@echo "Release binaries built in ./dist/"
+	@ls -lh dist/
+
+# Complete workflow: test install.sh with locally built binary
+test-install-flow: release-local
+	@echo "Testing complete install flow..."
+	@echo "1. Building local binary..."
+	@echo "2. Starting VPS simulator..."
+	@$(MAKE) docker-vps
+	@sleep 5
+	@echo "3. Copying binary to VPS..."
+	docker cp dist/eos-linux-amd64 vps-test-eos:/usr/local/bin/eos
+	@echo "4. Running install.sh..."
+	docker exec -it vps-test-eos bash -c "chmod +x /usr/local/bin/eos"
+	@echo "Install test complete!"
+
+# Clean everything
+clean:
+	@echo "Cleaning..."
+	rm -rf $(GOBIN) dist/
+	@$(MAKE) docker-clean
+	go clean
+	@echo "Cleaned"

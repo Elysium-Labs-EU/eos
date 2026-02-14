@@ -1,6 +1,6 @@
 package config
 
 const (
-	DaemonSocketPath = "/tmp/eos.sock"
-	DaemonPIDFile    = "/tmp/eos.pid"
+	DaemonSocketPath = "/var/run/eos.sock"
+	DaemonPIDFile    = "/var/run/eos.pid"
 )
