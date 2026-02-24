@@ -492,12 +492,12 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	}
 	if entry.StartedAt == nil {
 		t.Error("StartedAt: expected non-nil")
-	} else if entry.StartedAt.Truncate(time.Second) != startedAt {
+	} else if !entry.StartedAt.Truncate(time.Second).Equal(startedAt) {
 		t.Errorf("StartedAt: expected %v, got %v", startedAt, *entry.StartedAt)
 	}
 	if entry.StoppedAt == nil {
 		t.Error("StoppedAt: expected non-nil — this catches the column/scan mismatch bug")
-	} else if entry.StoppedAt.Truncate(time.Second) != stoppedAt {
+	} else if !entry.StoppedAt.Truncate(time.Second).Equal(stoppedAt) {
 		t.Errorf("StoppedAt: expected %v, got %v", stoppedAt, *entry.StoppedAt)
 	}
 	if entry.UpdatedAt == nil {
