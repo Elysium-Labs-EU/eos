@@ -21,19 +21,14 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
-          args: --timeout=5m
+          version: v2.10
 
   test:
     runs-on: ubuntu-latest
@@ -49,8 +44,11 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Verify dependencies
+        run: go mod verify
+
       - name: Run tests
-        run: go test ./... -v -race
+        run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
   build:
     needs: [lint, test]
@@ -206,15 +204,6 @@ jobs:
             ```bash
             sha256sum -c sha256sums.txt
             ```
-
-            ### What's New
-
-            eos is a service orchestration tool that combines:
-            - **Fast Registry**: SQLite-based service discovery
-            - **Live Configuration**: Always-current config from filesystem
-            - **Process Management**: Start, stop, and monitor services
-            - **Health Monitoring**: Track service health and logs
-            - **Systemd Integration**: Automatic restart and boot integration
 
             See the [README](https://github.com/Elysium-Labs-EU/eos/blob/main/README.md) for full documentation.
         env:
