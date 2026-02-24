@@ -13,9 +13,8 @@ readonly NC='\033[0m' # No Color
 # Configuration
 readonly REPO="Elysium-Labs-EU/eos"
 readonly BINARY_NAME="eos"
-readonly INSTALL_DIR="/usr/local/bin"
+readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
-# readonly SERVICE_NAME="${BINARY_NAME}.service"
 
 # Print functions
 info() {
@@ -40,6 +39,18 @@ step() {
 
 dim() {
     echo -e "${DIM}$1${NC}"
+}
+
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --local <path>    Use a local binary instead of downloading from GitHub"
+    echo "  --help            Show this help message"
+    echo ""
+    echo "Environment variables:"
+    echo "  EOS_INSTALL_DIR   Install directory (default: /usr/local/bin)"
+    echo "  EOS_VERSION       Version to install (default: latest)"
 }
 
 confirm() {
@@ -154,17 +165,14 @@ detect_package_manager() {
 
 # Check if SQLite3 is installed and functional
 check_sqlite3() {
-    # Check if sqlite3 command exists
     if ! command -v sqlite3 &> /dev/null; then
-        return 1  # Not installed
+        return 1
     fi
     
-    # Check if it's actually functional
     if ! sqlite3 --version &> /dev/null; then
         return 1
     fi
     
-    # Quick functionality test
     local test_db="/tmp/sqlite_test_$$.db"
     if ! sqlite3 "$test_db" "SELECT 1;" &> /dev/null; then
         rm -f "$test_db"
@@ -172,7 +180,7 @@ check_sqlite3() {
     fi
     rm -f "$test_db"
     
-    return 0  # Installed and functional
+    return 0
 }
 
 # Install SQLite
@@ -226,7 +234,6 @@ install_sqlite3() {
             ;;
     esac
     
-    # If we got here, installation failed
     error "Failed to install SQLite3"
     return 1
 }
@@ -238,7 +245,6 @@ setup_sqlite3() {
     echo ""
     step "Checking SQLite3..."
     
-    # Check if already installed
     if check_sqlite3; then
         local version
         version=$(sqlite3 --version | cut -d' ' -f1)
@@ -247,7 +253,6 @@ setup_sqlite3() {
         return 0
     fi
     
-    # Not installed - inform user
     info "SQLite3 is not installed"
     dim "  SQLite3 is required for storing service state and configuration"
     echo ""
@@ -262,10 +267,8 @@ setup_sqlite3() {
         return 1
     fi
     
-    # Ask user if they want to install
     if confirm "Install SQLite3 now?" "y"; then
         if install_sqlite3 "$pkg_manager"; then
-            # Verify installation
             if check_sqlite3; then
                 local version
                 version=$(sqlite3 --version | cut -d' ' -f1)
@@ -301,6 +304,44 @@ setup_sqlite3() {
 
 
 main() {
+    # Parse arguments
+    local local_binary=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --local)
+                if [[ $# -lt 2 ]]; then
+                    error "--local requires a path argument"
+                    usage
+                    exit 1
+                fi
+                local_binary="$2"
+                shift 2
+                ;;
+            --local=*)
+                local_binary="${1#*=}"
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    # Validate local binary if specified
+    if [ -n "$local_binary" ]; then
+        if [ ! -f "$local_binary" ]; then
+            error "Local binary not found: $local_binary"
+            exit 1
+        fi
+    fi
+
     echo ""
     echo -e "${BOLD}eos installer${NC}"
     echo ""
@@ -320,28 +361,42 @@ main() {
     pkg_manager=$(detect_package_manager)
     dim "  Package manager: $pkg_manager"
     
+    if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+        dim "  Install directory: $INSTALL_DIR (custom)"
+    fi
+
     echo ""
-    
-    local version="${EOS_VERSION:-}"
-    if [ -z "$version" ]; then
-        step "Fetching latest version..."
-        version=$(fetch_json_field "https://api.github.com/repos/${REPO}/releases/latest" "tag_name" "$download_tool")
-        
+
+    # Version resolution — skip when using a local binary
+    local version=""
+    if [ -z "$local_binary" ]; then
+        version="${EOS_VERSION:-}"
         if [ -z "$version" ]; then
-            error "Failed to fetch latest version"
-            dim "  Set EOS_VERSION environment variable to specify manually"
-            exit 1
+            step "Fetching latest version..."
+            version=$(fetch_json_field "https://api.github.com/repos/${REPO}/releases/latest" "tag_name" "$download_tool")
+            
+            if [ -z "$version" ]; then
+                error "Failed to fetch latest version"
+                dim "  Set EOS_VERSION environment variable to specify manually"
+                exit 1
+            fi
+            
+            info "Latest version: ${BOLD}$version${NC}"
+        else
+            info "Using version: ${BOLD}$version${NC}"
         fi
-        
-        info "Latest version: ${BOLD}$version${NC}"
     else
-        info "Using version: ${BOLD}$version${NC}"
+        info "Using local binary: ${BOLD}$local_binary${NC}"
     fi
     
     echo ""
     
     echo -e "${BOLD}Installation plan:${NC}"
-    echo "  1. Download binary from GitHub"
+    if [ -n "$local_binary" ]; then
+        echo "  1. Use local binary: ${local_binary}"
+    else
+        echo "  1. Download binary from GitHub"
+    fi
     echo "  2. Install to ${INSTALL_DIR}/${BINARY_NAME}"
     echo "  3. Install SQLite3 (if needed)"
     echo "  4. Create home directory at ${HOME_DIR}"
@@ -352,27 +407,35 @@ main() {
         exit 0
     fi
     
-    echo ""
-    step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
-    
-    local download_url="https://github.com/${REPO}/releases/download/${version}/eos-linux-${arch}"
-    local tmp_binary="/tmp/${BINARY_NAME}"
-    
-    if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
-        error "Download failed"
-        dim "  URL: $download_url"
-        exit 1
+    # Get the binary — either from local path or download
+    local tmp_binary
+    if [ -n "$local_binary" ]; then
+        tmp_binary="$local_binary"
+        success "Using local binary"
+    else
+        echo ""
+        step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
+        
+        local download_url="https://github.com/${REPO}/releases/download/${version}/eos-linux-${arch}"
+        tmp_binary="/tmp/${BINARY_NAME}"
+        
+        if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
+            error "Download failed"
+            dim "  URL: $download_url"
+            exit 1
+        fi
+        
+        if [ ! -f "$tmp_binary" ]; then
+            error "Binary not found after download"
+            exit 1
+        fi
+        
+        success "Downloaded successfully"
     fi
-    
-    if [ ! -f "$tmp_binary" ]; then
-        error "Binary not found after download"
-        exit 1
-    fi
-    
-    success "Downloaded successfully"
     
     # Install binary
     step "Installing binary..."
+    mkdir -p "$INSTALL_DIR"
     chmod +x "$tmp_binary"
     cp "$tmp_binary" "${INSTALL_DIR}/${BINARY_NAME}"
     success "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
@@ -386,8 +449,6 @@ main() {
     mkdir -p "$HOME_DIR"
     success "Created ${HOME_DIR}"
 
-
-    # TODO: Update these to reflect the actual flow
     echo ""
     echo -e "${GREEN}${BOLD}Installation complete!${NC}"
     echo ""
@@ -395,18 +456,14 @@ main() {
     echo "  1. Register a service:"
     echo -e "     ${CYAN}eos add /path/to/project${NC}"
     echo ""
-    echo "  2. Start the daemon:"
-    echo -e "     ${CYAN}sudo systemctl start eos${NC}"
-    echo ""
-    echo "  3. Check status:"
+    echo "  2. Check status:"
     echo -e "     ${CYAN}eos status${NC}"
-    echo -e "     ${CYAN}sudo systemctl status eos${NC}"
     echo ""
-    echo "  4. View logs:"
-    echo -e "     ${CYAN}sudo journalctl -u eos -f${NC}"
+    echo "  3. View logs:"
+    echo -e "     ${CYAN}eos daemon logs${NC}"
     echo ""
     dim "Database: ${HOME_DIR}/state.db"
-    dim "Service configs: /service.yaml"
+    dim "Service configs as 'service.yaml' in respective app directory"
     echo ""
 }
 

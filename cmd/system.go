@@ -90,7 +90,7 @@ func configCmd(cmd *cobra.Command, installDir string, baseDir string, config con
 	cmd.Printf("Log maximum files: %d\n", config.Daemon.MaxFiles)
 	cmd.Printf("Log filesize limit: %d\n", config.Daemon.FileSizeLimit)
 	cmd.Println("")
-	cmd.Printf("# Process health check configuration")
+	cmd.Println("# Process health check configuration")
 	cmd.Printf("Max number of restarts: %d\n", config.Health.MaxRestart)
 	cmd.Printf("Check process on timeout: %v\n", config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
@@ -106,14 +106,14 @@ func updateCmd(cmd *cobra.Command, version string, installDir string) {
 	binaryPath := filepath.Join(installDir, "eos")
 	cmd.Println("Checking for updates...")
 
-	fileInfo, err := os.Stat(binaryPath)
+	fileInfo, err := os.Stat(installDir)
 	if err != nil {
-		cmd.Printf("Directory %q for updates is not accessible, please check.\n", binaryPath)
+		cmd.Printf("Directory %q for updates is not accessible, please check.\n", installDir)
 		return
 	}
 
 	if !fileInfo.IsDir() {
-		cmd.Printf("Directory %q for updates is not accessible, please check.\n", binaryPath)
+		cmd.Printf("Directory %q for updates is not accessible, please check.\n", installDir)
 		return
 	}
 

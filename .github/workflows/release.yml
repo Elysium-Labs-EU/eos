@@ -94,9 +94,9 @@ jobs:
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
           go build \
             -ldflags="-s -w \
-              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Version=${{ steps.version.outputs.version }}' \
-              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Commit=${{ github.sha }}' \
-              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+              -X 'eos/internal/buildinfo.Version=${{ steps.version.outputs.version }}' \
+              -X 'eos/internal/buildinfo.GitCommit=${{ github.sha }}' \
+              -X 'eos/internal/buildinfo.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
             -o ${{ matrix.artifact }} .
 
       - name: Verify binary

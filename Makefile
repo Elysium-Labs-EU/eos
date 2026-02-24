@@ -23,9 +23,8 @@ help:
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
-# LDFLAGS=-ldflags "-X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.buildDate=$(BUILD_DATE)' -w -s"
-VERSION_PKG := github.com/Elysium-Labs-EU/eos/internal/version
-LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).Commit=$(COMMIT)' -X '$(VERSION_PKG).Date=$(BUILD_DATE)' -w -s"
+VERSION_PKG := eos/internal/buildinfo
+LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).GitCommit=$(COMMIT)' -X '$(VERSION_PKG).BuildDate=$(BUILD_DATE)' -w -s"
 
 
 BINARY_NAME=eos
@@ -127,20 +126,22 @@ release:
 	git push origin $(TAG)
 
 
-# Complete workflow: test install.sh with locally built binary
-test-install-flow: release-local
-	@echo "Testing complete install flow..."
-	@echo "1. Building local binary..."
-	@echo "2. Starting VPS simulator..."
+test-install-local: release-local
 	@$(MAKE) docker-vps
 	@sleep 5
-	@echo "3. Copying binary to VPS..."
-	docker cp dist/eos-linux-amd64 vps-test-eos:/usr/local/bin/eos
-	@echo "4. Running install.sh..."
-	docker exec -it vps-test-eos bash -c "chmod +x /usr/local/bin/eos"
-	@echo "Install test complete!"
+	@echo "Copying binary to VPS..."
+	docker cp dist/eos-linux-amd64 vps-test-eos:/usr/local/src/eos-local
+	docker exec -it vps-test-eos ls -la /usr/local/src/eos-local
+	@echo "Running install.sh..."
+	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh --local /usr/local/src/eos-local"
 
-# Clean everything
+
+test-install-remote:
+	@$(MAKE) docker-vps
+	@sleep 5
+	@echo "Running install.sh..."
+	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
+
 clean:
 	@echo "Cleaning..."
 	rm -rf $(GOBIN) dist/
