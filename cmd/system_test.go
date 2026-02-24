@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 )
 
 func TestSystemConfigCommand(t *testing.T) {

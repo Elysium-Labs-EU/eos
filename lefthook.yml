@@ -1,10 +1,21 @@
 pre-commit:
-  parallel: true
-  jobs:
-    - name: lint
+  commands:
+    format:
+      glob: "*.go"
+      run: golangci-lint fmt && git add {staged_files}
+      priority: 1
+
+    lint:
       glob: "*.go"
       run: golangci-lint run --timeout=5m
+      priority: 2
 
-    - name: test
+    fieldalignment:
+      glob: "*.go"
+      run: go tool fieldalignment ./...
+      priority: 2
+
+    test:
       glob: "*.go"
       run: go test -short ./...
+      priority: 3
