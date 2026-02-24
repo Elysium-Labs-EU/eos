@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"bytes"
+	"strings"
+	"testing"
+
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"strings"
-	"testing"
 )
 
 func TestStatusCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -19,7 +20,7 @@ func TestStatusCommand(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"status"})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Status command should not return an error, got : %v", err)
@@ -48,7 +49,7 @@ func TestStatusCommand(t *testing.T) {
 
 // 	cmd.SetArgs([]string{"status"})
 
-// 	err := cmd.Execute()
+// 	err := cmd.ExecuteContext(t.Context())
 // 	if err != nil {
 // 		t.Fatalf("Status command should not return an error, got: %v", err)
 // 	}
@@ -64,7 +65,7 @@ func TestStatusCommand(t *testing.T) {
 
 func TestStatusCommmandWithServices(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -73,7 +74,7 @@ func TestStatusCommmandWithServices(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"status", "--help"})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Status help should not return an error, got: %v", err)

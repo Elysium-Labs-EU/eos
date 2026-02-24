@@ -1,9 +1,8 @@
 package manager
 
 import (
+	"context"
 	"encoding/json"
-	"eos/internal/config"
-	"eos/internal/types"
 	"fmt"
 	"net"
 	"os"
@@ -13,21 +12,21 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"eos/internal/types"
 )
 
 type DaemonManager struct {
+	ctx        context.Context
 	socketPath string
 }
 
-func NewDaemonManager() (*DaemonManager, error) {
-	socketPath := config.DaemonSocketPath
-	pidFile := config.DaemonPIDFile
-
+func NewDaemonManager(ctx context.Context, socketPath string, pidFile string) (*DaemonManager, error) {
 	if isDaemonRunning(pidFile) {
-		return &DaemonManager{socketPath: socketPath}, nil
+		return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
 	}
 
-	if err := startDaemonProcess(); err != nil {
+	if err := startDaemonProcess(ctx); err != nil {
 		return nil, fmt.Errorf("failed to start daemon: %w", err)
 	}
 
@@ -35,11 +34,11 @@ func NewDaemonManager() (*DaemonManager, error) {
 		return nil, fmt.Errorf("daemon started but socket not ready: %w", err)
 	}
 
-	return &DaemonManager{socketPath: socketPath}, nil
+	return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
 }
 
 func isDaemonRunning(pidFile string) bool {
-	data, err := os.ReadFile(pidFile)
+	data, err := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
 	if err != nil {
 		return false
 	}
@@ -58,18 +57,15 @@ func isDaemonRunning(pidFile string) bool {
 	return err == nil
 }
 
-func startDaemonProcess() error {
+// Stay in sync with "forkDaemon"
+func startDaemonProcess(ctx context.Context) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd := exec.Command(exePath, "daemon", "start", "logToFile")
-
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
-
+	cmd := exec.CommandContext(ctx, exePath, "daemon", "start", "--log-to-file-and-console") // #nosec G204 -- exePath is from os.Executable(), not user input
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -95,7 +91,8 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 }
 
 func (dm *DaemonManager) sendRequest(method types.MethodName, args []string) (response types.DaemonResponse, err error) {
-	conn, err := net.Dial("unix", dm.socketPath)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(dm.ctx, "unix", dm.socketPath)
 	if err != nil {
 		return types.DaemonResponse{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -131,7 +128,7 @@ func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceRuntime,
 	response, err := dm.sendRequest(types.MethodGetServiceInstance, []string{name})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetServiceInstance request errored, got:\n %v", err)
+		return nil, fmt.Errorf("the GetServiceInstance request errored, got:\n %w", err)
 	}
 
 	var result types.GetServiceInstanceResponse
@@ -161,7 +158,7 @@ func (dm *DaemonManager) RemoveServiceInstance(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodRemoveServiceInstance, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the RemoveServiceInstance request errored, got:\n %v", err)
+		return false, fmt.Errorf("the RemoveServiceInstance request errored, got:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -176,7 +173,7 @@ func (dm *DaemonManager) StartService(name string) (int, error) {
 	response, err := dm.sendRequest(types.MethodStartService, []string{name})
 
 	if err != nil {
-		return 0, fmt.Errorf("the StartService request errored, got:\n %v", err)
+		return 0, fmt.Errorf("the StartService request errored, got:\n %w", err)
 	}
 
 	var result map[string]int
@@ -191,7 +188,7 @@ func (dm *DaemonManager) RestartService(name string) (int, error) {
 	response, err := dm.sendRequest(types.MethodRestartService, []string{name})
 
 	if err != nil {
-		return 0, fmt.Errorf("the RestartService request errored, got:\n %v", err)
+		return 0, fmt.Errorf("the RestartService request errored, got:\n %w", err)
 	}
 
 	var result map[string]int
@@ -206,7 +203,7 @@ func (dm *DaemonManager) StopService(name string) (StopResult, error) {
 	response, err := dm.sendRequest(types.MethodStopService, []string{name})
 
 	if err != nil {
-		return StopResult{}, fmt.Errorf("the StopService request errored, got:\n %v", err)
+		return StopResult{}, fmt.Errorf("the StopService request errored, got:\n %w", err)
 	}
 
 	var result StopResult
@@ -221,7 +218,7 @@ func (dm *DaemonManager) ForceStopService(name string) (StopResult, error) {
 	response, err := dm.sendRequest(types.MethodForceStopService, []string{name})
 
 	if err != nil {
-		return StopResult{}, fmt.Errorf("the ForceStopService request errored, got:\n %v", err)
+		return StopResult{}, fmt.Errorf("the ForceStopService request errored, got:\n %w", err)
 	}
 
 	var result StopResult
@@ -240,7 +237,7 @@ func (dm *DaemonManager) AddServiceCatalogEntry(service *types.ServiceCatalogEnt
 	_, err = dm.sendRequest(types.MethodAddServiceCatalogEntry, []string{string(serviceJSON)})
 
 	if err != nil {
-		return fmt.Errorf("the AddServiceCatalogEntry request errored, got:\n %v", err)
+		return fmt.Errorf("the AddServiceCatalogEntry request errored, got:\n %w", err)
 	}
 
 	return nil
@@ -250,7 +247,7 @@ func (dm *DaemonManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEn
 	response, err := dm.sendRequest(types.MethodGetAllServiceCatalogEntries, []string{})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetAllServiceCatalogEntries request errored, got:\n %v", err)
+		return nil, fmt.Errorf("the GetAllServiceCatalogEntries request errored, got:\n %w", err)
 	}
 
 	var result []types.ServiceCatalogEntry
@@ -265,7 +262,7 @@ func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatal
 	response, err := dm.sendRequest(types.MethodGetServiceCatalogEntry, []string{name})
 
 	if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("the GetServiceCatalogEntry request errored, got:\n %v", err)
+		return types.ServiceCatalogEntry{}, fmt.Errorf("the GetServiceCatalogEntry request errored, got:\n %w", err)
 	}
 
 	var result types.ServiceCatalogEntry
@@ -295,7 +292,7 @@ func (dm *DaemonManager) IsServiceRegistered(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodIsServiceRegistered, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the IsServiceRegistered request errored, got:\n %v", err)
+		return false, fmt.Errorf("the IsServiceRegistered request errored, got:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -310,7 +307,7 @@ func (dm *DaemonManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodRemoveServiceCatalogEntry, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the RemoveServiceCatalogEntry request errored, got:\n %v", err)
+		return false, fmt.Errorf("the RemoveServiceCatalogEntry request errored, got:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -325,7 +322,7 @@ func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath
 	_, err := dm.sendRequest(types.MethodUpdateServiceCatalogEntry, []string{name, newDirectoryPath, newConfigFileName})
 
 	if err != nil {
-		return fmt.Errorf("the UpdateServiceCatalogEntry request errored, got:\n %v", err)
+		return fmt.Errorf("the UpdateServiceCatalogEntry request errored, got:\n %w", err)
 	}
 
 	return nil
@@ -335,7 +332,7 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.P
 	response, err := dm.sendRequest(types.MethodGetMostRecentProcessHistoryEntry, []string{name})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetMostRecentProcessHistoryEntry request errored, got:\n %v", err)
+		return nil, fmt.Errorf("the GetMostRecentProcessHistoryEntry request errored, got:\n %w", err)
 	}
 
 	var result types.GetMostRecentProcessHistoryEntryResponse
@@ -355,7 +352,7 @@ func (dm *DaemonManager) CreateServiceLogFiles(serviceName string) (logPath stri
 	response, err := dm.sendRequest(types.MethodCreateServiceLogFiles, []string{serviceName})
 
 	if err != nil {
-		return "", "", fmt.Errorf("the CreateServiceLogFiles request errored, got:\n %v", err)
+		return "", "", fmt.Errorf("the CreateServiceLogFiles request errored, got:\n %w", err)
 	}
 
 	var result ServiceLogFilesResult
@@ -378,7 +375,7 @@ func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool
 	response, err := dm.sendRequest(types.MethodGetServiceLogFilePath, []string{string(serviceLogFilePathJSON)})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetServiceLogFilePath request errored, got:\n %v", err)
+		return nil, fmt.Errorf("the GetServiceLogFilePath request errored, got:\n %w", err)
 	}
 
 	var result map[string]*string
@@ -408,26 +405,22 @@ const (
 	LogLevelError LogLevel = "ERROR"
 )
 
-func NewDaemonLogger(logToFileAndConsole bool, baseDir string, fileName string) (*DaemonLogger, error) {
-	logDir := CreateLogDirPath(baseDir)
+func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*DaemonLogger, error) {
+	logPath := filepath.Clean(filepath.Join(logDir, fileName))
 
-	maxFiles := 5
-	fileSizeLimit := int64(10 * 1024 * 1024)
-	logPath := filepath.Join(logDir, fileName)
-
-	err := os.MkdirAll(logDir, 0755)
+	err := os.MkdirAll(logDir, 0750)
 	if err != nil {
 		return nil, fmt.Errorf("could not create the required folders: %w", err)
 	}
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
 	if err != nil {
 		return nil, err
 	}
 
 	fileInfo, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("file state info %q: %w", logPath, err)
 	}
 
 	return &DaemonLogger{
@@ -473,7 +466,7 @@ func (l *DaemonLogger) rotate() error {
 		return fmt.Errorf("failed to rename log files: %w", err)
 	}
 
-	newF, err := os.OpenFile(l.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	newF, err := os.OpenFile(l.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
 	if err != nil {
 		return fmt.Errorf("failed to create new log file: %w", err)
 	}
@@ -488,7 +481,7 @@ func (l *DaemonLogger) rotate() error {
 func handleRenameExistingLogs(logDir string, defaultFileName string) error {
 	dirEntries, err := os.ReadDir(logDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("read dir %q: %w", logDir, err)
 	}
 
 	var validatedDirEntries []os.DirEntry
@@ -506,7 +499,7 @@ func handleRenameExistingLogs(logDir string, defaultFileName string) error {
 		newLogPath := filepath.Join(logDir, newName)
 		err := os.Rename(currentLogPath, newLogPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("rotate log file %q to %q: %w", currentLogPath, newLogPath, err)
 		}
 	}
 

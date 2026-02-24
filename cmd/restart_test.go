@@ -2,9 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,11 +10,15 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 )
 
 func TestRestartCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -44,24 +45,24 @@ func TestRestartCommand(t *testing.T) {
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occured during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
 	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)
 	if err != nil {
-		t.Fatalf("error occured during writing the start script file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
 	cmd.SetArgs([]string{"add", fullPathYaml})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("add should not return an error, got: %v\n", err)
 	}
 
 	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Start command should not return an error, got : %v", err)
@@ -74,7 +75,7 @@ func TestRestartCommand(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"restart", testFile.Name})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Restart command execution error, got: %v", err)

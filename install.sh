@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# Color codes for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -15,7 +14,7 @@ readonly NC='\033[0m' # No Color
 readonly REPO="Elysium-Labs-EU/eos"
 readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="/usr/local/bin"
-readonly HOME_DIR="/root/.${BINARY_NAME}"
+readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
 # readonly SERVICE_NAME="${BINARY_NAME}.service"
 
 # Print functions
@@ -346,7 +345,6 @@ main() {
     echo "  2. Install to ${INSTALL_DIR}/${BINARY_NAME}"
     echo "  3. Install SQLite3 (if needed)"
     echo "  4. Create home directory at ${HOME_DIR}"
-    # echo "  5. Install service (${init_system})"
     echo ""
     
     if ! confirm "Continue with installation?" "y"; then
@@ -388,7 +386,8 @@ main() {
     mkdir -p "$HOME_DIR"
     success "Created ${HOME_DIR}"
 
-    
+
+    # TODO: Update these to reflect the actual flow
     echo ""
     echo -e "${GREEN}${BOLD}Installation complete!${NC}"
     echo ""
@@ -411,5 +410,4 @@ main() {
     echo ""
 }
 
-# Run main function
 main "$@"

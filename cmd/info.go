@@ -1,13 +1,14 @@
 package cmd
 
 import (
-	"eos/cmd/helpers"
-	"eos/internal/database"
-	"eos/internal/manager"
 	"errors"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"eos/cmd/helpers"
+	"eos/internal/database"
+	"eos/internal/manager"
 )
 
 func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -24,20 +25,21 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			if errors.Is(err, database.ErrServiceNotFound) {
 				cmd.Printf("There registered service was not found, got:\n%v\n", err)
 				return
-			} else if err != nil {
-				cmd.Printf("An error occured when getting the registered service:\n%v\n", err)
+			}
+			if err != nil {
+				cmd.Printf("An error occurred when getting the registered service:\n%v\n", err)
 				return
 			}
 
 			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
 			config, err := manager.LoadServiceConfig(configPath)
 			if err != nil {
-				cmd.Printf("An error occured when loading the service config:\n%v\n", err)
+				cmd.Printf("An error occurred when loading the service config:\n%v\n", err)
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil {
-				cmd.Printf("An error occured when getting the service instance:\n%v\n", err)
+				cmd.Printf("An error occurred when getting the service instance:\n%v\n", err)
 			}
 
 			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)

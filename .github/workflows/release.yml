@@ -82,13 +82,24 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build binary
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o ${{ matrix.artifact }} -ldflags="-s -w" .
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          go build \
+            -ldflags="-s -w \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Version=${{ steps.version.outputs.version }}' \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Commit=${{ github.sha }}' \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+            -o ${{ matrix.artifact }} .
 
       - name: Verify binary
         run: |

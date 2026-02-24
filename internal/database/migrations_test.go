@@ -2,28 +2,29 @@ package database_test
 
 import (
 	"database/sql"
-	"eos/internal/database"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eos/internal/database"
 )
 
 func TestMigrations(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, rawDBConn, err := database.NewTestDB(dbPath, database.MigrationsFS, database.MigrationsPath)
+	db, rawDBConn, err := database.NewTestDB(t.Context(), dbPath, database.MigrationsFS, database.MigrationsPath)
 	if err != nil {
 		t.Fatalf("Unable to create test database 3: %v", err)
 	}
 
 	t.Log("Running up migrations...")
-	if err := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); err != nil {
-		t.Fatalf("Failed to run up migrations: %v", err)
+	if migrationsErr := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); migrationsErr != nil {
+		t.Fatalf("Failed to run up migrations: %v", migrationsErr)
 	}
 
 	expectedVersion := getExpectedVersion(t, database.MigrationsPath)
-	version, dirty, err := db.GetCurrentVersion(database.MigrationsFS, database.MigrationsPath)
+	version, dirty, err := db.GetCurrentMigrationVersion(database.MigrationsFS, database.MigrationsPath)
 	if err != nil {
 		t.Fatalf("Failed to get current version: %v", err)
 	}
@@ -46,8 +47,8 @@ func TestMigrations(t *testing.T) {
 	t.Log("Schema constraints working correctly")
 
 	t.Log("Running down migration...")
-	if err := db.RunDownMigration(database.MigrationsFS, database.MigrationsPath); err != nil {
-		t.Fatalf("Failed to run down migration: %v", err)
+	if downMigrationsErr := db.RunDownMigration(database.MigrationsFS, database.MigrationsPath); downMigrationsErr != nil {
+		t.Fatalf("Failed to run down migration: %v", downMigrationsErr)
 	}
 	t.Log("Down migration successful")
 
@@ -56,13 +57,13 @@ func TestMigrations(t *testing.T) {
 	t.Log("All tables successfully removed")
 
 	t.Log("Running up migration again to test reversibility...")
-	if err := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); err != nil {
-		t.Fatalf("Failed to run up migrations second time: %v", err)
+	if migrationsErr := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); migrationsErr != nil {
+		t.Fatalf("Failed to run up migrations second time: %v", migrationsErr)
 	}
 	t.Log("Second up migration successful - migrations are fully reversible")
 
 	expectedVersion = getExpectedVersion(t, database.MigrationsPath)
-	version, dirty, err = db.GetCurrentVersion(database.MigrationsFS, database.MigrationsPath)
+	version, dirty, err = db.GetCurrentMigrationVersion(database.MigrationsFS, database.MigrationsPath)
 	if err != nil {
 		t.Fatalf("Failed to get final version: %v", err)
 	}
@@ -86,7 +87,7 @@ func getExpectedVersion(t *testing.T, migrationsDir string) uint {
 	var migrationCount uint
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".up.sql") {
-			migrationCount += 1
+			migrationCount++
 		}
 	}
 

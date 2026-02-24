@@ -2,11 +2,6 @@ package monitor
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
-	"eos/internal/types"
-	"eos/internal/util"
 	"log"
 	"math/rand"
 	"net"
@@ -19,25 +14,35 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/config"
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/ptr"
+	"eos/internal/testutil"
+	"eos/internal/types"
 )
 
 func TestHealthMonitor_Lifecycle(t *testing.T) {
-	daemonLogFileName := "daemon.log"
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
+
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	var started sync.WaitGroup
 	started.Add(1)
 
 	go func() {
 		started.Done()
-		hm.Start()
+		hm.Start(t.Context())
 	}()
 
 	started.Wait()
@@ -48,23 +53,24 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 }
 
 func TestHealthMonitor_CheckStartProcess(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	timoutLimit := 30 * time.Second
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -72,8 +78,8 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	defer func() {
-		if err := listener.Close(); err != nil {
-			t.Fatalf("unable to close the listener, got: %v", err)
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Fatalf("unable to close the listener, got: %v", closeErr)
 		}
 	}()
 
@@ -124,7 +130,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timoutLimit)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -151,22 +157,23 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 }
 
 func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	timeoutLimit := 30 * time.Second
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	serviceName := "startup-crash-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	testFile := testutil.CreateTestServiceConfigFile(t,
@@ -231,7 +238,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatal("Process history entry not found")
 	}
 
-	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timeoutLimit)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
@@ -265,18 +272,19 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 }
 
 // func TestHealthMonitor_CheckStartProcess_Invalid_Port(t *testing.T) {
-// 	daemonLogFileName := "daemon.log"
+// 	tempDir := t.TempDir()
+//  daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 // 	timoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir)
+// 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
 // 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
 
 // 	if err != nil {
 // 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 // 	}
 
-// 	hm := NewHealthMonitor(mgr, db, logger)
+// 	hm := NewHealthMonitor(mgr, db, logger, healthConfig)
 
 // 	serviceName := "test-service"
 // 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -308,12 +316,12 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
 // 	}
 
-// 	err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
+// 	err = mgr.AddServiceCatalogEntry(,serviceCatalogEntry)
 // 	if err != nil {
 // 		t.Fatalf("Error registering service: %v\n", err)
 // 	}
 
-// 	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+// 	pid, err := mgr.StartService(,serviceCatalogEntry.Name)
 
 // 	if err != nil {
 // 		t.Fatalf("Service unable to start, got: %v", err)
@@ -322,7 +330,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("Invalid PID received after starting service, got: %v", err)
 // 	}
 
-// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
 // 	if err != nil {
 // 		t.Fatalf("Service unable to get recent process history entry, got: %v", err)
 // 	}
@@ -351,7 +359,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("No logs were created")
 // 	}
 
-// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
 // 	if err != nil {
 // 		t.Fatalf("Service unable to get recent process history entry, got: %v", err)
 // 	}
@@ -364,22 +372,23 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // }
 
 func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	timeoutLimit := 100 * time.Millisecond
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t, WithTimeoutLimit(100*time.Millisecond))
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 	serviceName := "timeout-test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	testFile := testutil.CreateTestServiceConfigFile(t,
@@ -432,8 +441,8 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 
 	// Manually set StartedAt to simulate timeout
 	// We'll update it to be past the timeout limit
-	oldStartTime := time.Now().Add(-(timeoutLimit + 50*time.Millisecond))
-	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	oldStartTime := time.Now().Add(-(healthConfig.Timeout.Limit + 50*time.Millisecond))
+	err = hm.db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
 		StartedAt: &oldStartTime,
 	})
 	if err != nil {
@@ -445,7 +454,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatal("Failed to get updated process history")
 	}
 
-	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timeoutLimit)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
@@ -479,23 +488,24 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 }
 
 func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	timoutLimit := 30 * time.Second
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -503,8 +513,8 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	defer func() {
-		if err := listener.Close(); err != nil {
-			t.Errorf("unable to close the listener, got: %v", err)
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("unable to close the listener, got: %v", closeErr)
 		}
 	}()
 
@@ -555,9 +565,9 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timoutLimit)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
-	hm.checkRunningProcess(serviceCatalogEntry, processHistoryEntry)
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -595,17 +605,18 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 }
 
 // func TestHealthMonitor_CheckRunningProcess_AliveButPortUnreachable(t *testing.T) {
-// 	daemonLogFileName := "daemon.log"
+// 	tempDir := t.TempDir()
+//  daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 // 	timeoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir)
+// 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
 // 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
 // 	if err != nil {
 // 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 // 	}
 
-// 	hm := NewHealthMonitor(mgr, db, logger)
+// 	hm := NewHealthMonitor(mgr, db, logger, healthConfig)
 
 // 	serviceName := "port-drop-service"
 // 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -647,12 +658,12 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 		t.Fatalf("Create service catalog entry failed: %v", err)
 // 	}
 
-// 	err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
+// 	err = mgr.AddServiceCatalogEntry(,serviceCatalogEntry)
 // 	if err != nil {
 // 		t.Fatalf("Error registering service: %v", err)
 // 	}
 
-// 	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+// 	pid, err := mgr.StartService(,serviceCatalogEntry.Name)
 // 	if err != nil {
 // 		t.Fatalf("Service unable to start, got: %v", err)
 // 	}
@@ -661,14 +672,14 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 	}
 
 // 	// Transition to Running via checkStartProcess (port is still open)
-// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
 // 	if err != nil || processHistoryEntry == nil {
 // 		t.Fatal("Failed to get process history entry")
 // 	}
 // 	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timeoutLimit)
 
 // 	// Confirm it's Running now
-// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
 // 	if err != nil || processHistoryEntry == nil {
 // 		t.Fatal("Failed to get updated process history")
 // 	}
@@ -685,10 +696,10 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 	time.Sleep(50 * time.Millisecond) // give OS time to release the port
 
 // 	// Call checkRunningProcess — process is alive, but port is unreachable
-// 	hm.checkRunningProcess(serviceCatalogEntry, processHistoryEntry)
+// 	hm.checkRunningProcess(t.Context(),serviceCatalogEntry, processHistoryEntry)
 
 // 	// Verify: state should be Failed with port-related error
-// 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+// 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
 // 	if err != nil || updatedEntry == nil {
 // 		t.Fatal("Failed to get process history after check")
 // 	}
@@ -721,22 +732,24 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // }
 
 func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
-	daemonLogFileName := "daemon.log"
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -744,8 +757,8 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	defer func() {
-		if err := listener.Close(); err != nil {
-			t.Errorf("unable to close the listener, got: %v", err)
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("unable to close the listener, got: %v", closeErr)
 		}
 	}()
 
@@ -792,7 +805,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	result, err := mgr.ForceStopService(serviceCatalogEntry.Name)
 
 	if err != nil {
-		t.Fatalf("An error occured during force stopping the service, got: %v", err)
+		t.Fatalf("An error occurred during force stopping the service, got: %v", err)
 	}
 	if len(result.Failed) != 0 {
 		t.Fatalf("Failed to force stop the service for this test")
@@ -805,7 +818,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	hm.checkRunningProcess(serviceCatalogEntry, processHistoryEntry)
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -829,22 +842,24 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 }
 
 func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	maxRestartCount := 3
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t, WithMaxRestart(3))
+	maxRestartCount := healthConfig.MaxRestart
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 	serviceName := "max-restart-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -853,8 +868,8 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	if err := listener.Close(); err != nil {
-		t.Errorf("unable to close the listener, got: %v", err)
+	if closeErr := listener.Close(); closeErr != nil {
+		t.Errorf("unable to close the listener, got: %v", closeErr)
 	}
 
 	testFile := testutil.CreateTestServiceConfigFile(t,
@@ -889,23 +904,23 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Error registering service: %v", err)
 	}
 
-	err = db.RegisterServiceInstance(serviceName)
+	err = db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
 	fakePID := 999999
 
-	_, err = db.RegisterProcessHistoryEntry(fakePID, serviceName, types.ProcessStateFailed)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePID, serviceName, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history: %v", err)
 	}
 
-	err = db.UpdateProcessHistoryEntry(fakePID, database.ProcessHistoryUpdate{
-		State:     util.ProcessStatePtr(types.ProcessStateFailed),
-		StartedAt: util.TimePtr(time.Now().Add(-10 * time.Second)),
-		StoppedAt: util.TimePtr(time.Now().Add(-2 * time.Second)),
-		Error:     util.StringPtr("Simulated failure"),
+	err = db.UpdateProcessHistoryEntry(t.Context(), fakePID, database.ProcessHistoryUpdate{
+		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Second)),
+		StoppedAt: ptr.TimePtr(time.Now().Add(-2 * time.Second)),
+		Error:     ptr.StringPtr("Simulated failure"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update fake process history: %v", err)
@@ -928,7 +943,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			t.Fatalf("Iteration %d: Failed to get service instance", i)
 		}
 
-		hm.checkFailedProcess(serviceCatalogEntry, processHistoryEntry, instance, &maxRestartCount)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, &maxRestartCount)
 		time.Sleep(50 * time.Millisecond)
 
 		updatedInstance, _ := hm.mgr.GetServiceInstance(serviceName)
@@ -961,11 +976,11 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 				}
 			}
 
-			err = db.UpdateProcessHistoryEntry(latestProcess.PID, database.ProcessHistoryUpdate{
-				State:     util.ProcessStatePtr(types.ProcessStateFailed),
-				StartedAt: util.TimePtr(time.Now().Add(-5 * time.Minute)),
-				StoppedAt: util.TimePtr(time.Now()),
-				Error:     util.StringPtr("Simulated failure"),
+			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PID, database.ProcessHistoryUpdate{
+				State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+				StartedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
+				StoppedAt: ptr.TimePtr(time.Now()),
+				Error:     ptr.StringPtr("Simulated failure"),
 			})
 			if err != nil {
 				t.Fatalf("Failed to update process history entry: %v", err)
@@ -1089,22 +1104,24 @@ func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 }
 
 func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *testing.T) {
-	daemonLogFileName := "daemon.log"
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	// --- Helper to register a service ---
 	setupService := func(name string, port int) *types.ServiceCatalogEntry {
 		serviceDir := filepath.Join(tempDir, name)
-		if err := os.MkdirAll(serviceDir, 0755); err != nil {
-			t.Fatalf("Failed to create service directory for %s: %v", name, err)
+		if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+			t.Fatalf("Failed to create service directory for %s: %v", name, mkdirErr)
 		}
 
 		testFile := testutil.CreateTestServiceConfigFile(t,
@@ -1112,9 +1129,9 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 			testutil.WithName(name),
 			testutil.WithPort(port),
 		)
-		yamlData, err := yaml.Marshal(testFile)
-		if err != nil {
-			t.Fatalf("Failed to marshal config for %s: %v", name, err)
+		marshalData, marshalErr := yaml.Marshal(testFile)
+		if marshalErr != nil {
+			t.Fatalf("Failed to marshal config for %s: %v", name, marshalErr)
 		}
 
 		fullDirPath := filepath.Join(tempDir, name+"-project")
@@ -1124,14 +1141,14 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		}
 
 		fullPath := filepath.Join(fullDirPath, "service.yaml")
-		err = os.WriteFile(fullPath, yamlData, 0644)
+		err = os.WriteFile(fullPath, marshalData, 0644)
 		if err != nil {
 			t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 		}
 
-		entry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
-		if err != nil {
-			t.Fatalf("Create catalog entry failed for %s: %v", name, err)
+		entry, svcCatalogEntryErr := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+		if svcCatalogEntryErr != nil {
+			t.Fatalf("Create catalog entry failed for %s: %v", name, svcCatalogEntryErr)
 		}
 		err = mgr.AddServiceCatalogEntry(entry)
 		if err != nil {
@@ -1147,8 +1164,8 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 
 	defer func() {
-		if err := listener1.Close(); err != nil {
-			t.Errorf("unable to close the listener, got: %v", err)
+		if closeErr := listener1.Close(); closeErr != nil {
+			t.Errorf("unable to close the listener, got: %v", closeErr)
 		}
 	}()
 
@@ -1161,9 +1178,9 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Failed to start %s: %v", svc1Name, err)
 	}
 	// Transition to Running
-	err = db.UpdateProcessHistoryEntry(pid1, database.ProcessHistoryUpdate{
-		State: util.ProcessStatePtr(types.ProcessStateRunning),
-		Error: util.StringPtr(""),
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid1, database.ProcessHistoryUpdate{
+		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
+		Error: ptr.StringPtr(""),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history entry: %v", err)
@@ -1176,8 +1193,8 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 
 	defer func() {
-		if err := listener2.Close(); err != nil {
-			t.Errorf("unable to close the listener, got: %v", err)
+		if closeErr := listener2.Close(); closeErr != nil {
+			t.Errorf("unable to close the listener, got: %v", closeErr)
 		}
 	}()
 
@@ -1196,28 +1213,28 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	svc3Name := "failed-svc"
 	setupService(svc3Name, 0)
 
-	err = db.RegisterServiceInstance(svc3Name)
+	err = db.RegisterServiceInstance(t.Context(), svc3Name)
 	if err != nil {
 		t.Fatalf("Failed to register instance for %s: %v", svc3Name, err)
 	}
 
 	fakePID := 999998
-	_, err = db.RegisterProcessHistoryEntry(fakePID, svc3Name, types.ProcessStateFailed)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePID, svc3Name, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history for %s: %v", svc3Name, err)
 	}
-	err = db.UpdateProcessHistoryEntry(fakePID, database.ProcessHistoryUpdate{
-		State:     util.ProcessStatePtr(types.ProcessStateFailed),
-		StartedAt: util.TimePtr(time.Now().Add(-10 * time.Minute)),
-		StoppedAt: util.TimePtr(time.Now().Add(-5 * time.Minute)),
-		Error:     util.StringPtr("previous failure"),
+	err = db.UpdateProcessHistoryEntry(t.Context(), fakePID, database.ProcessHistoryUpdate{
+		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Minute)),
+		StoppedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
+		Error:     ptr.StringPtr("previous failure"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history for %s: %v", svc3Name, err)
 	}
 
 	// Run the full dispatch
-	hm.checkAllServices()
+	hm.checkAllServices(t.Context())
 
 	// Allow time for any async effects
 	time.Sleep(200 * time.Millisecond)
@@ -1261,22 +1278,23 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 }
 
 func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.T) {
-	daemonLogFileName := "daemon.log"
-	maxRestartCount := 5
+	tempDir := t.TempDir()
+	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := createTestHealthConfig(t, WithMaxRestart(5))
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir)
-	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
 
 	serviceName := "recovery-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		t.Fatalf("Failed to create service directory: %v", err)
+	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
 	testFile := testutil.CreateTestServiceConfigFile(t,
@@ -1326,10 +1344,10 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	}
 
 	// Manually mark it as Failed in the DB (simulating a false failure detection)
-	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-		State:     util.ProcessStatePtr(types.ProcessStateFailed),
-		StoppedAt: util.TimePtr(time.Now()),
-		Error:     util.StringPtr("falsely marked as failed"),
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+		StoppedAt: ptr.TimePtr(time.Now()),
+		Error:     ptr.StringPtr("falsely marked as failed"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history: %v", err)
@@ -1353,7 +1371,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	restartCountBefore := instance.RestartCount
 
 	// Call checkFailedProcess — the process is alive, so it should recover
-	hm.checkFailedProcess(serviceCatalogEntry, processHistoryEntry, instance, &maxRestartCount)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, &healthConfig.MaxRestart)
 
 	// Verify: state should be back to Running
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -1379,4 +1397,41 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Errorf("RestartCount should not change on recovery: expected %d, got %d",
 			restartCountBefore, updatedInstance.RestartCount)
 	}
+}
+
+type HealthConfigOption func(*config.HealthConfig)
+
+func WithMaxRestart(maxRestart int) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.MaxRestart = maxRestart
+	}
+}
+
+func WithTimeoutEnable(timeoutEnable bool) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.Timeout.Enable = timeoutEnable
+	}
+}
+
+func WithTimeoutLimit(timeoutLimit time.Duration) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.Timeout.Limit = timeoutLimit
+	}
+}
+
+func createTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.HealthConfig {
+	t.Helper()
+	healthConfig := &config.HealthConfig{
+		MaxRestart: config.HealthMaxRestart,
+		Timeout: config.TimeOutConfig{
+			Enable: config.HealthTimeOutEnable,
+			Limit:  30 * time.Second,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(healthConfig)
+	}
+
+	return healthConfig
 }

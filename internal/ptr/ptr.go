@@ -1,8 +1,9 @@
-package util
+package ptr
 
 import (
-	"eos/internal/types"
 	"time"
+
+	"eos/internal/types"
 )
 
 func StringPtr(str string) *string {

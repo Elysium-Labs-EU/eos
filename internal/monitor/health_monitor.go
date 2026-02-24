@@ -1,44 +1,54 @@
 package monitor
 
 import (
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/types"
-	"eos/internal/util"
+	"context"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"eos/internal/config"
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/ptr"
+	"eos/internal/types"
 )
 
 type HealthMonitor struct {
-	mgr           *manager.LocalManager
-	db            *database.DB
-	logger        *manager.DaemonLogger
-	stopCh        chan struct{}
-	checkInterval time.Duration
+	mgr             *manager.LocalManager
+	db              *database.DB
+	logger          *manager.DaemonLogger
+	stopCh          chan struct{}
+	checkInterval   time.Duration
+	timeoutEnable   bool
+	timeoutLimit    time.Duration
+	maxRestartCount int
 }
 
-func NewHealthMonitor(mgr *manager.LocalManager, db *database.DB, logger *manager.DaemonLogger) *HealthMonitor {
+func NewHealthMonitor(mgr *manager.LocalManager, db *database.DB, logger *manager.DaemonLogger,
+	healthConfig config.HealthConfig) *HealthMonitor {
 	return &HealthMonitor{
-		mgr:           mgr,
-		db:            db,
-		logger:        logger,
-		stopCh:        make(chan struct{}),
-		checkInterval: 2 * time.Second,
+		mgr:             mgr,
+		db:              db,
+		logger:          logger,
+		stopCh:          make(chan struct{}),
+		checkInterval:   2 * time.Second,
+		timeoutEnable:   healthConfig.Timeout.Enable,
+		timeoutLimit:    healthConfig.Timeout.Limit,
+		maxRestartCount: healthConfig.MaxRestart,
 	}
 }
 
-func (hm *HealthMonitor) Start() {
+func (hm *HealthMonitor) Start(ctx context.Context) {
 	ticker := time.NewTicker(hm.checkInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			hm.checkAllServices()
+			hm.checkAllServices(ctx)
 		case <-hm.stopCh:
 			return
 		}
@@ -49,10 +59,8 @@ func (hm *HealthMonitor) Stop() {
 	close(hm.stopCh)
 }
 
-func (hm *HealthMonitor) checkAllServices() {
+func (hm *HealthMonitor) checkAllServices(ctx context.Context) {
 	services, err := hm.mgr.GetAllServiceCatalogEntries()
-	timoutLimit := 30 * time.Second
-	maxRestartCount := 15
 
 	if err != nil {
 		hm.logger.Log(manager.LogLevelError,
@@ -75,19 +83,23 @@ func (hm *HealthMonitor) checkAllServices() {
 
 		switch processHistoryEntry.State {
 		case types.ProcessStateStarting:
-			hm.checkStartProcess(service, processHistoryEntry, &timoutLimit)
+			hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
 		case types.ProcessStateRunning:
-			hm.checkRunningProcess(service, processHistoryEntry)
+			hm.checkRunningProcess(ctx, service, processHistoryEntry)
 		case types.ProcessStateFailed:
-			hm.checkFailedProcess(service, processHistoryEntry, instance, &maxRestartCount)
+			hm.checkFailedProcess(ctx, service, processHistoryEntry, instance, &hm.maxRestartCount)
+		case types.ProcessStateStopped, types.ProcessStateUnknown:
+			continue
 		}
 	}
 }
 
 func (hm *HealthMonitor) checkStartProcess(
+	ctx context.Context,
 	service *types.ServiceCatalogEntry,
 	process *types.ProcessHistory,
-	timeoutLimit *time.Duration,
+	timeoutLimit time.Duration,
+	timeoutEnabled bool,
 ) {
 	serviceName := service.Name
 	pid := process.PID
@@ -101,10 +113,10 @@ func (hm *HealthMonitor) checkStartProcess(
 				fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
 		}
 		hm.logger.Log(manager.LogLevelError, errorString)
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateFailed),
-			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr(errorString),
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+			StoppedAt: ptr.TimePtr(time.Now()),
+			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
 			hm.logger.Log(manager.LogLevelError,
@@ -113,7 +125,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		return
 	}
 
-	if time.Since(*process.StartedAt) > *timeoutLimit {
+	if timeoutEnabled && time.Since(*process.StartedAt) > timeoutLimit {
 		errorString := fmt.Sprintf("Service %s taking too long to start", serviceName)
 
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
@@ -123,10 +135,10 @@ func (hm *HealthMonitor) checkStartProcess(
 		}
 		hm.logger.Log(manager.LogLevelWarn, errorString)
 		// TODO: Add more handeling to this
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateFailed),
-			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr(errorString),
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+			StoppedAt: ptr.TimePtr(time.Now()),
+			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
 			hm.logger.Log(manager.LogLevelError,
@@ -155,9 +167,9 @@ func (hm *HealthMonitor) checkStartProcess(
 	// 			fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
 	// 	}
 	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-	// 		State:     util.ProcessStatePtr(types.ProcessStateStopped),
-	// 		StoppedAt: util.TimePtr(time.Now()),
-	// 		Error:     util.StringPtr(errorString),
+	// 		State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
+	// 		StoppedAt: ptr.TimePtr(time.Now()),
+	// 		Error:     ptr.StringPtr(errorString),
 	// 	})
 	// 	if err != nil {
 	// 		hm.logger.Log(manager.LogLevelError,
@@ -172,9 +184,9 @@ func (hm *HealthMonitor) checkStartProcess(
 		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("Service %s is now running", serviceName))
 	}
 
-	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-		State: util.ProcessStatePtr(types.ProcessStateRunning),
-		Error: util.StringPtr(""),
+	err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
+		Error: ptr.StringPtr(""),
 	})
 	if err != nil {
 		hm.logger.Log(manager.LogLevelError,
@@ -182,7 +194,7 @@ func (hm *HealthMonitor) checkStartProcess(
 	}
 }
 
-func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
+func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
 	// configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	// config, err := manager.LoadServiceConfig(configPath)
 	serviceName := service.Name
@@ -204,10 +216,10 @@ func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry,
 				fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
 		}
 
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State:     util.ProcessStatePtr(types.ProcessStateFailed),
-			StoppedAt: util.TimePtr(time.Now()),
-			Error:     util.StringPtr(errorString),
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+			StoppedAt: ptr.TimePtr(time.Now()),
+			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
 			hm.logger.Log(manager.LogLevelError,
@@ -238,9 +250,9 @@ func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry,
 	// 			fmt.Sprintf("Failed to log service error output for %s: %v", serviceName, err))
 	// 	}
 	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-	// 		State:     util.ProcessStatePtr(types.ProcessStateFailed),
-	// 		StoppedAt: util.TimePtr(time.Now()),
-	// 		Error:     util.StringPtr(errorString),
+	// 		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+	// 		StoppedAt: ptr.TimePtr(time.Now()),
+	// 		Error:     ptr.StringPtr(errorString),
 	// 	})
 	// 	if err != nil {
 	// 		hm.logger.Log(manager.LogLevelError,
@@ -250,7 +262,7 @@ func (hm *HealthMonitor) checkRunningProcess(service *types.ServiceCatalogEntry,
 	// }
 }
 
-func (hm *HealthMonitor) checkFailedProcess(service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceRuntime, maxRestartCount *int) {
+func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceRuntime, maxRestartCount *int) {
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 	serviceName := service.Name
@@ -263,9 +275,9 @@ func (hm *HealthMonitor) checkFailedProcess(service *types.ServiceCatalogEntry, 
 	}
 
 	if hm.isProcessAlive(pid) {
-		err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
-			State: util.ProcessStatePtr(types.ProcessStateRunning),
-			Error: util.StringPtr(""),
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+			State: ptr.ProcessStatePtr(types.ProcessStateRunning),
+			Error: ptr.StringPtr(""),
 		})
 		if err != nil {
 			hm.logger.Log(manager.LogLevelError,

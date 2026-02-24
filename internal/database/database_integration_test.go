@@ -1,12 +1,14 @@
 package database_test
 
 import (
-	"eos/internal/database"
-	"eos/internal/testutil"
-	"eos/internal/types"
+	"context"
 	"errors"
 	"testing"
 	"time"
+
+	"eos/internal/database"
+	"eos/internal/testutil"
+	"eos/internal/types"
 )
 
 func TestServiceCatalogCRUD(t *testing.T) {
@@ -16,13 +18,13 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	configFile := "service.yaml"
 
 	// Create
-	err := db.RegisterService(serviceName, servicePath, configFile)
+	err := db.RegisterService(t.Context(), serviceName, servicePath, configFile)
 	if err != nil {
 		t.Fatalf("Failed to register service: %v", err)
 	}
 
 	// Read
-	entry, err := db.GetServiceCatalogEntry(serviceName)
+	entry, err := db.GetServiceCatalogEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service catalog entry: %v", err)
 	}
@@ -42,13 +44,13 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	// Update
 	newPath := "/new/path"
 	newConfig := "new-config.yaml"
-	err = db.UpdateServiceCatalogEntry(serviceName, newPath, newConfig)
+	err = db.UpdateServiceCatalogEntry(t.Context(), serviceName, newPath, newConfig)
 	if err != nil {
 		t.Fatalf("Failed to update service catalog entry: %v", err)
 	}
 
 	// Verify update
-	entry, err = db.GetServiceCatalogEntry(serviceName)
+	entry, err = db.GetServiceCatalogEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get updated service catalog entry: %v", err)
 	}
@@ -60,7 +62,7 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	}
 
 	// List all services
-	allServices, err := db.GetAllServiceCatalogEntries()
+	allServices, err := db.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to get all services: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	}
 
 	// Delete
-	deleted, err := db.RemoveServiceCatalogEntry(serviceName)
+	deleted, err := db.RemoveServiceCatalogEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to remove service catalog entry: %v", err)
 	}
@@ -85,11 +87,11 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = db.GetServiceCatalogEntry(serviceName)
+	_, err = db.GetServiceCatalogEntry(t.Context(), serviceName)
 	if err == nil {
 		t.Error("Expected error when getting deleted service, got nil")
 	}
-	_, err = db.GetServiceCatalogEntry(serviceName)
+	_, err = db.GetServiceCatalogEntry(t.Context(), serviceName)
 	if err == nil {
 		t.Error("Expected error when getting deleted service, got nil")
 	}
@@ -98,7 +100,7 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	}
 
 	// Try to delete again - should return false
-	deleted, err = db.RemoveServiceCatalogEntry(serviceName)
+	deleted, err = db.RemoveServiceCatalogEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed on second delete attempt: %v", err)
 	}
@@ -112,13 +114,13 @@ func TestServiceInstanceCRUD(t *testing.T) {
 	serviceName := "integration-instance-test"
 
 	// Create
-	err := db.RegisterServiceInstance(serviceName)
+	err := db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
 	// Read
-	instance, err := db.GetServiceInstance(serviceName)
+	instance, err := db.GetServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
@@ -133,7 +135,7 @@ func TestServiceInstanceCRUD(t *testing.T) {
 	}
 
 	// Delete
-	deleted, err := db.RemoveServiceInstance(serviceName)
+	deleted, err := db.RemoveServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to remove service instance: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestServiceInstanceCRUD(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = db.GetServiceInstance(serviceName)
+	_, err = db.GetServiceInstance(t.Context(), serviceName)
 	if err == nil {
 		t.Error("Expected error when getting deleted service instance, got nil")
 	}
@@ -152,7 +154,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	// First create a service instance (required for FK constraint)
 	serviceName := "process-history-test-service"
-	err := db.RegisterServiceInstance(serviceName)
+	err := db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
@@ -161,7 +163,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	state := types.ProcessStateRunning
 
 	// Create
-	entry, err := db.RegisterProcessHistoryEntry(pid, serviceName, state)
+	entry, err := db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, state)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
@@ -173,7 +175,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	}
 
 	// Read
-	retrieved, err := db.GetProcessHistoryEntryByPid(pid)
+	retrieved, err := db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -185,7 +187,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	}
 
 	// Delete
-	deleted, err := db.RemoveProcessHistoryEntryViaPid(pid)
+	deleted, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to remove process history entry: %v", err)
 	}
@@ -194,13 +196,13 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = db.GetProcessHistoryEntryByPid(pid)
+	_, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err == nil {
 		t.Error("Expected error when getting deleted process history entry, got nil")
 	}
 
 	t.Cleanup(func() {
-		removed, err := db.RemoveServiceInstance(serviceName)
+		removed, err := db.RemoveServiceInstance(context.Background(), serviceName)
 		if err != nil {
 			t.Fatalf("Failed to remove service instance: %v", err)
 		}
@@ -215,7 +217,7 @@ func TestIsServiceRegistered_integration(t *testing.T) {
 	serviceName := "registration-check-test"
 
 	// Should not be registered initially
-	isRegistered, err := db.IsServiceRegistered(serviceName)
+	isRegistered, err := db.IsServiceRegistered(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to check if service is registered: %v", err)
 	}
@@ -224,13 +226,13 @@ func TestIsServiceRegistered_integration(t *testing.T) {
 	}
 
 	// Register service
-	err = db.RegisterService(serviceName, "/path", "config.yaml")
+	err = db.RegisterService(t.Context(), serviceName, "/path", "config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to register service: %v", err)
 	}
 
 	// Should be registered now
-	isRegistered, err = db.IsServiceRegistered(serviceName)
+	isRegistered, err = db.IsServiceRegistered(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to check if service is registered: %v", err)
 	}
@@ -239,7 +241,7 @@ func TestIsServiceRegistered_integration(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		removed, err := db.RemoveServiceCatalogEntry(serviceName)
+		removed, err := db.RemoveServiceCatalogEntry(context.Background(), serviceName)
 		if err != nil {
 			t.Errorf("Failed to remove service catalog entry during cleanup, got: %v\n", err)
 		}
@@ -254,14 +256,14 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	serviceName := "update-test-instance"
 
 	// Create instance
-	err := db.RegisterServiceInstance(serviceName)
+	err := db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
 	// Update restart count
 	newRestartCount := 5
-	err = db.UpdateServiceInstance(serviceName, database.ServiceInstanceUpdate{
+	err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{
 		RestartCount: &newRestartCount,
 	})
 	if err != nil {
@@ -269,7 +271,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	}
 
 	// Verify update
-	instance, err := db.GetServiceInstance(serviceName)
+	instance, err := db.GetServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
@@ -279,7 +281,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 
 	// Update last health check
 	now := time.Now()
-	err = db.UpdateServiceInstance(serviceName, database.ServiceInstanceUpdate{
+	err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{
 		LastHealthCheck: &now,
 	})
 	if err != nil {
@@ -287,7 +289,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	}
 
 	// Verify update
-	instance, err = db.GetServiceInstance(serviceName)
+	instance, err = db.GetServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
@@ -297,7 +299,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 
 	// Update started at
 	startTime := time.Now()
-	err = db.UpdateServiceInstance(serviceName, database.ServiceInstanceUpdate{
+	err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{
 		StartedAt: &startTime,
 	})
 	if err != nil {
@@ -305,7 +307,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	}
 
 	// Verify update
-	instance, err = db.GetServiceInstance(serviceName)
+	instance, err = db.GetServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
@@ -316,7 +318,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	// Update multiple fields at once
 	newCount := 10
 	newHealthCheck := time.Now()
-	err = db.UpdateServiceInstance(serviceName, database.ServiceInstanceUpdate{
+	err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{
 		RestartCount:    &newCount,
 		LastHealthCheck: &newHealthCheck,
 	})
@@ -325,7 +327,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	}
 
 	// Verify both updates
-	instance, err = db.GetServiceInstance(serviceName)
+	instance, err = db.GetServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
@@ -337,7 +339,7 @@ func TestServiceInstanceUpdates(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		removed, err := db.RemoveServiceInstance(serviceName)
+		removed, err := db.RemoveServiceInstance(context.Background(), serviceName)
 		if err != nil {
 			t.Errorf("Failed to remove service instance during cleanup, got: %v\n", err)
 		}
@@ -351,7 +353,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	serviceName := "process-update-test"
 
-	err := db.RegisterServiceInstance(serviceName)
+	err := db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
@@ -359,20 +361,20 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	pid := 54321
 	initialState := types.ProcessStateStarting
 
-	_, err = db.RegisterProcessHistoryEntry(pid, serviceName, initialState)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, initialState)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
 
 	newState := types.ProcessStateRunning
-	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
 		State: &newState,
 	})
 	if err != nil {
 		t.Fatalf("Failed to update state: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(pid)
+	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -382,7 +384,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 
 	// Update started_at
 	startTime := time.Now()
-	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
 		StartedAt: &startTime,
 	})
 	if err != nil {
@@ -390,7 +392,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	// Verify update
-	entry, err = db.GetProcessHistoryEntryByPid(pid)
+	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -399,14 +401,14 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	errorMsg := "test error message"
-	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
 		Error: &errorMsg,
 	})
 	if err != nil {
 		t.Fatalf("Failed to update error: %v", err)
 	}
 
-	entry, err = db.GetProcessHistoryEntryByPid(pid)
+	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 
 	stopTime := time.Now()
 	stoppedState := types.ProcessStateStopped
-	err = db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
 		StoppedAt: &stopTime,
 		State:     &stoppedState,
 	})
@@ -424,7 +426,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to update stopped_at: %v", err)
 	}
 
-	entry, err = db.GetProcessHistoryEntryByPid(pid)
+	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -436,14 +438,14 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		processRemoved, err := db.RemoveProcessHistoryEntryViaPid(pid)
+		processRemoved, err := db.RemoveProcessHistoryEntryViaPid(context.Background(), pid)
 		if err != nil {
 			t.Fatalf("Failed to removed process history entry in cleanup, got: %v", err)
 		}
 		if !processRemoved {
 			t.Fatal("Failed to removed process history entry in cleanup")
 		}
-		instanceRemoved, err := db.RemoveServiceInstance(serviceName)
+		instanceRemoved, err := db.RemoveServiceInstance(context.Background(), serviceName)
 		if err != nil {
 			t.Fatalf("Failed to removed service instance in cleanup, got: %v", err)
 		}
@@ -458,7 +460,7 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 	serviceName := "multi-process-test"
 
 	// Create service instance
-	err := db.RegisterServiceInstance(serviceName)
+	err := db.RegisterServiceInstance(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
@@ -466,14 +468,14 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 	// Create multiple process history entries
 	pids := []int{11111, 22222, 33333}
 	for _, pid := range pids {
-		_, err := db.RegisterProcessHistoryEntry(pid, serviceName, types.ProcessStateRunning)
-		if err != nil {
-			t.Fatalf("Failed to register process %d: %v", pid, err)
+		_, registerErr := db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, types.ProcessStateRunning)
+		if registerErr != nil {
+			t.Fatalf("Failed to register process %d: %v", pid, registerErr)
 		}
 	}
 
 	// Query all processes for this service
-	entries, err := db.GetProcessHistoryEntriesByServiceName(serviceName)
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("Failed to get process history entries: %v", err)
 	}
@@ -499,7 +501,7 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 
 	t.Cleanup(func() {
 		for _, pid := range pids {
-			removed, err := db.RemoveProcessHistoryEntryViaPid(pid)
+			removed, err := db.RemoveProcessHistoryEntryViaPid(context.Background(), pid)
 			if err != nil {
 				t.Logf("Failed to remove process history entry in cleanup, got: %v", err)
 				continue
@@ -509,7 +511,7 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 				continue
 			}
 		}
-		removed, err := db.RemoveServiceInstance(serviceName)
+		removed, err := db.RemoveServiceInstance(context.Background(), serviceName)
 		if err != nil {
 			t.Fatalf("Failed to remove service instance in cleanup, got: %v", err)
 		}

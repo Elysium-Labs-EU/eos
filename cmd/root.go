@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"eos/internal/buildinfo"
 	"eos/internal/config"
 	"eos/internal/database"
 	"eos/internal/manager"
-	"fmt"
-	"os"
-
-	"github.com/spf13/cobra"
 )
 
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
@@ -38,12 +42,27 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
+	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newSystemCmd())
+
 	return rootCmd
 }
 
 func newRootCmd() *cobra.Command {
 	var mgr manager.ServiceManager
 	var cleanup func()
+
+	skipManagerInit := func(cmd *cobra.Command) bool {
+		if cmd.Parent() == nil {
+			return true
+		}
+		for c := cmd; c != nil; c = c.Parent() {
+			if c.Use == "daemon" {
+				return true
+			}
+		}
+		return false
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "eos",
@@ -53,20 +72,26 @@ func newRootCmd() *cobra.Command {
 	capabilities for your VPS infrastructure.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("eos v0.0.1")
+			cmd.Printf("eos %s\n", buildinfo.GetVersionOnly())
 			cmd.Println("Use 'eos help' to see available commands")
 		},
 
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			if cmd.Parent().Use != "daemon" {
-				manager, possibleCleanup, err := getManager(cmd)
-				if err != nil {
-					fmt.Printf("Error getting manager: %v\n", err)
-					os.Exit(1)
-				}
-				mgr = manager
-				cleanup = possibleCleanup
+			if skipManagerInit(cmd) {
+				return
 			}
+			_, baseDir, config, err := createSystemConfig()
+			if err != nil {
+				cmd.PrintErrf("Error getting system configuration: %v\n", err)
+				os.Exit(1)
+			}
+			manager, possibleCleanup, err := getManager(cmd, baseDir, config.Daemon)
+			if err != nil {
+				cmd.PrintErrf("Error getting manager: %v\n", err)
+				os.Exit(1)
+			}
+			mgr = manager
+			cleanup = possibleCleanup
 		},
 
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
@@ -93,28 +118,68 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
 	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newSystemCmd())
 
 	return rootCmd
 }
 
-func getManager(rootCmd *cobra.Command) (manager.ServiceManager, func(), error) {
+func createSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
+	baseDir, err = config.CreateBaseDir()
+
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	installDir = config.GetInstallDir()
+
+	daemonConfig := config.DaemonConfig{
+		PIDFile:       filepath.Clean(filepath.Join(baseDir, config.DaemonPIDFile)),
+		SocketPath:    filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
+		LogDir:        manager.CreateLogDirPath(baseDir),
+		LogFileName:   config.DaemonLogFileName,
+		MaxFiles:      config.DaemonLogMaxFiles,
+		FileSizeLimit: config.DaemonLogFileSizeLimit,
+	}
+
+	healthConfig := config.HealthConfig{
+		MaxRestart: config.HealthMaxRestart,
+		Timeout: config.TimeOutConfig{
+			Enable: config.HealthTimeOutEnable,
+			Limit:  safeParseHealthTimeoutLimit(),
+		},
+	}
+
+	systemConfig = &config.SystemConfig{
+		Health: healthConfig,
+		Daemon: daemonConfig,
+	}
+
+	return installDir, baseDir, systemConfig, nil
+}
+
+func safeParseHealthTimeoutLimit() time.Duration {
+	limit, err := time.ParseDuration(config.HealthTimeOutLimit)
+	if err != nil {
+		return time.Second * 10
+	}
+
+	return limit
+}
+
+func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig) (manager.ServiceManager, func(), error) {
+	ctx := rootCmd.Context()
 	noDaemon, err := rootCmd.Flags().GetBool("no-daemon")
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if noDaemon {
-		baseDir, err := config.GetBaseDir()
-		if err != nil {
-			return nil, nil, fmt.Errorf("could not get user home directory for manager: %w", err)
+		db, dbErr := database.NewDB(ctx, baseDir)
+		if dbErr != nil {
+			return nil, nil, fmt.Errorf("failed to connect to database: %w", dbErr)
 		}
 
-		db, err := database.NewDB()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to connect to database: %w", err)
-		}
-
-		mgr := manager.NewLocalManager(db, baseDir)
+		mgr := manager.NewLocalManager(db, baseDir, ctx)
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {
@@ -125,7 +190,7 @@ func getManager(rootCmd *cobra.Command) (manager.ServiceManager, func(), error) 
 		return mgr, cleanup, nil
 	}
 
-	mgr, err := manager.NewDaemonManager()
+	mgr, err := manager.NewDaemonManager(ctx, daemonConfig.SocketPath, daemonConfig.PIDFile)
 	if err != nil {
 		return nil, nil, err
 	}

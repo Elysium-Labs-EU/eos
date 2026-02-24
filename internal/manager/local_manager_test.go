@@ -1,20 +1,22 @@
 package manager
 
 import (
-	"eos/internal/database"
-	"eos/internal/testutil"
-	"eos/internal/types"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/testutil"
+	"eos/internal/types"
 )
 
 func TestNewManager(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
 	if manager == nil {
 		t.Fatal("Manager should not be nil")
@@ -30,7 +32,7 @@ func TestNewManager(t *testing.T) {
 
 func TestAddService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -56,7 +58,7 @@ func TestAddService(t *testing.T) {
 
 func TestAddServiceMultipleTimes(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -80,7 +82,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 
 func TestGetService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -101,20 +103,21 @@ func TestGetService(t *testing.T) {
 
 func TestGetInvalidServiceInstance(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
-	serviceInstance, error := manager.GetServiceInstance("non-existent")
+	serviceInstance, err := manager.GetServiceInstance("non-existent")
+
 	if serviceInstance != nil {
 		t.Error("Non-existent service should not exist")
 	}
-	if error != nil {
+	if !errors.Is(err, ErrServiceNotRunning) {
 		t.Error("Non-existent service should throw an error")
 	}
 }
 
 func TestStartService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir)
+	manager := NewLocalManager(db, tempDir, t.Context())
 
 	runtime := types.Runtime{
 		Type: "nodejs",
@@ -142,7 +145,7 @@ func TestStartService(t *testing.T) {
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occured during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
 	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", fullDirPath, "service.yaml")

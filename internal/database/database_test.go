@@ -1,23 +1,24 @@
 package database_test
 
 import (
-	"eos/internal/database"
-	"eos/internal/testutil"
-	"eos/internal/types"
-	"eos/internal/util"
 	"testing"
 	"time"
+
+	"eos/internal/database"
+	"eos/internal/ptr"
+	"eos/internal/testutil"
+	"eos/internal/types"
 )
 
 func TestRegisterService(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterService("web-api", "/opt/services/web-api", "service.yaml")
+	err := db.RegisterService(t.Context(), "web-api", "/opt/services/web-api", "service.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
 
-	entry, err := db.GetServiceCatalogEntry("web-api")
+	entry, err := db.GetServiceCatalogEntry(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
 	}
@@ -39,17 +40,17 @@ func TestRegisterService(t *testing.T) {
 func TestRegisterService_Upsert(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterService("web-api", "/old/path", "old.yaml")
+	err := db.RegisterService(t.Context(), "web-api", "/old/path", "old.yaml")
 	if err != nil {
 		t.Fatalf("First RegisterService failed: %v", err)
 	}
 
-	err = db.RegisterService("web-api", "/new/path", "new.yaml")
+	err = db.RegisterService(t.Context(), "web-api", "/new/path", "new.yaml")
 	if err != nil {
 		t.Fatalf("Second RegisterService failed: %v", err)
 	}
 
-	entry, err := db.GetServiceCatalogEntry("web-api")
+	entry, err := db.GetServiceCatalogEntry(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestRegisterService_Upsert(t *testing.T) {
 func TestGetServiceCatalogEntry_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	_, err := db.GetServiceCatalogEntry("nonexistent")
+	_, err := db.GetServiceCatalogEntry(t.Context(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent service")
 	}
@@ -74,20 +75,20 @@ func TestGetServiceCatalogEntry_NotFound(t *testing.T) {
 func TestGetAllServiceCatalogEntries(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterService("alpha", "/path/alpha", "a.yaml")
+	err := db.RegisterService(t.Context(), "alpha", "/path/alpha", "a.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
-	err = db.RegisterService("beta", "/path/beta", "b.yaml")
+	err = db.RegisterService(t.Context(), "beta", "/path/beta", "b.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
-	err = db.RegisterService("gamma", "/path/gamma", "c.yaml")
+	err = db.RegisterService(t.Context(), "gamma", "/path/gamma", "c.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
 
-	entries, err := db.GetAllServiceCatalogEntries()
+	entries, err := db.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("GetAllServiceCatalogEntries failed: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestGetAllServiceCatalogEntries(t *testing.T) {
 func TestGetAllServiceCatalogEntries_Empty(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	entries, err := db.GetAllServiceCatalogEntries()
+	entries, err := db.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("GetAllServiceCatalogEntries failed: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestGetAllServiceCatalogEntries_Empty(t *testing.T) {
 func TestIsServiceRegistered(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	registered, err := db.IsServiceRegistered("web-api")
+	registered, err := db.IsServiceRegistered(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("IsServiceRegistered failed: %v", err)
 	}
@@ -127,12 +128,12 @@ func TestIsServiceRegistered(t *testing.T) {
 		t.Error("expected false before registration")
 	}
 
-	err = db.RegisterService("web-api", "/path", "config.yaml")
+	err = db.RegisterService(t.Context(), "web-api", "/path", "config.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
 
-	registered, err = db.IsServiceRegistered("web-api")
+	registered, err = db.IsServiceRegistered(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("IsServiceRegistered failed: %v", err)
 	}
@@ -144,17 +145,17 @@ func TestIsServiceRegistered(t *testing.T) {
 func TestUpdateServiceCatalogEntry(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterService("web-api", "/old/path", "old.yaml")
+	err := db.RegisterService(t.Context(), "web-api", "/old/path", "old.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
 
-	err = db.UpdateServiceCatalogEntry("web-api", "/new/path", "new.yaml")
+	err = db.UpdateServiceCatalogEntry(t.Context(), "web-api", "/new/path", "new.yaml")
 	if err != nil {
 		t.Fatalf("UpdateServiceCatalogEntry failed: %v", err)
 	}
 
-	entry, err := db.GetServiceCatalogEntry("web-api")
+	entry, err := db.GetServiceCatalogEntry(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestUpdateServiceCatalogEntry(t *testing.T) {
 func TestUpdateServiceCatalogEntry_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.UpdateServiceCatalogEntry("ghost", "/path", "config.yaml")
+	err := db.UpdateServiceCatalogEntry(t.Context(), "ghost", "/path", "config.yaml")
 	if err == nil {
 		t.Fatal("expected error when updating nonexistent entry")
 	}
@@ -179,12 +180,12 @@ func TestUpdateServiceCatalogEntry_NotFound(t *testing.T) {
 func TestRemoveServiceCatalogEntry(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterService("web-api", "/path", "config.yaml")
+	err := db.RegisterService(t.Context(), "web-api", "/path", "config.yaml")
 	if err != nil {
 		t.Fatalf("RegisterService failed: %v", err)
 	}
 
-	removed, err := db.RemoveServiceCatalogEntry("web-api")
+	removed, err := db.RemoveServiceCatalogEntry(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RemoveServiceCatalogEntry failed: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestRemoveServiceCatalogEntry(t *testing.T) {
 		t.Error("expected removal to succeed")
 	}
 
-	registered, _ := db.IsServiceRegistered("web-api")
+	registered, _ := db.IsServiceRegistered(t.Context(), "web-api")
 	if registered {
 		t.Error("service should not exist after removal")
 	}
@@ -201,7 +202,7 @@ func TestRemoveServiceCatalogEntry(t *testing.T) {
 func TestRemoveServiceCatalogEntry_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	removed, err := db.RemoveServiceCatalogEntry("ghost")
+	removed, err := db.RemoveServiceCatalogEntry(t.Context(), "ghost")
 	if err != nil {
 		t.Fatalf("RemoveServiceCatalogEntry failed: %v", err)
 	}
@@ -213,12 +214,12 @@ func TestRemoveServiceCatalogEntry_NotFound(t *testing.T) {
 func TestRegisterServiceInstance(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	instance, err := db.GetServiceInstance("web-api")
+	instance, err := db.GetServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("GetServiceInstance failed: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestRegisterServiceInstance(t *testing.T) {
 func TestGetServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	_, err := db.GetServiceInstance("nonexistent")
+	_, err := db.GetServiceInstance(t.Context(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent instance")
 	}
@@ -246,22 +247,22 @@ func TestGetServiceInstance_NotFound(t *testing.T) {
 func TestUpdateServiceInstance(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("cms")
+	err := db.RegisterServiceInstance(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
 	now := time.Now().Truncate(time.Second)
 	updates := database.ServiceInstanceUpdate{
-		RestartCount: util.IntPtr(5),
+		RestartCount: ptr.IntPtr(5),
 		StartedAt:    &now,
 	}
-	err = db.UpdateServiceInstance("cms", updates)
+	err = db.UpdateServiceInstance(t.Context(), "cms", updates)
 	if err != nil {
 		t.Fatalf("UpdateServiceInstance failed: %v", err)
 	}
 
-	instance, err := db.GetServiceInstance("cms")
+	instance, err := db.GetServiceInstance(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("GetServiceInstance failed: %v", err)
 	}
@@ -274,8 +275,8 @@ func TestUpdateServiceInstance(t *testing.T) {
 func TestUpdateServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.UpdateServiceInstance("ghost", database.ServiceInstanceUpdate{
-		RestartCount: util.IntPtr(1),
+	err := db.UpdateServiceInstance(t.Context(), "ghost", database.ServiceInstanceUpdate{
+		RestartCount: ptr.IntPtr(1),
 	})
 	if err == nil {
 		t.Fatal("expected error when updating nonexistent instance")
@@ -285,12 +286,12 @@ func TestUpdateServiceInstance_NotFound(t *testing.T) {
 func TestUpdateServiceInstance_NoFields(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("cms")
+	err := db.RegisterServiceInstance(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	err = db.UpdateServiceInstance("cms", database.ServiceInstanceUpdate{})
+	err = db.UpdateServiceInstance(t.Context(), "cms", database.ServiceInstanceUpdate{})
 	if err == nil {
 		t.Fatal("expected error when no fields provided")
 	}
@@ -299,12 +300,12 @@ func TestUpdateServiceInstance_NoFields(t *testing.T) {
 func TestRemoveServiceInstance(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	removed, err := db.RemoveServiceInstance("web-api")
+	removed, err := db.RemoveServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RemoveServiceInstance failed: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestRemoveServiceInstance(t *testing.T) {
 		t.Error("expected removal to succeed")
 	}
 
-	_, err = db.GetServiceInstance("web-api")
+	_, err = db.GetServiceInstance(t.Context(), "web-api")
 	if err == nil {
 		t.Error("instance should not exist after removal")
 	}
@@ -321,7 +322,7 @@ func TestRemoveServiceInstance(t *testing.T) {
 func TestRemoveServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	removed, err := db.RemoveServiceInstance("ghost")
+	removed, err := db.RemoveServiceInstance(t.Context(), "ghost")
 	if err != nil {
 		t.Fatalf("RemoveServiceInstance failed: %v", err)
 	}
@@ -333,12 +334,12 @@ func TestRemoveServiceInstance_NotFound(t *testing.T) {
 func TestRegisterProcessHistoryEntry(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	entry, err := db.RegisterProcessHistoryEntry(1234, "web-api", types.ProcessStateStarting)
+	entry, err := db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -357,17 +358,17 @@ func TestRegisterProcessHistoryEntry(t *testing.T) {
 func TestGetProcessHistoryEntryByPid(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	_, err = db.RegisterProcessHistoryEntry(1234, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(1234)
+	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 1234)
 	if err != nil {
 		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
 	}
@@ -386,7 +387,7 @@ func TestGetProcessHistoryEntryByPid(t *testing.T) {
 func TestGetProcessHistoryEntryByPid_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	_, err := db.GetProcessHistoryEntryByPid(99999)
+	_, err := db.GetProcessHistoryEntryByPid(t.Context(), 99999)
 	if err == nil {
 		t.Fatal("expected error for nonexistent PID")
 	}
@@ -395,29 +396,29 @@ func TestGetProcessHistoryEntryByPid_NotFound(t *testing.T) {
 func TestGetProcessHistoryEntriesByServiceName(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(100, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 100, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(200, "web-api", types.ProcessStateRunning)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 200, "web-api", types.ProcessStateRunning)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	err = db.RegisterServiceInstance("worker")
+	err = db.RegisterServiceInstance(t.Context(), "worker")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(300, "worker", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 300, "worker", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	entries, err := db.GetProcessHistoryEntriesByServiceName("web-api")
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("GetProcessHistoryEntriesByServiceName failed: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestGetProcessHistoryEntriesByServiceName(t *testing.T) {
 func TestGetProcessHistoryEntriesByServiceName_Empty(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	entries, err := db.GetProcessHistoryEntriesByServiceName("nonexistent")
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -447,11 +448,11 @@ func TestGetProcessHistoryEntriesByServiceName_Empty(t *testing.T) {
 func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(42, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 42, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -461,8 +462,8 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	stoppedAt := now.Add(-2 * time.Second)
 	errorMsg := "connection refused"
 
-	err = db.UpdateProcessHistoryEntry(42, database.ProcessHistoryUpdate{
-		State:     util.ProcessStatePtr(types.ProcessStateFailed),
+	err = db.UpdateProcessHistoryEntry(t.Context(), 42, database.ProcessHistoryUpdate{
+		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 		StartedAt: &startedAt,
 		StoppedAt: &stoppedAt,
 		Error:     &errorMsg,
@@ -471,7 +472,7 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(42)
+	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
 	}
@@ -510,24 +511,24 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(50, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 50, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
 	// Update only state — other nullable fields should remain nil
-	err = db.UpdateProcessHistoryEntry(50, database.ProcessHistoryUpdate{
-		State: util.ProcessStatePtr(types.ProcessStateRunning),
+	err = db.UpdateProcessHistoryEntry(t.Context(), 50, database.ProcessHistoryUpdate{
+		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(50)
+	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 50)
 	if err != nil {
 		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
 	}
@@ -544,8 +545,8 @@ func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 func TestUpdateProcessHistoryEntry_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.UpdateProcessHistoryEntry(99999, database.ProcessHistoryUpdate{
-		State: util.ProcessStatePtr(types.ProcessStateFailed),
+	err := db.UpdateProcessHistoryEntry(t.Context(), 99999, database.ProcessHistoryUpdate{
+		State: ptr.ProcessStatePtr(types.ProcessStateFailed),
 	})
 	if err == nil {
 		t.Fatal("expected error when updating nonexistent PID")
@@ -555,17 +556,17 @@ func TestUpdateProcessHistoryEntry_NotFound(t *testing.T) {
 func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	_, err = db.RegisterProcessHistoryEntry(60, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 60, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	err = db.UpdateProcessHistoryEntry(60, database.ProcessHistoryUpdate{})
+	err = db.UpdateProcessHistoryEntry(t.Context(), 60, database.ProcessHistoryUpdate{})
 	if err == nil {
 		t.Fatal("expected error when no fields provided")
 	}
@@ -574,16 +575,16 @@ func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 func TestRemoveProcessHistoryEntryViaPid(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	err := db.RegisterServiceInstance("web-api")
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(1234, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	removed, err := db.RemoveProcessHistoryEntryViaPid(1234)
+	removed, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), 1234)
 	if err != nil {
 		t.Fatalf("RemoveProcessHistoryEntryViaPid failed: %v", err)
 	}
@@ -591,7 +592,7 @@ func TestRemoveProcessHistoryEntryViaPid(t *testing.T) {
 		t.Error("expected removal to succeed")
 	}
 
-	_, err = db.GetProcessHistoryEntryByPid(1234)
+	_, err = db.GetProcessHistoryEntryByPid(t.Context(), 1234)
 	if err == nil {
 		t.Error("entry should not exist after removal")
 	}
@@ -600,7 +601,7 @@ func TestRemoveProcessHistoryEntryViaPid(t *testing.T) {
 func TestRemoveProcessHistoryEntryViaPid_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	removed, err := db.RemoveProcessHistoryEntryViaPid(99999)
+	removed, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), 99999)
 	if err != nil {
 		t.Fatalf("RemoveProcessHistoryEntryViaPid failed: %v", err)
 	}

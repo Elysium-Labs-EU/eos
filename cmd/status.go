@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"eos/cmd/helpers"
-	"eos/internal/manager"
-	"eos/internal/types"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +8,10 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
+
+	"eos/cmd/helpers"
+	"eos/internal/manager"
+	"eos/internal/types"
 )
 
 func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -37,11 +38,11 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			type StatusServiceEntry struct {
 				Name         string
 				Status       types.ServiceStatus
-				PID          int
 				Started      string
 				Uptime       string
-				RestartCount int
 				Error        string
+				PID          int
+				RestartCount int
 			}
 			var activeServices []StatusServiceEntry
 

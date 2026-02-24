@@ -2,6 +2,7 @@ package database
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -31,14 +32,14 @@ func (db *DB) RunMigrations(migrationsFS embed.FS, migrationsPath string) error 
 		return fmt.Errorf("could not create migrate instance: %w", err)
 	}
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("could not run migrations: %w", err)
 	}
 
 	return nil
 }
 
-func (db *DB) GetCurrentVersion(migrationsFS embed.FS, migrationsPath string) (uint, bool, error) {
+func (db *DB) GetCurrentMigrationVersion(migrationsFS embed.FS, migrationsPath string) (uint, bool, error) {
 	driver, err := sqlite.WithInstance(db.conn, &sqlite.Config{})
 	if err != nil {
 		return 0, false, fmt.Errorf("could not create migration driver: %w", err)
@@ -77,7 +78,7 @@ func (db *DB) RunDownMigration(migrationsFS embed.FS, migrationsPath string) err
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
 
-	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("failed to run down migration: %w", err)
 	}
 

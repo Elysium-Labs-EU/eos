@@ -1,9 +1,11 @@
 package cmd
 
 import (
-	"eos/internal/manager"
+	"errors"
 
 	"github.com/spf13/cobra"
+
+	"eos/internal/manager"
 )
 
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -29,15 +31,15 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
-			if err != nil {
+			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.Printf("Error checking for service instance %v\n", err)
 				return
 			}
 
 			if serviceInstance != nil {
-				removedInstance, err := mgr.RemoveServiceInstance(serviceName)
-				if err != nil {
-					cmd.Printf("Error removing service instance %v\n", err)
+				removedInstance, removeInstanceErr := mgr.RemoveServiceInstance(serviceName)
+				if removeInstanceErr != nil {
+					cmd.Printf("Error removing service instance %v\n", removeInstanceErr)
 					return
 				}
 				if !removedInstance {

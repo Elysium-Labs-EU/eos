@@ -1,15 +1,10 @@
 pre-commit:
   parallel: true
   jobs:
-    - name: golangci-lint
-      run: golangci-lint run --fast
+    - name: lint
+      glob: "*.go"
+      run: golangci-lint run --timeout=5m
 
-    - name: gosec
-      run: gosec ./...
-
-    - name: go-critic
-      run: gocritic check ./...
-
-    - name: tests
-      run: go test ./cmd ./internal/** -v
-      interactive: true
+    - name: test
+      glob: "*.go"
+      run: go test -short ./...

@@ -1,78 +1,88 @@
 package process
 
 import (
+	"context"
 	"encoding/json"
-	"eos/internal/config"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/monitor"
-	"eos/internal/types"
-	"eos/internal/util"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"eos/internal/config"
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/monitor"
+	"eos/internal/ptr"
+	"eos/internal/types"
 )
 
-func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) error {
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, baseDir, logFileName)
+func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.DaemonConfig, healthConfig config.HealthConfig) error {
+	logger, err := manager.NewDaemonLogger(logToFileAndConsole, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
-		errorMessage := fmt.Errorf("failed to setup daemn logger: %w", err)
+		errorMessage := fmt.Errorf("failed to setup daemon logger: %w", err)
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
 		return errorMessage
-	} else {
-		logger.Log(manager.LogLevelInfo, "Started daemon logger")
 	}
-	pidFile := config.DaemonPIDFile
-	if _, err := os.Stat(pidFile); err == nil {
-		data, _ := os.ReadFile(pidFile)
+
+	logger.Log(manager.LogLevelInfo, "Started daemon logger")
+	pidFile := daemonConfig.PIDFile
+	socketPath := daemonConfig.SocketPath
+
+	if _, pidFileStatErr := os.Stat(pidFile); pidFileStatErr == nil {
+		data, _ := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
 		oldPid, _ := strconv.Atoi(string(data))
 
-		if process, err := os.FindProcess(oldPid); err == nil {
+		if process, findProcessErr := os.FindProcess(oldPid); findProcessErr == nil {
 			if process.Signal(syscall.Signal(0)) == nil {
 				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
 				logger.Log(manager.LogLevelInfo, errorMessage.Error())
 				return errorMessage
 			}
 		}
-		if err := os.Remove(pidFile); err != nil {
-			errorMessage := fmt.Errorf("unable to remove the socket path, got: %v", err)
+		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
+			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
 			logger.Log(manager.LogLevelError, errorMessage.Error())
 			return errorMessage
 		}
 	}
 
 	myPID := os.Getpid()
-	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0644)
+	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0600)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGCHLD)
+	signal.Notify(sigChan, syscall.SIGCHLD)
 
-	socketPath := config.DaemonSocketPath
-
-	if err := os.Remove(socketPath); err != nil {
-		errorMessage := fmt.Errorf("unable to remove the socket path, got: %v", err)
-		logger.Log(manager.LogLevelError, errorMessage.Error())
-		return errorMessage
+	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
+		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
+			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
+			logger.Log(manager.LogLevelError, errorMessage.Error())
+			return errorMessage
+		}
 	}
 
-	listener, err := net.Listen("unix", socketPath)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
-	db, err := database.NewDB()
+	db, err := database.NewDB(ctx, baseDir)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to connect to database: %w", err)
 		logger.Log(manager.LogLevelInfo, errorMessage.Error())
@@ -84,140 +94,150 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, logFileName string) e
 		}
 	}()
 
-	mgr := manager.NewLocalManager(db, baseDir)
+	mgr := manager.NewLocalManager(db, baseDir, ctx)
 	go handleIncomingCommands(listener, mgr, logger)
 
-	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger)
-	go healthMonitor.Start()
+	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig)
+	go healthMonitor.Start(ctx)
 
 	logger.Log(manager.LogLevelInfo, "Daemon started successfully")
 	for {
-		sig, ok := <-sigChan
 
-		if !ok {
-			return nil
-		}
-
-		switch sig {
-		case syscall.SIGCHLD:
-			for {
-				var status syscall.WaitStatus
-				pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
-				if err != nil {
-					logger.Log(manager.LogLevelError, fmt.Sprintf("Errored during cleaning up child process with PID '%d'\n: %v", pid, err))
-					break
-				}
-				if pid == 0 {
-					break
-				}
-				if pid < 0 {
-					logger.Log(manager.LogLevelError, fmt.Sprintf("An error during cleaning up child process with PID '%d'", pid))
-					continue
-				}
-
-				logger.Log(manager.LogLevelError, fmt.Sprintf("Reaped zombie process: %d\n", pid))
-
-				if status.ExitStatus() == 0 {
-					updates := database.ProcessHistoryUpdate{
-						State:     util.ProcessStatePtr(types.ProcessStateStopped),
-						StoppedAt: util.TimePtr(time.Now()),
+		select {
+		case sig := <-sigChan:
+			if sig == syscall.SIGCHLD {
+				for {
+					var status syscall.WaitStatus
+					pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+					if err != nil {
+						logger.Log(manager.LogLevelError, fmt.Sprintf("Errored during cleaning up child process with PID '%d'\n: %v", pid, err))
+						break
 					}
-					err := db.UpdateProcessHistoryEntry(pid, updates)
+					if pid == 0 {
+						break
+					}
+					if pid < 0 {
+						logger.Log(manager.LogLevelError, fmt.Sprintf("An error during cleaning up child process with PID '%d'", pid))
+						continue
+					}
+
+					logger.Log(manager.LogLevelError, fmt.Sprintf("Reaped zombie process: %d\n", pid))
+
+					if status.ExitStatus() == 0 {
+						updates := database.ProcessHistoryUpdate{
+							State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
+							StoppedAt: ptr.TimePtr(time.Now()),
+						}
+						updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
+						if updateErr != nil {
+							logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", updateErr))
+						}
+						continue
+					}
+
+					updates := database.ProcessHistoryUpdate{
+						State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+						StoppedAt: ptr.TimePtr(time.Now()),
+						Error:     ptr.StringPtr("Zombie process has been reaped"),
+					}
+
+					err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
 					if err != nil {
 						logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
 					}
+
 					continue
 				}
-
-				updates := database.ProcessHistoryUpdate{
-					State:     util.ProcessStatePtr(types.ProcessStateFailed),
-					StoppedAt: util.TimePtr(time.Now()),
-					Error:     util.StringPtr("Zombie process has been reaped"),
-				}
-
-				err = db.UpdateProcessHistoryEntry(pid, updates)
-				if err != nil {
-					logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
-				}
-
-				continue
 			}
-
-		case syscall.SIGTERM, syscall.SIGINT:
+		case <-ctx.Done():
 			if err := listener.Close(); err != nil {
 				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to close the listener, got: %v", err))
-			}
-
-			if err := os.Remove(socketPath); err != nil {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove the socket path, got: %v", err))
 			}
 			if err := os.Remove(pidFile); err != nil {
 				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove pid file, got: %v", err))
 			}
+			if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove the socket, got: %v", err))
+			}
 			return nil
 		}
 	}
 }
 
-func StopDaemon() error {
-	pidFile := config.DaemonPIDFile
+func StopDaemon(daemonConfig config.DaemonConfig) (bool, error) {
+	pidFile := daemonConfig.PIDFile
+	socketPath := daemonConfig.SocketPath
 
 	_, err := os.Stat(pidFile)
 	if err != nil {
-		return fmt.Errorf("failed to get stat info on pid of daemon: %w", err)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get stat info on pid of daemon: %w", err)
 	}
 
-	data, err := os.ReadFile(pidFile)
+	_, err = os.Stat(socketPath)
 	if err != nil {
-		return fmt.Errorf("failed to read the pid file: %w", err)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get stat info socket of daemon: %w", err)
+	}
+
+	data, readPidErr := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
+	if readPidErr != nil {
+		return false, fmt.Errorf("failed to read the pid file: %w", readPidErr)
 	}
 
 	activePid, err := strconv.Atoi(string(data))
 	if err != nil {
-		return fmt.Errorf("failed to convert the pid data to string: %w", err)
+		return false, fmt.Errorf("failed to convert the pid data to int: %w", err)
 	}
 
 	process, err := os.FindProcess(activePid)
 	if err != nil {
-		return fmt.Errorf("failed to find the process matching the pid: %w", err)
+		return false, fmt.Errorf("failed to find the process matching the pid: %w", err)
 	}
 
 	err = process.Signal(syscall.Signal(0))
 	if err != nil {
-		return fmt.Errorf("failed to check for active deamon: %w", err)
+		return false, fmt.Errorf("failed to check for active daemon: %w", err)
 	}
 
 	err = process.Signal(syscall.SIGTERM)
 	if err != nil {
-		return fmt.Errorf("failed to kill active deamon: %w", err)
+		return false, fmt.Errorf("failed to kill active daemon: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 type DaemonStatus struct {
-	Running bool
 	Pid     *int
 	Process *os.Process
+	Running bool
 }
 
-func StatusDaemon() (*DaemonStatus, error) {
-	pidFile := config.DaemonPIDFile
+func StatusDaemon(daemonConfig config.DaemonConfig) (*DaemonStatus, error) {
+	pidFile := filepath.Clean(daemonConfig.PIDFile)
 
 	_, err := os.Stat(pidFile)
 	if err != nil {
-		return &DaemonStatus{
-			Running: false,
-			Pid:     nil,
-			Process: nil,
-		}, nil
+		if os.IsNotExist(err) {
+			return &DaemonStatus{
+				Running: false,
+				Pid:     nil,
+				Process: nil,
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to describe the pid file: %w", err)
 	}
 
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read the pid file: %w", err)
+	data, readPidErr := os.ReadFile(pidFile)
+	if readPidErr != nil {
+		return nil, fmt.Errorf("failed to read the pid file: %w", readPidErr)
 	}
 
-	activePid, err := strconv.Atoi(string(data))
+	activePid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert the pid data to string: %w", err)
 	}
@@ -225,6 +245,12 @@ func StatusDaemon() (*DaemonStatus, error) {
 	process, err := os.FindProcess(activePid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find the process matching the pid: %w", err)
+	}
+
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		// signal(0) failing means the process isn't alive — this is not an error
+		// in the function's own operation, so we return a valid status with nil error
+		return &DaemonStatus{Running: false, Pid: &activePid}, nil //lint:ignore nilerr intentional
 	}
 
 	return &DaemonStatus{
@@ -555,7 +581,6 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
-
 	}
 }
 

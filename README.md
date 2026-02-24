@@ -1,4 +1,4 @@
-# Eos - Service Orchestration Tool
+# eos - Service Orchestration Tool
 
 ## Usage
 
@@ -118,6 +118,34 @@ status command:
 
 ## What's Next?
 Soon there will be issues listed to show a roadmap and to enable everyone to contribute to this project.
+
+## Releasing
+
+Releases are driven by git tags. The build pipeline stamps the version, commit, and date into the binary automatically.
+
+**Prerequisites:** ensure all changes are committed and tests pass.
+```bash
+make ci
+```
+
+**Tag and push:**
+```bash
+make release TAG=v1.2.0
+```
+
+This creates an annotated git tag and pushes it to origin. Follow [semantic versioning](https://semver.org): `v<major>.<minor>.<patch>`.
+
+**Verify the version:**
+```bash
+./bin/eos version
+# v1.2.0 (commit: a1b2c3d, built: 2026-02-17T10:00:00Z)
+```
+
+To test release builds locally without publishing:
+```bash
+make release-local
+# Outputs binaries to ./dist/
+```
 
 ## License
 

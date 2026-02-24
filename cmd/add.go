@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"eos/internal/manager"
-	"eos/internal/types"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/manager"
+	"eos/internal/types"
 )
 
 func findServiceFileInDirectory(dir string) string {
@@ -70,7 +71,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			cmd.Printf("Service details: %+v\n", yamlFile)
 
-			data, err := os.ReadFile(yamlFile)
+			data, err := os.ReadFile(filepath.Clean(yamlFile))
 			if err != nil {
 				cmd.Printf("Error reading YAML file: %v:\n", err)
 				return

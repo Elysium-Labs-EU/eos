@@ -2,21 +2,22 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
-	"eos/internal/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
+	"eos/internal/types"
 )
 
 func TestLogsCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -45,19 +46,19 @@ func TestLogsCommand(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"add", fullPath})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
 	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Start command should not return an error, got : %v", err)
 	}
 
 	cmd.SetArgs([]string{"logs", testFile.Name, "--follow=false"})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Status command should not return an error, got : %v", err)
 	}
@@ -67,7 +68,7 @@ func TestLogsCommand(t *testing.T) {
 	if !strings.Contains(output, "Checking the logs for cms") {
 		t.Errorf("Expected status to show 'Checking the logs for cms', got: %s", output)
 	}
-	if strings.Contains(output, "An error occured during getting the log file, got") {
+	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
 	}
 	if !strings.HasSuffix(output, "Service 'cms' has never ran\n") {
@@ -77,7 +78,7 @@ func TestLogsCommand(t *testing.T) {
 
 func TestLogsNeverRanServiceCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -110,13 +111,13 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"add", fullPath})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
 	cmd.SetArgs([]string{"logs", testFile.Name, "--follow=false"})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Status command should not return an error, got : %v", err)
 	}
@@ -126,14 +127,14 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 	if !strings.Contains(output, "Checking the logs for cms") {
 		t.Errorf("Expected status to show 'Checking the logs for cms', got: %s", output)
 	}
-	if strings.Contains(output, "An error occured during getting the log file, got") {
+	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
 	}
 }
 
 func TestLogsNonExistingServiceCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -141,7 +142,7 @@ func TestLogsNonExistingServiceCommand(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"logs", "cms", "--follow=false"})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Logs command should not return an error, got : %v", err)

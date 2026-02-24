@@ -1,10 +1,11 @@
 package cmd
 
 import (
-	"eos/internal/manager"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"eos/internal/manager"
 )
 
 func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {

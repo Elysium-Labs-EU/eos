@@ -2,20 +2,21 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 )
 
 func TestRemoveCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
 
@@ -44,14 +45,14 @@ func TestRemoveCommand(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPath})
 
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
 	cmd.SetArgs([]string{"remove", "cms"})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Remove command should not return an error, got : %v", err)

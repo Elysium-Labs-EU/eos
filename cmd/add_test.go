@@ -2,21 +2,21 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
-	"strings"
-
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 )
 
 func TestAddCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.CreateTestServiceConfigFile(t)
@@ -46,7 +46,7 @@ func TestAddCommand(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPath})
 
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("add should not return an error, got: %v\n", err)
@@ -56,11 +56,71 @@ func TestAddCommand(t *testing.T) {
 	if !strings.Contains(output, "Successfully registered service") {
 		t.Errorf("Expected add to show 'Successfully registered service', got: %s", output)
 	}
-	isRegistered, err := db.IsServiceRegistered("cms")
+	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
 	if err != nil {
-		t.Errorf("An error occured during service registration check %s\n", err)
+		t.Errorf("An error occurred during service registration check %s\n", err)
 	}
 	if !isRegistered {
 		t.Error("The service was checked but not found to be registered")
+	}
+}
+
+func TestAddIncompleteCommand(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	cmd := newTestRootCmd(manager)
+
+	var buf bytes.Buffer
+
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"add", "not-a-yaml"})
+
+	err := cmd.ExecuteContext(t.Context())
+
+	if err != nil {
+		t.Fatalf("add should not return an error, got: %v\n", err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, "directory or file on path not-a-yaml does not exist") {
+		t.Errorf("Expected add to show 'directory or file on path not-a-yaml does not exist', got: %s", output)
+	}
+	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
+	if err != nil {
+		t.Errorf("An error occurred during service registration check %s\n", err)
+	}
+	if isRegistered {
+		t.Error("The service should not be registered")
+	}
+}
+
+func TestAddInvalidYamlCommand(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	cmd := newTestRootCmd(manager)
+
+	var buf bytes.Buffer
+
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"add"})
+
+	err := cmd.ExecuteContext(t.Context())
+
+	if err == nil {
+		t.Fatal("add should return an error")
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
+		t.Errorf("Expected add to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
+	}
+	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
+	if err != nil {
+		t.Errorf("An error occurred during service registration check %s\n", err)
+	}
+	if isRegistered {
+		t.Error("The service should not be registered")
 	}
 }

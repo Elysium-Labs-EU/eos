@@ -1,4 +1,4 @@
-.PHONY: help dev build install test lint clean docker-* release-local
+.PHONY: help dev build install test lint clean docker-* release release-local fix
 
 
 help:
@@ -16,13 +16,16 @@ help:
 	@echo "  make docker-clean     - Clean up Docker resources"
 	@echo ""
 	@echo "Release:"
-	@echo "  make release-local    - Build release binaries locally"
+	@echo "  make release-local    	- Build release binaries locally"
+	@echo "  make release TAG=v1.2.0  - Tag and push a release"
 
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
-LDFLAGS=-ldflags "-X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.buildDate=$(BUILD_DATE)' -w -s"
+# LDFLAGS=-ldflags "-X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.buildDate=$(BUILD_DATE)' -w -s"
+VERSION_PKG := github.com/Elysium-Labs-EU/eos/internal/version
+LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).Commit=$(COMMIT)' -X '$(VERSION_PKG).Date=$(BUILD_DATE)' -w -s"
 
 
 BINARY_NAME=eos
@@ -50,19 +53,18 @@ install: build
 
 test:
 	@echo "Running tests..."
-	go test ./cmd ./internal/... -v -race
+	go test ./cmd ./internal/... -race
 
 lint:
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
 	golangci-lint run --timeout=5m
-	@command -v gosec >/dev/null 2>&1 || { echo "gosec not found. Install: go install github.com/securego/gosec/v2/cmd/gosec@latest"; exit 1; }
-	gosec ./...
-	@command -v gocritic >/dev/null 2>&1 || { echo "gocritic not found. Install: go install github.com/go-critic/go-critic/cmd/gocritic@latest"; exit 1; }
-	gocritic check ./...
+	
+fix:
+	go tool fieldalignment -fix ./...
 
-ci: lint test
-	@echo "✓ All CI checks passed!"
+ci: test lint
+	@echo "All CI checks passed!"
 
 # Docker - Local testing (nginx + eos container)
 docker-local:
@@ -118,6 +120,12 @@ release-local:
 	cd dist && sha256sum eos-linux-* > sha256sums.txt
 	@echo "Release binaries built in ./dist/"
 	@ls -lh dist/
+
+release:
+	@if [ -z "$(TAG)" ]; then echo "Usage: make release TAG=v1.2.0"; exit 1; fi
+	git tag -a $(TAG) -m "Release $(TAG)"
+	git push origin $(TAG)
+
 
 # Complete workflow: test install.sh with locally built binary
 test-install-flow: release-local

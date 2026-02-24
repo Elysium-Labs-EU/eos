@@ -1,11 +1,12 @@
 package cmd
 
 import (
-	"eos/internal/database"
-	"eos/internal/manager"
 	"errors"
 
 	"github.com/spf13/cobra"
+
+	"eos/internal/database"
+	"eos/internal/manager"
 )
 
 func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -32,7 +33,7 @@ func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Printf("There registered service was not found, got:\n%v", err)
 				return
 			} else if err != nil {
-				cmd.Printf("An error occured when getting the registered service:\n%v", err)
+				cmd.Printf("An error occurred when getting the registered service:\n%v", err)
 				return
 			}
 

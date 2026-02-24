@@ -1,11 +1,13 @@
 package cmd
 
 import (
-	"eos/internal/manager"
+	"errors"
 	"fmt"
 	"os/exec"
 
 	"github.com/spf13/cobra"
+
+	"eos/internal/manager"
 )
 
 func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -35,7 +37,7 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil {
+			if err != nil && !errors.Is(err, manager.ErrNotFound) {
 				cmd.Printf("Service unable to get recent process history entry, got: %v", err)
 				return
 			}
@@ -47,17 +49,22 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			selectedLogFilepath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
 
 			if err != nil {
-				cmd.Printf("An error occured during getting the log file, got:\n%v", err)
+				cmd.Printf("An error occurred during getting the log file, got:\n%v", err)
 				return
 			}
 
+			if lines < 0 || lines > 10000 {
+				cmd.Printf("An invalid line count was used, should be between 0 and 10000")
+				return
+			}
 			tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
 			if follow {
 				tailArgs = append(tailArgs, "-f")
 			}
 			tailArgs = append(tailArgs, *selectedLogFilepath)
 
-			tailLogCommand := exec.Command("tail", tailArgs...)
+			// #nosec G204 - args are validated above
+			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
 			tailLogCommand.Stdout = cmd.OutOrStdout()
 			tailLogCommand.Stderr = cmd.ErrOrStderr()
 			err = tailLogCommand.Run()

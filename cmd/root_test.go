@@ -2,47 +2,49 @@ package cmd
 
 import (
 	"bytes"
+	"strings"
+	"testing"
+
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
-	"strings"
-	"testing"
 )
 
 func TestRootCommand(t *testing.T) {
 	var buf bytes.Buffer
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Root command should not return an error, got: %v", err)
-	} else {
-		output := buf.String()
-
-		t.Logf("Buffer length: %d", len(output))
-		t.Logf("Buffer content: %q", output)
-
-		if !strings.Contains(output, "eos - Test version") {
-			t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
-		} else if !strings.Contains(output, "Use 'eos help'") {
-			t.Errorf("Expected output to contain help text, got: %s", output)
-		}
 	}
+	output := buf.String()
+
+	t.Logf("Buffer length: %d", len(output))
+	t.Logf("Buffer content: %q", output)
+
+	if !strings.Contains(output, "eos - Test version") {
+		t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
+	}
+	if !strings.Contains(output, "Use 'eos help'") {
+		t.Errorf("Expected output to contain help text, got: %s", output)
+	}
+
 }
 
 func TestHelpCommand(t *testing.T) {
 	var buf bytes.Buffer
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	cmd.SetOut(&buf)
@@ -50,17 +52,27 @@ func TestHelpCommand(t *testing.T) {
 
 	cmd.SetArgs([]string{"--help"})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 	if err != nil {
-		t.Fatalf("Help command sohuld not return an error, go: %v", err)
-	} else {
-		output := buf.String()
+		t.Fatalf("Help command should not return an error, go: %v", err)
+	}
+	output := buf.String()
 
-		t.Logf("Buffer length: %d", len(output))
-		t.Logf("Buffer content: %q", output)
+	t.Logf("Buffer length: %d", len(output))
+	t.Logf("Buffer content: %q", output)
 
-		if !strings.Contains(output, "eos is a modern deployment") {
-			t.Errorf("Expected help to contain description, got: '%s'", output)
-		}
+	if !strings.Contains(output, "eos is a modern deployment") {
+		t.Errorf("Expected help to contain description, got: '%s'", output)
+	}
+}
+
+func TestCreateSystemConfigHelper(t *testing.T) {
+	_, baseDir, _, err := createSystemConfig()
+
+	if err != nil {
+		t.Fatalf("Creating the system config should not throw an error")
+	}
+	if baseDir == "" {
+		t.Fatalf("Basedir variable cannot be an empty string")
 	}
 }

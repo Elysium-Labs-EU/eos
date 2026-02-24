@@ -2,9 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,11 +10,15 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"eos/internal/database"
+	"eos/internal/manager"
+	"eos/internal/testutil"
 )
 
 func TestStartCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
@@ -41,13 +42,13 @@ func TestStartCommand(t *testing.T) {
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occured during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
 	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)
 	if err != nil {
-		t.Fatalf("error occured during writing the start script file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
 	var buf bytes.Buffer
@@ -56,14 +57,14 @@ func TestStartCommand(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("add should not return an error, got: %v\n", err)
 	}
 	cmd.SetArgs([]string{"start", testFile.Name})
 
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("Start command should not return an error, got : %v", err)
@@ -103,7 +104,7 @@ func TestStartCommand(t *testing.T) {
 
 func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
@@ -126,13 +127,13 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occured during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
 	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)
 	if err != nil {
-		t.Fatalf("error occured during writing the start script file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
 	var buf bytes.Buffer
@@ -141,7 +142,7 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("add should not return an error, got: %v\n", err)
@@ -149,7 +150,7 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("start command should not return an error, got:\n %v", err)
@@ -157,7 +158,7 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.Execute()
+	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
 		t.Fatalf("start command should not return an error, got:\n %v", err)
@@ -170,8 +171,8 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 		return
 	}
 
-	pidPrefIndex := strings.Index(output, "PID:")
-	if pidPrefIndex == -1 {
+	found := strings.Contains(output, "PID:")
+	if !found {
 		t.Errorf("No PID substring found")
 	} else {
 		result, err := manager.ForceStopService(testFile.Name)

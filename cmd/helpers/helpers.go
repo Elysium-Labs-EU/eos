@@ -1,9 +1,9 @@
 package helpers
 
 import (
-	"eos/internal/types"
-
 	"github.com/dustin/go-humanize"
+
+	"eos/internal/types"
 )
 
 func DetermineServiceStatus(processState types.ProcessState) types.ServiceStatus {
@@ -16,6 +16,8 @@ func DetermineServiceStatus(processState types.ProcessState) types.ServiceStatus
 		return types.ServiceStatusRunning
 	case types.ProcessStateStarting:
 		return types.ServiceStatusStarting
+	case types.ProcessStateUnknown:
+		return types.ServiceStatusUnknown
 	default:
 		return types.ServiceStatusUnknown
 	}
