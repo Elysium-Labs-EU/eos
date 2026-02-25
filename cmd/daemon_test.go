@@ -169,7 +169,7 @@ func TestDaemonStopCommandOutput(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "Daemon was not running") && !strings.Contains(output, "Daemon stopped") {
+	if !strings.Contains(output, "daemon was not running") && !strings.Contains(output, "stopping daemon...") {
 		t.Errorf("daemon stop should report outcome, got: %s", output)
 	}
 }

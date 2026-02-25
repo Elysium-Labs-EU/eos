@@ -48,8 +48,8 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
 			if err != nil {
 				cmd.Printf("Error updating the service: %v\n", err)
-			} else {
-				cmd.Printf("Successfully updated the service %s", serviceName)
+				return
 			}
+			cmd.Printf("Successfully updated the service %s", serviceName)
 		}}
 }

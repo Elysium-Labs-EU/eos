@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"eos/internal/manager"
+	"eos/internal/ui"
 )
 
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -18,47 +20,51 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			cmd.Printf("INFO: This does not stop the service if it's running.\n")
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "this does not stop the service if it's running")
+
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.Printf("Error checking service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return
 			}
 
 			if !exists {
-				cmd.Printf("Service '%s' is not registered\n", serviceName)
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-				cmd.Printf("Error checking for service instance %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service instance: %v", err))
 				return
 			}
 
 			if serviceInstance != nil {
 				removedInstance, removeInstanceErr := mgr.RemoveServiceInstance(serviceName)
 				if removeInstanceErr != nil {
-					cmd.Printf("Error removing service instance %v\n", removeInstanceErr)
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service instance: %v", removeInstanceErr))
 					return
 				}
 				if !removedInstance {
-					cmd.Println("Unable to remove service instance")
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "unable to remove service instance")
 					return
 				}
-				cmd.Println("Successfully removed service instance")
+				cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "service instance removed")
 			}
 
 			removed, err := mgr.RemoveServiceCatalogEntry(serviceName)
 			if err != nil {
-				cmd.Printf("Error removing service %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service: %v", err))
 				return
 			}
 
 			if !removed {
-				cmd.Printf("Service '%s' was not running \n", serviceName)
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "could not be removed")
 				return
 			}
-			cmd.Printf("Successfully removed service registration '%s'\n", serviceName)
+
+			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), "unregistered")
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos list"), ui.TextMuted.Render("→ view registered services"))
 		}}
 }

@@ -65,13 +65,10 @@ func TestLogsCommand(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "Checking the logs for cms") {
-		t.Errorf("Expected status to show 'Checking the logs for cms', got: %s", output)
-	}
 	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
 	}
-	if !strings.HasSuffix(output, "Service 'cms' has never ran\n") {
+	if !strings.Contains(output, "run: eos start cms to start it") {
 		t.Errorf("Service should not have started")
 	}
 }
@@ -124,8 +121,8 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "Checking the logs for cms") {
-		t.Errorf("Expected status to show 'Checking the logs for cms', got: %s", output)
+	if !strings.Contains(output, "has never been started") {
+		t.Errorf("Expected status to show 'has never been started', got: %s", output)
 	}
 	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
@@ -149,10 +146,7 @@ func TestLogsNonExistingServiceCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "Checking the logs for cms") {
-		t.Errorf("Expected status to show 'Checking the logs for cms', got: %s", output)
-	}
-	if !strings.Contains(output, "Service 'cms' is not registered") {
-		t.Errorf("Expected status to show 'Service 'cms' is not registered', got: %s", output)
+	if !strings.Contains(output, "error cms is not registered") {
+		t.Errorf("Expected status to show 'error cms is not registered', got: %s", output)
 	}
 }

@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bufio"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"eos/internal/manager"
+	"eos/internal/ui"
 )
 
 func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -19,73 +21,73 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			cmd.Printf("Stopping service '%s'\n", serviceName)
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.Printf("Error checking service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return
 			}
 			if !exists {
-				cmd.Println("The service isn't registered")
-				cmd.Println("- Use 'eos add <path>' to register services")
-				cmd.Println("- Use 'eos status' to view registered services")
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return
 			}
 
 			stopResult, err := mgr.StopService(serviceName)
 
 			if err != nil {
-				cmd.Printf("Error occurred during gathering service information for graceful stopping, got:\n %v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
 				return
 			}
 
 			if len(stopResult.Stopped) == 0 && len(stopResult.Failed) == 0 {
-				cmd.Printf("No operations found for the service '%s'\n", serviceName)
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "no running processes found for", ui.TextBold.Render(serviceName))
 				cleanupServiceInstance(cmd, serviceName, mgr)
 				return
 			}
 
 			if len(stopResult.Stopped) > 0 && len(stopResult.Failed) == 0 {
-				cmd.Printf("Successfully stopped all processes of the service '%s'\n", serviceName)
+				cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("stopped (%d processes)", len(stopResult.Stopped)))
 				cleanupServiceInstance(cmd, serviceName, mgr)
 				return
 			}
 
 			if len(stopResult.Stopped) > 0 {
-				cmd.Printf("Successfully stopped %v processes of the service %s", len(stopResult.Stopped), serviceName)
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d processes of %s", len(stopResult.Stopped), ui.TextBold.Render(serviceName)))
 			}
 
 			if len(stopResult.Failed) > 0 {
-				cmd.Printf("Failed to gracefully stop the service %s. \n", serviceName)
-				cmd.Printf("Would you like to force quit? (y/n): ")
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), "failed to gracefully stop", ui.TextBold.Render(serviceName))
+				cmd.Printf("  %s ", ui.TextMuted.Render("force quit? (y/n):"))
 
 				reader := bufio.NewReader(cmd.InOrStdin())
 				response, err := reader.ReadString('\n')
 
 				if err != nil {
-					cmd.Printf("Error reading input: %v\n", err)
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", err))
 					return
 				}
 
 				response = strings.TrimSpace(strings.ToLower(response))
 
 				if response != "y" && response != "yes" {
-					cmd.Println("Aborted force quit")
+					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "force quit aborted")
+					return
 				}
 
 				forceStopResult, err := mgr.ForceStopService(serviceName)
 				if err != nil {
-					cmd.Printf("Error occurred during gathering service information for forceful stopping, got: %v\n", err)
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("force stopping service: %v", err))
 					return
 				}
 
 				if len(forceStopResult.Stopped) > 0 {
-					cmd.Printf("Successfully force stopped %v processes of this service", len(forceStopResult.Stopped))
+					cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), fmt.Sprintf("force stopped %d processes", len(forceStopResult.Stopped)))
 				}
 
 				if len(forceStopResult.Failed) > 0 {
-					cmd.Printf("Failed to forcefully stop the service, manual action is required.")
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "failed to force stop service, manual action required")
 					return
 				}
 
@@ -100,14 +102,14 @@ func newStopCmd(getManager func() manager.ServiceManager) *cobra.Command {
 func cleanupServiceInstance(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
 	removed, err := mgr.RemoveServiceInstance(serviceName)
 	if err != nil {
-		cmd.Printf("Failed to clean up service instance, got: %v\n", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", err))
 		return
 	}
 
 	if !removed {
-		cmd.Println("Service was not running")
+		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "service was not running")
 		return
 	}
 
-	cmd.Println("Successfully stopped and cleaned up service")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "service instance cleaned up")
 }

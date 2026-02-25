@@ -12,6 +12,7 @@ import (
 	"eos/internal/config"
 	"eos/internal/database"
 	"eos/internal/manager"
+	"eos/internal/ui"
 )
 
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
@@ -23,8 +24,8 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 			capabilities for your VPS infrastructure.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("eos - Test version")
-			cmd.Println("Use 'eos help' to see available commands")
+			cmd.Printf("%s\n\n", ui.TextBold.Render("eos - Test version"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
 		},
 	}
 
@@ -72,8 +73,8 @@ func newRootCmd() *cobra.Command {
 	capabilities for your VPS infrastructure.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Printf("eos %s\n", buildinfo.GetVersionOnly())
-			cmd.Println("Use 'eos help' to see available commands")
+			cmd.Printf("%s %s\n\n", ui.TextBold.Render("eos"), ui.TextMuted.Render(buildinfo.GetVersionOnly()))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
 		},
 
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -82,12 +83,12 @@ func newRootCmd() *cobra.Command {
 			}
 			_, baseDir, config, err := createSystemConfig()
 			if err != nil {
-				cmd.PrintErrf("Error getting system configuration: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
 			manager, possibleCleanup, err := getManager(cmd, baseDir, config.Daemon)
 			if err != nil {
-				cmd.PrintErrf("Error getting manager: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting manager: %v", err))
 				os.Exit(1)
 			}
 			mgr = manager
@@ -176,14 +177,14 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 	if noDaemon {
 		db, dbErr := database.NewDB(ctx, baseDir)
 		if dbErr != nil {
-			return nil, nil, fmt.Errorf("failed to connect to database: %w", dbErr)
+			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
 		}
 
 		mgr := manager.NewLocalManager(db, baseDir, ctx)
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {
-				fmt.Printf("Error closing database connection on cleanup: %v\n", err)
+				fmt.Printf("closing database connection on cleanup: %v\n", err)
 				os.Exit(1)
 			}
 		}

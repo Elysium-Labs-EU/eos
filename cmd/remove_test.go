@@ -59,7 +59,7 @@ func TestRemoveCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "Successfully removed service") {
-		t.Errorf("Expected remove to show 'Successfully removed service', got: %s", output)
+	if !strings.Contains(output, "success cms unregistered") {
+		t.Errorf("Expected remove to show 'success cms unregistered', got: %s", output)
 	}
 }

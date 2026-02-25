@@ -71,7 +71,7 @@ func TestStartCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "Started with PID:") {
+	if !strings.Contains(output, "started with PID:") {
 		t.Fatal("The start command didn't complete successfully, no PID was returned")
 	}
 	pidPrefIndex := strings.Index(output, "PID:")
@@ -166,7 +166,7 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "Started with PID:") {
+	if !strings.Contains(output, "started with PID:") {
 		t.Errorf("The start command didn't complete successfully, no PID was returned")
 		return
 	}

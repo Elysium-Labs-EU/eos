@@ -14,6 +14,7 @@ import (
 	"eos/internal/config"
 	"eos/internal/manager"
 	"eos/internal/process"
+	"eos/internal/ui"
 )
 
 func newDaemonCmd() *cobra.Command {
@@ -27,7 +28,7 @@ func newDaemonCmd() *cobra.Command {
 			var err error
 			_, baseDir, config, err = createSystemConfig()
 			if err != nil {
-				cmd.PrintErrf("Error getting config: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
 		},
@@ -39,24 +40,24 @@ func newDaemonCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			detached, err := cmd.Flags().GetBool("detach")
 			if err != nil {
-				cmd.PrintErrf("Failed to parse flag: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 				return
 			}
 
 			if detached {
 				if err := forkDaemon(); err != nil {
-					cmd.PrintErrf("Failed to start daemon: %v\n", err)
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 					return
 				}
-				cmd.Println("Daemon started in background")
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
 				return
 			}
 
-			cmd.Println("Starting daemon in foreground...")
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
 			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
 
 			if err := process.StartDaemon(logToFileAndConsole, baseDir, config.Daemon, config.Health); err != nil {
-				cmd.PrintErrf("Failed to start daemon: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 			}
 		},
 	}
@@ -64,24 +65,24 @@ func newDaemonCmd() *cobra.Command {
 	startCmd.Flags().Bool("log-to-file-and-console", false, "")
 	err := startCmd.Flags().MarkHidden("log-to-file-and-console")
 	if err != nil {
-		daemonCmd.PrintErrf("Failed to mark daemon flag as hidden: %v\n", err)
+		daemonCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("marking daemon flag as hidden: %v", err))
 	}
 
 	stopCmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the daemon",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("Stopping daemon...")
+			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
 			killed, err := process.StopDaemon(config.Daemon)
 			if err != nil {
-				cmd.PrintErrf("Failed to stop daemon: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
 				return
 			}
 			if !killed {
-				cmd.Println("Daemon was not running")
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
 				return
 			}
-			cmd.Println("Daemon stopped")
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
 		},
 	}
 
@@ -89,25 +90,22 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Status of the daemon",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("Reading status of daemon...")
-
 			status, err := process.StatusDaemon(config.Daemon)
 			if err != nil {
-				cmd.PrintErrf("Failed to get status of daemon: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon status: %v", err))
 				return
 			}
 
 			if !status.Running {
 				if status.Pid != nil {
-					cmd.Println("Daemon is found but not running")
+					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is found but not running"))
 					return
 				}
-				cmd.Println("Daemon not found")
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon not found"))
 				return
 			}
 
-			cmd.Printf("Daemon is running \n")
-			cmd.Printf("PID: %d", *status.Pid)
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render("daemon is running"), fmt.Sprintf("PID: %d", *status.Pid))
 		},
 	}
 
@@ -116,27 +114,24 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "logs",
 		Short: "Logs of the daemon",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println("Reading logs of daemon...")
-
 			logPath := filepath.Join(manager.CreateLogDirPath(baseDir), config.Daemon.LogFileName)
 
 			_, err := os.Stat(logPath)
 			if err != nil {
-				cmd.Printf("An error occurred during getting the log file, got:\n%v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
 				return
 			}
 
 			if lines < 0 || lines > 10000 {
-				cmd.Printf("An invalid line count was used, should be between 0 and 10000")
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
 				return
 			}
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", "-n", fmt.Sprintf("%d", lines), "-f", logPath)
 			tailLogCommand.Stdout = cmd.OutOrStdout()
 			tailLogCommand.Stderr = cmd.ErrOrStderr()
-			// err = tailLogCommand.Run()
 			if err := tailLogCommand.Start(); err != nil {
-				cmd.PrintErrf("Failed to start log command: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
 				return
 			}
 
@@ -144,11 +139,10 @@ func newDaemonCmd() *cobra.Command {
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
 					if exitErr.ExitCode() != 130 { // 130 = Ctrl+C
-						cmd.PrintErrf("Log command failed: %v\n", err)
+						cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
 					}
 				}
 			}
-
 		},
 	}
 	logsCmd.Flags().IntVar(&lines, "lines", 300, "Number of lines to display")

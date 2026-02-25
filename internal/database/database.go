@@ -81,11 +81,11 @@ func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, te
 	if migrationsErr := db.RunMigrations(testMigrationsFS, testMigrationsPath); migrationsErr != nil {
 		return nil, nil, fmt.Errorf("failed to run migrations: %w", migrationsErr)
 	}
-	version, dirty, err := db.GetCurrentMigrationVersion(testMigrationsFS, testMigrationsPath)
+	_, dirty, err := db.GetCurrentMigrationVersion(testMigrationsFS, testMigrationsPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("warning: Could not get schema version: %w", err)
 	} else {
-		fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
+		// fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
 		if dirty {
 			return nil, nil, fmt.Errorf("database is in a dirty state. Manual intervention required")
 		}

@@ -35,8 +35,10 @@ go build -o eos
 # See all commands
 ./eos --help
 
-# Check database contents
-sqlite3 ~/.eos/state.db "SELECT * FROM registry;"
+# Check database contents (requires eos to have run before)
+sqlite3 ~/.eos/state.db "SELECT * FROM service_catalog;"
+sqlite3 ~/.eos/state.db "SELECT * FROM service_instances;"
+sqlite3 ~/.eos/state.db "SELECT * FROM process_history;"
 
 # Fresh start (delete all registered services)
 rm ~/.eos/state.db
@@ -47,9 +49,6 @@ rm ~/.eos/state.db
 #### Register a Service
 
 ```bash
-# Register from directory (looks for service.yaml inside)
-./eos add ./path/to/project
-
 # Register from specific YAML file
 ./eos add ./path/to/project/service.yaml
 ```

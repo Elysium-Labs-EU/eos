@@ -128,7 +128,7 @@ func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceRuntime,
 	response, err := dm.sendRequest(types.MethodGetServiceInstance, []string{name})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetServiceInstance request errored, got:\n %w", err)
+		return nil, fmt.Errorf("the GetServiceInstance request errored:\n %w", err)
 	}
 
 	var result types.GetServiceInstanceResponse
@@ -143,7 +143,7 @@ func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceRuntime,
 // 	response, err := dm.sendRequest(types.MethodGetService, []string{name})
 
 // 	if err != nil {
-// 		return types.Service{}, fmt.Errorf("the GetService request errored, got:\n %v", err)
+// 		return types.Service{}, fmt.Errorf("the GetService request errored:\n %v", err)
 // 	}
 
 // 	var result types.Service
@@ -158,7 +158,7 @@ func (dm *DaemonManager) RemoveServiceInstance(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodRemoveServiceInstance, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the RemoveServiceInstance request errored, got:\n %w", err)
+		return false, fmt.Errorf("the RemoveServiceInstance request errored:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -173,7 +173,7 @@ func (dm *DaemonManager) StartService(name string) (int, error) {
 	response, err := dm.sendRequest(types.MethodStartService, []string{name})
 
 	if err != nil {
-		return 0, fmt.Errorf("the StartService request errored, got:\n %w", err)
+		return 0, fmt.Errorf("the StartService request errored:\n %w", err)
 	}
 
 	var result map[string]int
@@ -188,7 +188,7 @@ func (dm *DaemonManager) RestartService(name string) (int, error) {
 	response, err := dm.sendRequest(types.MethodRestartService, []string{name})
 
 	if err != nil {
-		return 0, fmt.Errorf("the RestartService request errored, got:\n %w", err)
+		return 0, fmt.Errorf("the RestartService request errored:\n %w", err)
 	}
 
 	var result map[string]int
@@ -203,7 +203,7 @@ func (dm *DaemonManager) StopService(name string) (StopResult, error) {
 	response, err := dm.sendRequest(types.MethodStopService, []string{name})
 
 	if err != nil {
-		return StopResult{}, fmt.Errorf("the StopService request errored, got:\n %w", err)
+		return StopResult{}, fmt.Errorf("the StopService request errored:\n %w", err)
 	}
 
 	var result StopResult
@@ -218,7 +218,7 @@ func (dm *DaemonManager) ForceStopService(name string) (StopResult, error) {
 	response, err := dm.sendRequest(types.MethodForceStopService, []string{name})
 
 	if err != nil {
-		return StopResult{}, fmt.Errorf("the ForceStopService request errored, got:\n %w", err)
+		return StopResult{}, fmt.Errorf("the ForceStopService request errored:\n %w", err)
 	}
 
 	var result StopResult
@@ -237,7 +237,7 @@ func (dm *DaemonManager) AddServiceCatalogEntry(service *types.ServiceCatalogEnt
 	_, err = dm.sendRequest(types.MethodAddServiceCatalogEntry, []string{string(serviceJSON)})
 
 	if err != nil {
-		return fmt.Errorf("the AddServiceCatalogEntry request errored, got:\n %w", err)
+		return fmt.Errorf("the AddServiceCatalogEntry request errored:\n %w", err)
 	}
 
 	return nil
@@ -247,7 +247,7 @@ func (dm *DaemonManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEn
 	response, err := dm.sendRequest(types.MethodGetAllServiceCatalogEntries, []string{})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetAllServiceCatalogEntries request errored, got:\n %w", err)
+		return nil, fmt.Errorf("the GetAllServiceCatalogEntries request errored:\n %w", err)
 	}
 
 	var result []types.ServiceCatalogEntry
@@ -262,7 +262,7 @@ func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatal
 	response, err := dm.sendRequest(types.MethodGetServiceCatalogEntry, []string{name})
 
 	if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("the GetServiceCatalogEntry request errored, got:\n %w", err)
+		return types.ServiceCatalogEntry{}, fmt.Errorf("the GetServiceCatalogEntry request errored:\n %w", err)
 	}
 
 	var result types.ServiceCatalogEntry
@@ -277,7 +277,7 @@ func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatal
 // 	response, err := dm.sendRequest(types.MethodGetServiceStatus, []string{name})
 
 // 	if err != nil {
-// 		return types.ServiceStatusStopped, fmt.Errorf("the GetServiceStatus request errored, got:\n %v", err)
+// 		return types.ServiceStatusStopped, fmt.Errorf("the GetServiceStatus request errored:\n %v", err)
 // 	}
 
 // 	var result types.ServiceStatus
@@ -292,7 +292,7 @@ func (dm *DaemonManager) IsServiceRegistered(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodIsServiceRegistered, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the IsServiceRegistered request errored, got:\n %w", err)
+		return false, fmt.Errorf("the IsServiceRegistered request errored:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -307,7 +307,7 @@ func (dm *DaemonManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodRemoveServiceCatalogEntry, []string{name})
 
 	if err != nil {
-		return false, fmt.Errorf("the RemoveServiceCatalogEntry request errored, got:\n %w", err)
+		return false, fmt.Errorf("the RemoveServiceCatalogEntry request errored:\n %w", err)
 	}
 
 	var result map[string]bool
@@ -322,7 +322,7 @@ func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath
 	_, err := dm.sendRequest(types.MethodUpdateServiceCatalogEntry, []string{name, newDirectoryPath, newConfigFileName})
 
 	if err != nil {
-		return fmt.Errorf("the UpdateServiceCatalogEntry request errored, got:\n %w", err)
+		return fmt.Errorf("the UpdateServiceCatalogEntry request errored:\n %w", err)
 	}
 
 	return nil
@@ -332,7 +332,7 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.P
 	response, err := dm.sendRequest(types.MethodGetMostRecentProcessHistoryEntry, []string{name})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetMostRecentProcessHistoryEntry request errored, got:\n %w", err)
+		return nil, fmt.Errorf("the GetMostRecentProcessHistoryEntry request errored:\n %w", err)
 	}
 
 	var result types.GetMostRecentProcessHistoryEntryResponse
@@ -352,7 +352,7 @@ func (dm *DaemonManager) CreateServiceLogFiles(serviceName string) (logPath stri
 	response, err := dm.sendRequest(types.MethodCreateServiceLogFiles, []string{serviceName})
 
 	if err != nil {
-		return "", "", fmt.Errorf("the CreateServiceLogFiles request errored, got:\n %w", err)
+		return "", "", fmt.Errorf("the CreateServiceLogFiles request errored:\n %w", err)
 	}
 
 	var result ServiceLogFilesResult
@@ -375,7 +375,7 @@ func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool
 	response, err := dm.sendRequest(types.MethodGetServiceLogFilePath, []string{string(serviceLogFilePathJSON)})
 
 	if err != nil {
-		return nil, fmt.Errorf("the GetServiceLogFilePath request errored, got:\n %w", err)
+		return nil, fmt.Errorf("the GetServiceLogFilePath request errored:\n %w", err)
 	}
 
 	var result map[string]*string

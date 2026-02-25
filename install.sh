@@ -454,7 +454,7 @@ main() {
     echo ""
     echo -e "${BOLD}Next steps:${NC}"
     echo "  1. Register a service:"
-    echo -e "     ${CYAN}eos add /path/to/project${NC}"
+    echo -e "     ${CYAN}eos add /path/to/project/service.yaml${NC}"
     echo ""
     echo "  2. Check status:"
     echo -e "     ${CYAN}eos status${NC}"
@@ -463,7 +463,6 @@ main() {
     echo -e "     ${CYAN}eos daemon logs${NC}"
     echo ""
     dim "Database: ${HOME_DIR}/state.db"
-    dim "Service configs as 'service.yaml' in respective app directory"
     echo ""
 }
 

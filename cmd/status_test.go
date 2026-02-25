@@ -27,8 +27,8 @@ func TestStatusCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "No services registered") {
-		t.Errorf("Expected status to show 'No services registered', got: %s", output)
+	if !strings.Contains(output, "error no services are registered") {
+		t.Errorf("Expected status to show 'error no services are registered', got: %s", output)
 	}
 }
 

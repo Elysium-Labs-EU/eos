@@ -22,6 +22,7 @@ import (
 
 	"eos/internal/buildinfo"
 	"eos/internal/config"
+	"eos/internal/ui"
 )
 
 var httpClient = &http.Client{
@@ -40,7 +41,7 @@ func newSystemCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			installDir, baseDir, config, err := createSystemConfig()
 			if err != nil {
-				systemCmd.PrintErrf("Error getting system configuration: %v\n", err)
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
 			configCmd(cmd, installDir, baseDir, *config)
@@ -53,7 +54,7 @@ func newSystemCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			installDir, _, _, err := createSystemConfig()
 			if err != nil {
-				systemCmd.PrintErrf("Error getting system configuration: %v\n", err)
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
 			updateCmd(cmd, buildinfo.GetVersionOnly(), installDir)
@@ -76,27 +77,24 @@ func newSystemCmd() *cobra.Command {
 }
 
 func configCmd(cmd *cobra.Command, installDir string, baseDir string, config config.SystemConfig) {
-	cmd.Println("")
-	cmd.Println("System Config")
-	cmd.Println("")
-	cmd.Printf("Install directory: %s\n", installDir)
-	cmd.Printf("Base directory: %s\n", baseDir)
-	cmd.Println("")
-	cmd.Println("# Daemon configuration")
-	cmd.Printf("PID File: %s\n", config.Daemon.PIDFile)
-	cmd.Printf("Socket Path: %s\n", config.Daemon.SocketPath)
-	cmd.Printf("Log Directory: %s\n", config.Daemon.LogDir)
-	cmd.Printf("Log Filename: %s\n", config.Daemon.LogFileName)
-	cmd.Printf("Log maximum files: %d\n", config.Daemon.MaxFiles)
-	cmd.Printf("Log filesize limit: %d\n", config.Daemon.FileSizeLimit)
-	cmd.Println("")
-	cmd.Println("# Process health check configuration")
-	cmd.Printf("Max number of restarts: %d\n", config.Health.MaxRestart)
-	cmd.Printf("Check process on timeout: %v\n", config.Health.Timeout.Enable)
+	cmd.Println()
+	cmd.Printf("%s\n\n", ui.TextBold.Render("System Config"))
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("install dir:"), installDir)
+	cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("base dir:"), baseDir)
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Daemon"))
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("pid file:"), config.Daemon.PIDFile)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket:"), config.Daemon.SocketPath)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), config.Daemon.LogDir)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), config.Daemon.LogFileName)
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max files:"), config.Daemon.MaxFiles)
+	cmd.Printf("  %s %d\n\n", ui.TextMuted.Render("size limit:"), config.Daemon.FileSizeLimit)
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Health Check"))
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max restarts:"), config.Health.MaxRestart)
+	cmd.Printf("  %s %v\n", ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
-		cmd.Printf("Process timeout limit: %s\n", config.Health.Timeout.Limit)
+		cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit)
 	} else {
-		cmd.Printf("Process timeout limit: %s (not active)\n", config.Health.Timeout.Limit)
+		cmd.Printf("  %s %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit, ui.TextMuted.Render("(not active)"))
 	}
 }
 
@@ -104,117 +102,118 @@ func updateCmd(cmd *cobra.Command, version string, installDir string) {
 	userArch := runtime.GOARCH
 	userOS := runtime.GOOS
 	binaryPath := filepath.Join(installDir, "eos")
-	cmd.Println("Checking for updates...")
+
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
 
 	fileInfo, err := os.Stat(installDir)
 	if err != nil {
-		cmd.Printf("Directory %q for updates is not accessible, please check.\n", installDir)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", installDir))
 		return
 	}
 
 	if !fileInfo.IsDir() {
-		cmd.Printf("Directory %q for updates is not accessible, please check.\n", installDir)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", installDir))
 		return
 	}
 
 	if version == "dev" {
-		cmd.Println("Updating not supported, your version is detected to be 'dev'.")
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "updating not supported for dev builds")
 		return
 	}
 
 	if !strings.HasPrefix(version, "v") {
-		cmd.Println("Current version tag name has an invalid pattern, it doesn't start with a 'v'.")
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid version tag, must start with 'v'")
 		return
 	}
 
 	if !semver.IsValid(version) {
-		cmd.Println("Invalid semantic version.")
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid semantic version")
 		return
 	}
 
 	release, err := fetchLatestRelease(cmd.Context())
 	if err != nil {
-		cmd.PrintErrf("Unable to retrieve latest release, got: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching latest release: %v", err))
 		return
 	}
 
 	latestVersion, latestAsset := checkForUpdates(release, version, userArch, userOS)
 
 	if latestVersion == "" {
-		cmd.Printf("Current version (%s) is the latest version.\n", version)
+		cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), "already on the latest version", ui.TextMuted.Render(fmt.Sprintf("(%s)", version)))
 		return
 	}
 	if latestAsset == nil {
-		cmd.Printf("No usuable asset found for the latest version (%s).\n", version)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("no compatible asset found for %s-%s", userOS, userArch))
 		return
 	}
 
-	cmd.Printf("A newer version has been found (%s). Current version (%s).\n", latestVersion, version)
-	cmd.Printf("Would you like to upgrade? (y/n): ")
+	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(version), ui.TextBold.Render(latestVersion))
+	cmd.Printf("  %s ", ui.TextMuted.Render("upgrade? (y/n):"))
 
 	reader := bufio.NewReader(cmd.InOrStdin())
 	response, err := reader.ReadString('\n')
 
 	if err != nil {
-		cmd.Printf("Error reading input: %v\n", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", err))
 		return
 	}
 
 	response = strings.TrimSpace(strings.ToLower(response))
 	if response != "y" && response != "yes" {
-		cmd.Println("Canceled update")
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "update canceled")
 		return
 	}
 
-	cmd.Printf("Downloading eos %s for %s-%s...\n", latestVersion, userOS, userArch)
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", latestVersion, userOS, userArch))
 	binary, tempDir, err := handleDownloadBinary(cmd.Context(), latestAsset)
 
 	if err != nil {
-		cmd.PrintErrf("Downloading the binary failed, got: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("downloading binary: %v", err))
 		return
 	}
 
-	cmd.Println("Validating checksums...")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "validating checksums...")
 	err = validateDigest(latestAsset, binary)
 	if err != nil {
-		cmd.PrintErrf("Error during validating checksums: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
-			cmd.PrintErrf("Cleaning up the temporary directory at %s failed, %v - manual clean-up advised", tempDir, cleanupErr)
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
 		}
 		return
 	}
 
-	cmd.Println("Checksums match. Proceeding...")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "checksums match")
 
 	timestamp := time.Now().Format("20060102_150405")
 	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, timestamp)
 	if err := copyFile(binaryPath, backupPath); err != nil {
-		cmd.PrintErrf("Failed to backup current binary: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("backing up current binary: %v", err))
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
-			cmd.PrintErrf("Cleaning up the temporary directory at %s failed, %v - manual clean-up advised", tempDir, cleanupErr)
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
 		}
 		return
 	}
 
-	cmd.Printf("Current binary backed up to %s\n", backupPath)
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("info"), "backup created at", ui.TextMuted.Render(backupPath))
 
 	if err := copyFile(binary.Name(), binaryPath); err != nil {
-		cmd.PrintErrf("Failed to install new binary: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("installing new binary: %v", err))
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
-			cmd.PrintErrf("Cleaning up the temporary directory at %s failed, %v - manual clean-up advised", tempDir, cleanupErr)
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
 		}
 		return
 	}
 	if err := os.Chmod(binaryPath, 0755); err != nil { // #nosec G302 -- executable binary needs to be runnable by all users
-		cmd.PrintErrf("Failed to set permissions: %v", err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
 		return
 	}
 
-	cmd.Println("New binary installed successfully")
-
 	if err := os.RemoveAll(tempDir); err != nil {
-		cmd.PrintErrf("Cleaning up the temporary directory at %s failed, %v - manual clean-up advised", tempDir, err)
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, err))
 	}
+
+	cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
 }
 
 type Asset struct {

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,22 +135,22 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 		t.Fatalf("Info command should not return an error, got : %v", err)
 	}
 	output := buf.String()
-	if !strings.Contains(output, "Name: cms") {
+	if !strings.Contains(output, "name") || !strings.Contains(output, "cms") {
 		t.Errorf("Expected name to be 'cms'")
 	}
-	if !strings.Contains(output, fmt.Sprintf("Path: %s", fullDirPath)) {
-		t.Errorf("Expected Path to be '%s'", fmt.Sprintf("Path: %s", fullDirPath))
+	if !strings.Contains(output, "path") || !strings.Contains(output, fullDirPath) {
+		t.Errorf("Expected path to contain '%s'", fullDirPath)
 	}
-	if !strings.Contains(output, "Service command: /home/user/start-script.sh") {
-		t.Errorf("Expected service command to be '/home/user/start-script.sh'")
+	if !strings.Contains(output, "command") || !strings.Contains(output, "/home/user/start-script.sh") {
+		t.Errorf("Expected command to be '/home/user/start-script.sh'")
 	}
-	if !strings.Contains(output, "Service port: 1337") {
-		t.Errorf("Expected Service port to be '1337'")
+	if !strings.Contains(output, "port") || !strings.Contains(output, "1337") {
+		t.Errorf("Expected port to be '1337'")
 	}
-	if !strings.Contains(output, "Runtime: nodejs") {
+	if !strings.Contains(output, "runtime") || !strings.Contains(output, "nodejs") {
 		t.Errorf("Expected runtime to be 'nodejs'")
 	}
-	if !strings.Contains(output, "Runtime path: /path/to/node") {
+	if !strings.Contains(output, "runtime path") || !strings.Contains(output, "/path/to/node") {
 		t.Errorf("Expected runtime path to be '/path/to/node'")
 	}
 }
@@ -202,8 +201,8 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "No valid config loaded") {
-		t.Errorf("Expected config section to show 'No valid config loaded', got: %s", output)
+	if !strings.Contains(output, "no config loaded") {
+		t.Errorf("Expected config section to show 'no config loaded', got: %s", output)
 	}
 }
 

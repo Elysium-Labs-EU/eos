@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"eos/internal/manager"
+	"eos/internal/ui"
 )
 
 func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -24,44 +25,46 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			cmd.Printf("Checking the logs for %s \n", serviceName)
-
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.Printf("Error checking service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return
 			}
 			if !exists {
-				cmd.Printf("Service '%s' is not registered\n", serviceName)
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrNotFound) {
-				cmd.Printf("Service unable to get recent process history entry, got: %v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 				return
 			}
 			if processHistoryEntry == nil {
-				cmd.Printf("Service '%s' has never ran\n", serviceName)
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has never been started")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos start %s", serviceName)), ui.TextMuted.Render("to start it"))
 				return
 			}
 
 			selectedLogFilepath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
-
 			if err != nil {
-				cmd.Printf("An error occurred during getting the log file, got:\n%v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
 				return
 			}
 
 			if lines < 0 || lines > 10000 {
-				cmd.Printf("An invalid line count was used, should be between 0 and 10000")
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "line count must be between 0 and 10000")
 				return
 			}
+
 			tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
 			if follow {
 				tailArgs = append(tailArgs, "-f")
 			}
 			tailArgs = append(tailArgs, *selectedLogFilepath)
+
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
@@ -70,7 +73,7 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			err = tailLogCommand.Run()
 
 			if err != nil {
-				cmd.Printf("The log command failed, got:\n%v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
 			}
 		},
 	}

@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/dustin/go-humanize"
-	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 
 	"eos/cmd/helpers"
 	"eos/internal/manager"
 	"eos/internal/types"
+	"eos/internal/ui"
 )
 
 func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -23,15 +24,22 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			mgr := getManager()
 			registeredServices, err := mgr.GetAllServiceCatalogEntries()
 			if err != nil {
-				cmd.Printf("error getting registered services: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered services: %v", err))
 				return
 			}
 
 			numberOfRegisteredServices := len(registeredServices)
 
 			if numberOfRegisteredServices == 0 {
-				cmd.Println("No services registered")
-				cmd.Println("Use 'eos add <path>' to register services")
+				cmd.PrintErrf("%s %s\n\n",
+					ui.LabelError.Render("error"),
+					"no services are registered",
+				)
+				cmd.PrintErr(
+					ui.TextMuted.Render("  run: ") +
+						ui.TextCommand.Render("eos add <path>") +
+						ui.TextMuted.Render(" to register a service") + "\n",
+				)
 				return
 			}
 
@@ -52,21 +60,21 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				regServiceName := regService.Name
 
 				if err != nil {
-					cmd.Printf("%s: Error reading config '(%v)'\n", regServiceName, err)
+					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("loading service config: %v", err))
 					continue
 				}
 				if config.Name != regServiceName {
-					cmd.Printf("%s: Name of services drifted\n", regServiceName)
+					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("name of services drifted: %v", err))
 					continue
 				}
 
 				serviceInstance, err := mgr.GetServiceInstance(regServiceName)
 				if err != nil {
-					cmd.Printf("%s: Unable to get service instance '(%v)'\n", regServiceName, err)
+					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
 					continue
 				}
 				if serviceInstance == nil {
-					cmd.Printf("%s: No active service instance found\n", regServiceName)
+					cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(regServiceName), "not yet started")
 					continue
 				}
 
@@ -92,45 +100,40 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				})
 			}
 
-			t := table.NewWriter()
-			t.SetOutputMirror(os.Stdout)
-			t.SetStyle(table.StyleRounded)
-			t.AppendHeader(table.Row{
-				"Name", "Status", "PID", "Uptime", "Restart Count", "Started", "Error",
-			})
-			t.SetColumnConfigs([]table.ColumnConfig{
-				{Number: 1, WidthMin: 25},
-				{Number: 2, WidthMin: 15},
-				{Number: 3, WidthMin: 15},
-				{Number: 4, WidthMin: 12},
-				{Number: 5, WidthMin: 20},
-				{Number: 6, WidthMin: 20},
-			})
+			rows := [][]string{}
 
 			if len(activeServices) == 0 {
-				t.AppendRow(table.Row{
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-				})
+				rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-"})
+			} else {
+				for _, svc := range activeServices {
+					rows = append(rows, []string{
+						svc.Name,
+						helpers.PrintStatus(svc.Status),
+						fmt.Sprintf("%d", svc.PID),
+						svc.Uptime,
+						fmt.Sprintf("%d", svc.RestartCount),
+						svc.Started,
+						svc.Error,
+					})
+				}
 			}
 
-			for _, svc := range activeServices {
-				t.AppendRow(table.Row{
-					svc.Name,
-					svc.Status,
-					svc.PID,
-					svc.Uptime,
-					svc.RestartCount,
-					svc.Started,
-					svc.Error,
-				})
-			}
-			t.Render()
+			t := table.New().
+				Border(lipgloss.RoundedBorder()).
+				BorderStyle(lipgloss.NewStyle().Foreground(ui.TableBorderColor)).
+				StyleFunc(func(row, col int) lipgloss.Style {
+					if row == table.HeaderRow {
+						return ui.TableHeaderStyle
+					}
+					if row%2 == 0 {
+						return ui.TableEvenRowStyle
+					}
+					return ui.TableOddRowStyle
+				}).
+				Headers("NAME", "STATUS", "PID", "UPTIME", "RESTARTS", "STARTED", "ERROR").
+				Rows(rows...)
+
+			fmt.Println(t)
 		},
 	}
 }

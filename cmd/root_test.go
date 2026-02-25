@@ -28,16 +28,12 @@ func TestRootCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	t.Logf("Buffer length: %d", len(output))
-	t.Logf("Buffer content: %q", output)
-
 	if !strings.Contains(output, "eos - Test version") {
 		t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
 	}
-	if !strings.Contains(output, "Use 'eos help'") {
+	if !strings.Contains(output, "eos help") {
 		t.Errorf("Expected output to contain help text, got: %s", output)
 	}
-
 }
 
 func TestHelpCommand(t *testing.T) {

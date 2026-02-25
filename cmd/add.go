@@ -12,6 +12,7 @@ import (
 
 	"eos/internal/manager"
 	"eos/internal/types"
+	"eos/internal/ui"
 )
 
 func findServiceFileInDirectory(dir string) string {
@@ -66,55 +67,52 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			yamlFile, err := determineYamlFile(projectPath)
 			if err != nil {
-				cmd.Printf("Error: Unable to determine YAML file correctly - got: %v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("unable to determine YAML file: %v", err))
 				return
 			}
-			cmd.Printf("Service details: %+v\n", yamlFile)
 
 			data, err := os.ReadFile(filepath.Clean(yamlFile))
 			if err != nil {
-				cmd.Printf("Error reading YAML file: %v:\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading YAML file: %v", err))
 				return
 			}
 
 			var config types.ServiceConfig
 			err = yaml.Unmarshal(data, &config)
 			if err != nil {
-				cmd.Printf("Error parsing YAML: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing YAML: %v", err))
 				return
 			}
 
 			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 			if err != nil {
-				cmd.Printf("Error getting absolute path: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving absolute path: %v", err))
 				return
 			}
 
 			serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(config.Name, absPath, filepath.Base(yamlFile))
 			if err != nil {
-				cmd.Printf("Create service catalog entry was not able to complete, got: %v", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating service catalog entry: %v", err))
 				return
 			}
 
 			err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
 
 			if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
-				cmd.Printf("Service '%s' is already registered.\n", config.Name)
-				cmd.Printf("Use 'eos remove %s' first to re-register.\n", config.Name)
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(config.Name), "is already registered")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", config.Name)), ui.TextMuted.Render("first to re-register"))
 				return
 			}
 			if err != nil {
-				// TODO: Make the error more explicit type to be more helpful with suggestions.
-				cmd.Printf("Error registering service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("registering service: %v", err))
 				return
 			}
 
-			cmd.Printf("Successfully registered service '%s'\n", config.Name)
-			cmd.Printf("Path: %s\n", absPath)
-			cmd.Printf("Config: %s\n", filepath.Base(yamlFile))
-			cmd.Println()
-			// TODO: Add deploy in between if needed
-			cmd.Printf("Use 'eos start %s' to start the service\n", config.Name)
+			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(config.Name), "registered")
+			cmd.Printf("  %s %s\n", ui.TextMuted.Render("path:"), absPath)
+			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("config:"), filepath.Base(yamlFile))
+			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos start %s", config.Name)), ui.TextMuted.Render("→ start the service"))
+			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 		},
 	}
 }

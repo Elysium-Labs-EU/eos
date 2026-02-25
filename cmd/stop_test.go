@@ -78,8 +78,11 @@ func TestStopCommand(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "Successfully stopped all processes of the service") {
-		t.Errorf("Expected remove to show 'Successfully stopped all processes of the service', got: %s", output)
+	if !strings.Contains(output, "stopped (1 processes)") {
+		t.Errorf("Expected remove to show 'stopped (1 processes)', got: %s", output)
+	}
+	if !strings.Contains(output, "service instance cleaned up") {
+		t.Errorf("Expected remove to show 'service instance cleaned up', got: %s", output)
 	}
 }
 
