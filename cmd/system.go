@@ -197,7 +197,7 @@ func updateCmd(cmd *cobra.Command, version string, installDir string) {
 
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("info"), "backup created at", ui.TextMuted.Render(backupPath))
 
-	if err := copyFile(binary.Name(), binaryPath); err != nil {
+	if err := replaceBinary(binary.Name(), binaryPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("installing new binary: %v", err))
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
@@ -396,6 +396,45 @@ func copyFile(src string, dst string) (err error) {
 			}
 		}
 	}()
+
+	return nil
+}
+
+func replaceBinary(src string, dst string) (err error) {
+	source, err := os.Open(filepath.Clean(src)) // #nosec G703 -- src is constructed internally, not from user input
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("errored closing the source file: %w", closeErr)
+		}
+	}()
+
+	tmpDst := dst + ".tmp"
+
+	destination, err := os.Create(filepath.Clean(tmpDst))
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = destination.Close()
+			_ = os.Remove(tmpDst)
+		}
+	}()
+
+	if _, err = io.Copy(destination, source); err != nil {
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	if err = destination.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err = os.Rename(tmpDst, dst); err != nil {
+		return fmt.Errorf("failed to rename temp file to destination: %w", err)
+	}
 
 	return nil
 }
