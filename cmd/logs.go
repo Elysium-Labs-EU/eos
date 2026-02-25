@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
@@ -69,8 +68,8 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
-			tailLogCommand.Stdout = &logutil.TimestampWriter{W: cmd.OutOrStdout()}
-			tailLogCommand.Stderr = &logutil.TimestampWriter{W: cmd.ErrOrStderr()}
+			tailLogCommand.Stdout = cmd.OutOrStdout()
+			tailLogCommand.Stderr = cmd.ErrOrStderr()
 			err = tailLogCommand.Run()
 
 			if err != nil {

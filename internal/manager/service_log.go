@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+
+	"eos/internal/logutil"
 )
 
 func (m *LocalManager) CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
@@ -47,7 +48,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 		errorLogPath := filepath.Join(logDir, errorLogFilename)
 		_, err := os.Stat(errorLogPath)
 		if err != nil {
-			return nil, fmt.Errorf("an error occurred during getting the error log file, got:\n%w", err)
+			return nil, fmt.Errorf("describing error log file: %w", err)
 		}
 
 		return &errorLogPath, nil
@@ -58,7 +59,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 
 	_, err := os.Stat(logPath)
 	if err != nil {
-		return nil, fmt.Errorf("an error occurred during getting the log file, got:\n%w", err)
+		return nil, fmt.Errorf("describing the log file: %w", err)
 	}
 
 	return &logPath, nil
@@ -69,7 +70,7 @@ func (m *LocalManager) LogToServiceStdout(serviceName string, message string) er
 	if err != nil {
 		return err
 	}
-	return m.appendToFile(logPath, formatLogMessage(message))
+	return m.appendToFile(logPath, "[HEALTH MONITOR] "+message)
 }
 
 func (m *LocalManager) LogToServiceStderr(serviceName string, message string) error {
@@ -77,7 +78,7 @@ func (m *LocalManager) LogToServiceStderr(serviceName string, message string) er
 	if err != nil {
 		return err
 	}
-	return m.appendToFile(logPath, formatLogMessage(message))
+	return m.appendToFile(logPath, "[HEALTH MONITOR] "+message)
 }
 
 func (m *LocalManager) appendToFile(filePath *string, content string) (err error) {
@@ -91,7 +92,8 @@ func (m *LocalManager) appendToFile(filePath *string, content string) (err error
 		}
 	}()
 
-	if _, err = file.WriteString(content); err != nil {
+	tw := &logutil.TimestampWriter{W: file}
+	if _, err = fmt.Fprintf(tw, "%s\n", content); err != nil {
 		return fmt.Errorf("failed to write to log file %s: %w", *filePath, err)
 	}
 
@@ -100,11 +102,6 @@ func (m *LocalManager) appendToFile(filePath *string, content string) (err error
 	}
 
 	return nil
-}
-
-func formatLogMessage(msg string) string {
-	return fmt.Sprintf("[%s] [HEALTH MONITOR] %s\n",
-		time.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
 func CreateLogDirPath(baseDir string) string {

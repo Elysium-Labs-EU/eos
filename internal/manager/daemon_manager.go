@@ -274,21 +274,6 @@ func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatal
 	return result, nil
 }
 
-// func (dm *DaemonManager) GetServiceStatus(name string) (types.ServiceStatus, error) {
-// 	response, err := dm.sendRequest(types.MethodGetServiceStatus, []string{name})
-
-// 	if err != nil {
-// 		return types.ServiceStatusStopped, fmt.Errorf("the GetServiceStatus request errored:\n %v", err)
-// 	}
-
-// 	var result types.ServiceStatus
-// 	if err := json.Unmarshal(response.Data, &result); err != nil {
-// 		return types.ServiceStatusStopped, fmt.Errorf("failed to parse response data: %w", err)
-// 	}
-
-// 	return result, nil
-// }
-
 func (dm *DaemonManager) IsServiceRegistered(name string) (bool, error) {
 	response, err := dm.sendRequest(types.MethodIsServiceRegistered, []string{name})
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"eos/internal/database"
+	"eos/internal/logutil"
 	"eos/internal/ptr"
 	"eos/internal/types"
 )
@@ -232,8 +233,8 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		return 0, fmt.Errorf("build environment failed with: %w", err)
 	}
 	startCommand.Env = env
-	startCommand.Stdout = logFile
-	startCommand.Stderr = errorLogFile
+	startCommand.Stdout = &logutil.TimestampWriter{W: logFile}
+	startCommand.Stderr = &logutil.TimestampWriter{W: errorLogFile}
 
 	// commandWithPath := filepath.Join(service.DirectoryPath, config.Command)
 	err = startCommand.Start()
@@ -353,8 +354,8 @@ func (m *LocalManager) RestartService(name string) (pid int, err error) {
 	// TODO: We are sourcing from a different object then the config here?
 	restartCommand.Dir = service.DirectoryPath
 	restartCommand.Env = env
-	restartCommand.Stdout = logFile
-	restartCommand.Stderr = errorLogFile
+	restartCommand.Stdout = &logutil.TimestampWriter{W: logFile}
+	restartCommand.Stderr = &logutil.TimestampWriter{W: errorLogFile}
 
 	err = restartCommand.Start()
 
