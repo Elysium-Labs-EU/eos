@@ -166,15 +166,16 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
 	}
 
+	installDir, _, systemConfig, err := createSystemConfig()
+	if err != nil {
+		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
+	}
+
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"system", "update"})
 
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
-	}
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "darwin", false)
 
 	output := buf.String()
 
@@ -201,7 +202,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	installDir, _, systemConfig, err := createSystemConfig()
 	if err != nil {
-		t.Fatalf("preparing update test - mkdir should not return an error: %v\n", err)
+		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
 	}
 
 	var buf bytes.Buffer
