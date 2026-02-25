@@ -43,7 +43,7 @@ func newSystemCmd() *cobra.Command {
 			installDir, baseDir, config, err := createSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				os.Exit(1)
+				return
 			}
 			infoCmd(cmd, installDir, baseDir, *config)
 		},
@@ -56,11 +56,17 @@ func newSystemCmd() *cobra.Command {
 			installDir, _, systemConfig, err := createSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				os.Exit(1)
+				return
 			}
-			updateCmd(cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon)
+			includePre, err := cmd.Flags().GetBool("pre")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return
+			}
+			updateCmd(cmd.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, runtime.GOARCH, runtime.GOOS, includePre)
 		},
 	}
+	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -99,9 +105,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config confi
 	}
 }
 
-func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig) {
-	userArch := runtime.GOARCH
-	userOS := runtime.GOOS
+func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig, userArch string, userOS string, includePre bool) {
 	binaryPath := filepath.Join(installDir, "eos")
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
@@ -132,14 +136,19 @@ func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConf
 		return
 	}
 
-	release, err := fetchLatestRelease(cmd.Context())
+	release, err := fetchLatestRelease(ctx, includePre)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching latest release: %v", err))
 		return
 	}
 
-	latestVersion, latestAsset := checkForUpdates(release, version, userArch, userOS)
+	latestVersion, latestAsset, err := checkForUpdates(release, version, userArch, userOS)
+	fmt.Printf("latestVersion: %s, release: %s, version: %s\n", latestVersion, release, version)
 
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking for updates: %v", err))
+		return
+	}
 	if latestVersion == "" {
 		cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), "already on the latest version", ui.TextMuted.Render(fmt.Sprintf("(%s)", version)))
 		return
@@ -167,7 +176,7 @@ func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConf
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", latestVersion, userOS, userArch))
-	binary, tempDir, err := handleDownloadBinary(cmd.Context(), latestAsset)
+	binary, tempDir, err := handleDownloadBinary(ctx, latestAsset)
 
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("downloading binary: %v", err))
@@ -212,9 +221,7 @@ func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConf
 
 	cmd.Printf("  %s ", ui.TextMuted.Render("restart daemon? (y/n):"))
 
-	reader = bufio.NewReader(cmd.InOrStdin())
 	response, readErr := reader.ReadString('\n')
-
 	if readErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", readErr))
 		return
@@ -240,7 +247,7 @@ func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConf
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
 
-	if err := forkDaemon(); err != nil {
+	if err := forkDaemon(ctx); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		return
 	}
@@ -265,8 +272,12 @@ type Release struct {
 	Assets  []Asset `json:"assets"`
 }
 
-func fetchLatestRelease(ctx context.Context) (*Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest", nil)
+func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
+	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
+	if includePre {
+		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
@@ -287,6 +298,17 @@ func fetchLatestRelease(ctx context.Context) (*Release, error) {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
+	if includePre {
+		var releases []Release
+		if err = json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON: %w", err)
+		}
+		if len(releases) == 0 {
+			return nil, fmt.Errorf("no releases found")
+		}
+		return &releases[0], nil
+	}
+
 	var release Release
 	if err = json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
@@ -294,11 +316,11 @@ func fetchLatestRelease(ctx context.Context) (*Release, error) {
 	return &release, nil
 }
 
-func checkForUpdates(release *Release, current string, arch string, os string) (string, *Asset) {
+func checkForUpdates(release *Release, current string, arch string, os string) (latestVersion string, asset *Asset, err error) {
 	latest := release.TagName
 
 	if semver.Compare(current, latest) >= 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	var usuableAsset *Asset
@@ -309,10 +331,10 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 	}
 
 	if usuableAsset == nil {
-		return "", nil
+		return "", nil, fmt.Errorf("no usable asset found")
 	}
 
-	return latest, usuableAsset
+	return latest, usuableAsset, nil
 }
 
 func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, tempDir string, err error) {

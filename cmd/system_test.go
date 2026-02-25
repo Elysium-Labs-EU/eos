@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"eos/internal/buildinfo"
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
@@ -120,26 +121,102 @@ func main() { time.Sleep(30 * time.Second) }
 	}
 }
 
-// func TestSystemUpdateWithValidVersionCommand(t *testing.T) {
-// 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	manager := manager.NewLocalManager(db, tempDir, t.Context())
-// 	cmd := newTestRootCmd(manager)
+func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
+	buildinfo.Version = "invalid-version"
+	defer func() { buildinfo.Version = "dev" }()
 
-// 	t.Setenv("EOS_INSTALL_DIR", tempDir)
-// 	cmd.SetContext(t.Context())
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	cmd := newTestRootCmd(manager)
 
-// 	err := os.Mkdir(filepath.Join(tempDir, "eos"), 0755)
-// 	if err != nil {
-// 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
-// 	}
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
-// 	installDir, _, _, err := createSystemConfig()
-// 	if err != nil {
-// 		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
-// 	}
+	err := os.Mkdir(filepath.Join(tempDir, "eos"), 0755)
+	if err != nil {
+		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
+	}
 
-// 	updateCmd(cmd, "v0.0.1", installDir)
-// }
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"system", "update"})
+
+	err = cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "invalid version tag, must start with 'v") {
+		t.Error("expected the output to contain 'invalid version tag, must start with 'v'")
+	}
+}
+
+func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
+	buildinfo.Version = "v0.0.1"
+	defer func() { buildinfo.Version = "dev" }()
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	cmd := newTestRootCmd(manager)
+
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+
+	err := os.Mkdir(filepath.Join(tempDir, "eos"), 0755)
+	if err != nil {
+		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
+	}
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"system", "update"})
+
+	err = cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "no usable asset found") {
+		t.Error("expected the output to contain 'no usable asset found'")
+	}
+}
+
+// TODO: Ideally we dont fetch from an actual API
+// And we are able to run the complete function
+func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
+	buildinfo.Version = "v0.0.1"
+	defer func() { buildinfo.Version = "dev" }()
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	cmd := newTestRootCmd(manager)
+
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+
+	err := os.Mkdir(filepath.Join(tempDir, "eos"), 0755)
+	if err != nil {
+		t.Fatalf("preparing update test - mkdir should not return an error: %v\n", err)
+	}
+
+	installDir, _, systemConfig, err := createSystemConfig()
+	if err != nil {
+		t.Fatalf("preparing update test - mkdir should not return an error: %v\n", err)
+	}
+
+	var buf bytes.Buffer
+	cmd.SetIn(strings.NewReader("y\ny\n"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "linux", false)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "info checksums match") {
+		t.Error("expected the output to contain 'info checksums match'")
+	}
+}
 
 func TestSystemVersionCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)

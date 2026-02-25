@@ -45,7 +45,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 
 			if detached {
-				if err := forkDaemon(); err != nil {
+				if err := forkDaemon(context.Background()); err != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 					return
 				}
@@ -61,7 +61,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 		},
 	}
-	startCmd.Flags().BoolP("detach", "d", false, "Run daemon in background")
+	startCmd.Flags().BoolP("detach", "d", false, "run daemon in background")
 	startCmd.Flags().Bool("log-to-file-and-console", false, "")
 	err := startCmd.Flags().MarkHidden("log-to-file-and-console")
 	if err != nil {
@@ -107,8 +107,7 @@ func newDaemonCmd() *cobra.Command {
 				return
 			}
 
-			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"),
-				ui.TextBold.Render("daemon is running"))
+			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
 			printDaemonDetails(cmd, *status.Pid, config.Daemon)
 		},
 	}
@@ -149,7 +148,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 		},
 	}
-	logsCmd.Flags().IntVar(&lines, "lines", 300, "Number of lines to display")
+	logsCmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
 
 	daemonCmd.AddCommand(logsCmd)
 	daemonCmd.AddCommand(startCmd)
@@ -160,13 +159,13 @@ func newDaemonCmd() *cobra.Command {
 }
 
 // Stay in sync with "startDaemonProcess"
-func forkDaemon() error {
+func forkDaemon(ctx context.Context) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd := exec.CommandContext(context.Background(), exePath, "daemon", "start", "--log-to-file-and-console") // #nosec G204 -- exePath is from os.Executable(), not user input
+	cmd := exec.CommandContext(ctx, exePath, "daemon", "start", "--log-to-file-and-console") // #nosec G204 -- exePath is from os.Executable(), not user input
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil

@@ -102,7 +102,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
-	rootCmd.PersistentFlags().Bool("no-daemon", false, "Run in local mode without daemon")
+	rootCmd.PersistentFlags().Bool("no-daemon", false, "run in local mode without daemon")
 
 	getManager := func() manager.ServiceManager {
 		return mgr

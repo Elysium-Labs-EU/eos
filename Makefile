@@ -125,6 +125,10 @@ release:
 	git tag -a $(TAG) -m "Release $(TAG)"
 	git push origin $(TAG)
 
+pre-release:
+	@if [ -z "$(TAG)" ]; then echo "Usage: make pre-release TAG=v1.2.0-rc.1"; exit 1; fi
+	git tag -a $(TAG) -m "Pre-release $(TAG)"
+	git push origin $(TAG)
 
 test-install-local: release-local
 	@$(MAKE) docker-vps
@@ -134,7 +138,6 @@ test-install-local: release-local
 	docker exec -it vps-test-eos ls -la /usr/local/src/eos-local
 	@echo "Running install.sh..."
 	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh --local /usr/local/src/eos-local"
-
 
 test-install-remote:
 	@$(MAKE) docker-vps
