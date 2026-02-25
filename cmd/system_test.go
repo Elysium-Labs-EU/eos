@@ -16,7 +16,7 @@ import (
 	"eos/internal/testutil"
 )
 
-func TestSystemConfigCommand(t *testing.T) {
+func TestSystemInfoCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
@@ -24,11 +24,11 @@ func TestSystemConfigCommand(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"system", "config"})
+	cmd.SetArgs([]string{"system", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
 	if err != nil {
-		t.Fatalf("preparing config test - add should not return an error, got: %v\n", err)
+		t.Fatalf("preparing info test - add should not return an error, got: %v\n", err)
 	}
 
 	output := buf.String()

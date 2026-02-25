@@ -100,7 +100,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig)
 	go healthMonitor.Start(ctx)
 
-	logger.Log(manager.LogLevelInfo, "Daemon started successfully")
+	logger.Log(manager.LogLevelInfo, "daemon started successfully")
 	for {
 
 		select {
@@ -110,18 +110,18 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 					var status syscall.WaitStatus
 					pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
 					if err != nil {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("Errored during cleaning up child process with PID '%d'\n: %v", pid, err))
+						logger.Log(manager.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
 						break
 					}
 					if pid == 0 {
 						break
 					}
 					if pid < 0 {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("An error during cleaning up child process with PID '%d'", pid))
+						logger.Log(manager.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
 						continue
 					}
 
-					logger.Log(manager.LogLevelError, fmt.Sprintf("Reaped zombie process: %d\n", pid))
+					logger.Log(manager.LogLevelError, fmt.Sprintf("reaped zombie process: %d\n", pid))
 
 					if status.ExitStatus() == 0 {
 						updates := database.ProcessHistoryUpdate{
@@ -130,7 +130,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 						}
 						updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
 						if updateErr != nil {
-							logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", updateErr))
+							logger.Log(manager.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
 						}
 						continue
 					}
@@ -143,7 +143,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 
 					err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
 					if err != nil {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("unable to update the reaped process in the database, got: %v", err))
+						logger.Log(manager.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
 					}
 
 					continue
@@ -151,13 +151,13 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 			}
 		case <-ctx.Done():
 			if err := listener.Close(); err != nil {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to close the listener, got: %v", err))
+				logger.Log(manager.LogLevelError, fmt.Sprintf("closing listener: %v", err))
 			}
 			if err := os.Remove(pidFile); err != nil {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove pid file, got: %v", err))
+				logger.Log(manager.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
 			}
 			if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("unable to remove the socket, got: %v", err))
+				logger.Log(manager.LogLevelError, fmt.Sprintf("removing socket: %v", err))
 			}
 			return nil
 		}
@@ -173,7 +173,7 @@ func StopDaemon(daemonConfig config.DaemonConfig) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get stat info on pid of daemon: %w", err)
+		return false, fmt.Errorf("getting stat info on pid of daemon: %w", err)
 	}
 
 	_, err = os.Stat(socketPath)
@@ -181,32 +181,32 @@ func StopDaemon(daemonConfig config.DaemonConfig) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get stat info socket of daemon: %w", err)
+		return false, fmt.Errorf("getting stat info socket of daemon: %w", err)
 	}
 
 	data, readPidErr := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
 	if readPidErr != nil {
-		return false, fmt.Errorf("failed to read the pid file: %w", readPidErr)
+		return false, fmt.Errorf("reading pid file: %w", readPidErr)
 	}
 
 	activePid, err := strconv.Atoi(string(data))
 	if err != nil {
-		return false, fmt.Errorf("failed to convert the pid data to int: %w", err)
+		return false, fmt.Errorf("converting pid data to int: %w", err)
 	}
 
 	process, err := os.FindProcess(activePid)
 	if err != nil {
-		return false, fmt.Errorf("failed to find the process matching the pid: %w", err)
+		return false, fmt.Errorf("finding process matching the pid: %w", err)
 	}
 
 	err = process.Signal(syscall.Signal(0))
 	if err != nil {
-		return false, fmt.Errorf("failed to check for active daemon: %w", err)
+		return false, fmt.Errorf("checking active daemon: %w", err)
 	}
 
 	err = process.Signal(syscall.SIGTERM)
 	if err != nil {
-		return false, fmt.Errorf("failed to kill active daemon: %w", err)
+		return false, fmt.Errorf("killing active daemon: %w", err)
 	}
 	return true, nil
 }
@@ -229,28 +229,28 @@ func StatusDaemon(daemonConfig config.DaemonConfig) (*DaemonStatus, error) {
 				Process: nil,
 			}, nil
 		}
-		return nil, fmt.Errorf("failed to describe the pid file: %w", err)
+		return nil, fmt.Errorf("describing pid file: %w", err)
 	}
 
 	data, readPidErr := os.ReadFile(pidFile)
 	if readPidErr != nil {
-		return nil, fmt.Errorf("failed to read the pid file: %w", readPidErr)
+		return nil, fmt.Errorf("reading pid file: %w", readPidErr)
 	}
 
 	activePid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert the pid data to string: %w", err)
+		return nil, fmt.Errorf("converting pid data to string: %w", err)
 	}
 
 	process, err := os.FindProcess(activePid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find the process matching the pid: %w", err)
+		return nil, fmt.Errorf("finding process matching the pid: %w", err)
 	}
 
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		// signal(0) failing means the process isn't alive — this is not an error
 		// in the function's own operation, so we return a valid status with nil error
-		return &DaemonStatus{Running: false, Pid: &activePid}, nil //lint:ignore nilerr intentional
+		return &DaemonStatus{Running: false, Pid: &activePid, Process: nil}, nil //lint:ignore nilerr intentional
 	}
 
 	return &DaemonStatus{
@@ -265,9 +265,9 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				logger.Log(manager.LogLevelInfo, "Listener closed, shutting down gracefully")
+				logger.Log(manager.LogLevelInfo, "listener closed, shutting down gracefully")
 			} else {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("An error during accepting the connection: %v", err))
+				logger.Log(manager.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
 			}
 			return
 		}
@@ -279,14 +279,14 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager.DaemonLogger) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Log(manager.LogLevelError, fmt.Sprintf("failed to close daemon socket: %v", err))
+			logger.Log(manager.LogLevelError, fmt.Sprintf("closing daemon socket: %v", err))
 		}
 	}()
 
 	var request types.DaemonRequest
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&request); err != nil {
-		sendErrorResponse(conn, fmt.Sprintf("invalid request: %v", err), logger)
+		sendErrorResponse(conn, fmt.Sprintf("decoding request: %v", err), logger)
 		return
 	}
 
@@ -294,7 +294,7 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(response); err != nil {
-		logger.Log(manager.LogLevelError, fmt.Sprintf("Failed to send response: %v\n", err))
+		logger.Log(manager.LogLevelError, fmt.Sprintf("sending response: %v\n", err))
 	}
 }
 
@@ -311,13 +311,13 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 			return errorResponse(err.Error())
 		}
 		if result == nil {
-			return errorResponse("failed to get a result, returned nil")
+			return errorResponse("result returned nil")
 		}
 		data, err := json.Marshal(types.GetServiceInstanceResponse{
 			Instance: *result,
 		})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -334,7 +334,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(map[string]bool{"removed": removed})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{Success: true, Data: data}
 
@@ -348,7 +348,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(map[string]int{"pid": pid})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -365,7 +365,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(map[string]int{"pid": pid})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -383,7 +383,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		data, err := json.Marshal(result)
 
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -400,7 +400,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -414,7 +414,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		var service types.ServiceCatalogEntry
 		if err := json.Unmarshal([]byte(request.Args[0]), &service); err != nil {
-			return errorResponse(fmt.Sprintf("invalid service data: %v", err))
+			return errorResponse(fmt.Sprintf("unmarshaling service data: %v", err))
 		}
 		err := mgr.AddServiceCatalogEntry(&service)
 		if err != nil {
@@ -429,7 +429,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -446,29 +446,12 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
 			Data:    data,
 		}
-
-	// case types.MethodGetServiceStatus:
-	// 	if len(request.Args) < 1 {
-	// 		return errorResponse("GetServiceStatus requires service name")
-	// 	}
-	// 	result, err := mgr.GetServiceStatus(request.Args[0])
-	// 	if err != nil {
-	// 		return errorResponse(err.Error())
-	// 	}
-	// 	data, err := json.Marshal(result)
-	// 	if err != nil {
-	// 		return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
-	// 	}
-	// 	return types.DaemonResponse{
-	// 		Success: true,
-	// 		Data:    data,
-	// 	}
 
 	case types.MethodIsServiceRegistered:
 		if len(request.Args) < 1 {
@@ -480,7 +463,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(map[string]bool{"exists": result})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 		return types.DaemonResponse{
 			Success: true,
@@ -497,7 +480,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		data, err := json.Marshal(map[string]bool{"removed": removed})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 
 		return types.DaemonResponse{Success: true, Data: data}
@@ -527,7 +510,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 			ProcessEntry: *result,
 		})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 
 		return types.DaemonResponse{
@@ -547,7 +530,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		data, err := json.Marshal(map[string]string{"logPath": logPath, "errorLogPath": errorLogPath})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 
 		return types.DaemonResponse{Success: true, Data: data}
@@ -574,7 +557,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		data, err := json.Marshal(map[string]*string{"filepath": filepath})
 		if err != nil {
-			return errorResponse(fmt.Sprintf("failed to marshal response: %v", err))
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 		}
 
 		return types.DaemonResponse{Success: true, Data: data}

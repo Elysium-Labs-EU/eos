@@ -185,6 +185,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		if state == types.ProcessStateRunning {
 			process, _ := os.FindProcess(pid)
 			signalErr := process.Signal(syscall.Signal(0))
+			// TODO: Update the process history after failing this?
 			if signalErr != nil {
 				return 0, fmt.Errorf("service either has no active process or is inaccessible with PID %d", pid)
 			}
@@ -279,6 +280,10 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		StartedAt: ptr.TimePtr(time.Now()),
 	}
 
+	// TODO: Consider adding process cleanup (kill) here for consistency
+	// with the rollback behavior of RegisterServiceInstance and
+	// RegisterProcessHistoryEntry failures above. Currently a failure
+	// here leaves a running process with inconsistent DB state.
 	err = m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
 	if err != nil {
 		return pid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
@@ -391,6 +396,10 @@ func (m *LocalManager) RestartService(name string) (pid int, err error) {
 		StartedAt: ptr.TimePtr(time.Now()),
 	}
 
+	// TODO: Consider adding process cleanup (kill) here for consistency
+	// with the rollback behavior of RegisterServiceInstance and
+	// RegisterProcessHistoryEntry failures above. Currently a failure
+	// here leaves a running process with inconsistent DB state.
 	err = m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
 	if err != nil {
 		return pid, fmt.Errorf("unable to update the new process in the database, got: %w", err)

@@ -86,26 +86,30 @@ func newDaemonCmd() *cobra.Command {
 		},
 	}
 
-	statusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Status of the daemon",
+	infoCmd := &cobra.Command{
+		Use:   "info",
+		Short: "Info on the daemon",
 		Run: func(cmd *cobra.Command, args []string) {
 			status, err := process.StatusDaemon(config.Daemon)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon status: %v", err))
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon info: %v", err))
 				return
 			}
 
 			if !status.Running {
 				if status.Pid != nil {
-					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is found but not running"))
+					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"),
+						ui.TextMuted.Render("daemon found but not running"))
+					printDaemonDetails(cmd, *status.Pid, config.Daemon)
 					return
 				}
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon not found"))
 				return
 			}
 
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render("daemon is running"), fmt.Sprintf("PID: %d", *status.Pid))
+			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"),
+				ui.TextBold.Render("daemon is running"))
+			printDaemonDetails(cmd, *status.Pid, config.Daemon)
 		},
 	}
 
@@ -149,7 +153,7 @@ func newDaemonCmd() *cobra.Command {
 
 	daemonCmd.AddCommand(logsCmd)
 	daemonCmd.AddCommand(startCmd)
-	daemonCmd.AddCommand(statusCmd)
+	daemonCmd.AddCommand(infoCmd)
 	daemonCmd.AddCommand(stopCmd)
 
 	return daemonCmd
@@ -173,4 +177,12 @@ func forkDaemon() error {
 	}
 
 	return nil
+}
+
+func printDaemonDetails(cmd *cobra.Command, pid int, cfg config.DaemonConfig) {
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("PID:"), pid)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket:"), cfg.SocketPath)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), cfg.LogDir)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), cfg.LogFileName)
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max files:"), cfg.MaxFiles)
 }

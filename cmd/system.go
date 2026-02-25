@@ -22,6 +22,7 @@ import (
 
 	"eos/internal/buildinfo"
 	"eos/internal/config"
+	"eos/internal/process"
 	"eos/internal/ui"
 )
 
@@ -35,16 +36,16 @@ func newSystemCmd() *cobra.Command {
 		Short: "Manage the eos system settings",
 	}
 
-	configCmd := &cobra.Command{
-		Use:   "config",
-		Short: "See active system config",
+	infoCmd := &cobra.Command{
+		Use:   "info",
+		Short: "See active system information and configurations",
 		Run: func(cmd *cobra.Command, args []string) {
 			installDir, baseDir, config, err := createSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
-			configCmd(cmd, installDir, baseDir, *config)
+			infoCmd(cmd, installDir, baseDir, *config)
 		},
 	}
 
@@ -52,12 +53,12 @@ func newSystemCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Apply new update if available",
 		Run: func(cmd *cobra.Command, args []string) {
-			installDir, _, _, err := createSystemConfig()
+			installDir, _, systemConfig, err := createSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
-			updateCmd(cmd, buildinfo.GetVersionOnly(), installDir)
+			updateCmd(cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon)
 		},
 	}
 
@@ -69,14 +70,14 @@ func newSystemCmd() *cobra.Command {
 		},
 	}
 
-	systemCmd.AddCommand(configCmd)
+	systemCmd.AddCommand(infoCmd)
 	systemCmd.AddCommand(updateCmd)
 	systemCmd.AddCommand(versionCmd)
 
 	return systemCmd
 }
 
-func configCmd(cmd *cobra.Command, installDir string, baseDir string, config config.SystemConfig) {
+func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config config.SystemConfig) {
 	cmd.Println()
 	cmd.Printf("%s\n\n", ui.TextBold.Render("System Config"))
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("install dir:"), installDir)
@@ -98,7 +99,7 @@ func configCmd(cmd *cobra.Command, installDir string, baseDir string, config con
 	}
 }
 
-func updateCmd(cmd *cobra.Command, version string, installDir string) {
+func updateCmd(cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig) {
 	userArch := runtime.GOARCH
 	userOS := runtime.GOOS
 	binaryPath := filepath.Join(installDir, "eos")
@@ -208,6 +209,42 @@ func updateCmd(cmd *cobra.Command, version string, installDir string) {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
 		return
 	}
+
+	cmd.Printf("  %s ", ui.TextMuted.Render("restart daemon? (y/n):"))
+
+	reader = bufio.NewReader(cmd.InOrStdin())
+	response, readErr := reader.ReadString('\n')
+
+	if readErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", readErr))
+		return
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	if response != "y" && response != "yes" {
+		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "manual daemon restart required")
+		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+		return
+	}
+
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
+	killed, killErr := process.StopDaemon(daemonConfig)
+
+	if killErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
+		return
+	}
+	if !killed {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		return
+	}
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+
+	if err := forkDaemon(); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		return
+	}
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
 
 	if err := os.RemoveAll(tempDir); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, err))

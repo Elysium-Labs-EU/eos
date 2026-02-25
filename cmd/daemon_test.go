@@ -132,7 +132,7 @@ func TestDaemonLogsFileMissing(t *testing.T) {
 	}
 }
 
-func TestDaemonStatusCommandOutput(t *testing.T) {
+func TestDaemonInfoCommandOutput(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(mgr)
@@ -140,7 +140,7 @@ func TestDaemonStatusCommandOutput(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"daemon", "status"})
+	cmd.SetArgs([]string{"daemon", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
 	if err != nil {
