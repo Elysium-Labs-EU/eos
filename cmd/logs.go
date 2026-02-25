@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
@@ -68,8 +69,8 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
-			tailLogCommand.Stdout = cmd.OutOrStdout()
-			tailLogCommand.Stderr = cmd.ErrOrStderr()
+			tailLogCommand.Stdout = &logutil.TimestampWriter{W: cmd.OutOrStdout()}
+			tailLogCommand.Stderr = &logutil.TimestampWriter{W: cmd.ErrOrStderr()}
 			err = tailLogCommand.Run()
 
 			if err != nil {
@@ -80,7 +81,7 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 	cmd.Flags().IntVar(&lines, "lines", 300, "Number of lines to display")
 	cmd.Flags().BoolVar(&errorLog, "error", false, "Show error logs instead of output logs")
-	cmd.Flags().BoolVar(&follow, "follow", true, "Follow log output (disable for scripts/testing)")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 
 	return cmd
 }

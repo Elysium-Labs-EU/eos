@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"eos/internal/logutil"
 	"eos/internal/types"
 )
 
@@ -436,7 +437,7 @@ func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, m
 }
 
 func (l *DaemonLogger) Log(level LogLevel, message string) {
-	timestamp := time.Now().Format(time.RFC3339)
+	timestamp := time.Now().UTC().Format(logutil.TimestampFormat)
 	logMessage := fmt.Sprintf("[%s] %s: %s\n", timestamp, level, message)
 
 	if l.logToConsole {
