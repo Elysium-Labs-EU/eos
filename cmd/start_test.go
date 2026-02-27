@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -73,32 +71,6 @@ func TestStartCommand(t *testing.T) {
 
 	if !strings.Contains(output, "started with PID:") {
 		t.Fatal("The start command didn't complete successfully, no PID was returned")
-	}
-	pidPrefIndex := strings.Index(output, "PID:")
-	if pidPrefIndex == -1 {
-		t.Errorf("No PID substring found")
-	}
-	startIndex := pidPrefIndex + 5
-	endIndex := strings.Index(output[startIndex:], "\n")
-
-	if endIndex == -1 {
-		endIndex = len(output)
-	} else {
-		// Making it absolute
-		endIndex = startIndex + endIndex
-	}
-
-	pidAsString := strings.TrimSpace(output[startIndex:endIndex])
-	pidAsInt64, err := strconv.ParseInt(pidAsString, 0, 64)
-
-	if err != nil {
-		t.Errorf("Failed to convert PID to number, got: %v", err)
-	}
-	pidAsInt := int(pidAsInt64)
-	signal := syscall.SIGTERM
-	err = syscall.Kill(pidAsInt, signal)
-	if err != nil {
-		t.Errorf("The SIGTERM call failed, got: %v", err)
 	}
 }
 

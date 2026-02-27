@@ -54,6 +54,10 @@ test:
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
 
+test-docker-linux:
+	@echo "Running tests..."
+	docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 go test ./cmd ./internal/... -race -count=1
+
 lint:
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
