@@ -44,6 +44,12 @@ func WithRuntimePath(path string) ServiceConfigOption {
 	}
 }
 
+func WithoutRuntime() ServiceConfigOption {
+	return func(sc *types.ServiceConfig) {
+		sc.Runtime = types.Runtime{}
+	}
+}
+
 func WithName(name string) ServiceConfigOption {
 	return func(sc *types.ServiceConfig) {
 		sc.Name = name

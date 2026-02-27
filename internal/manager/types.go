@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"time"
+
 	"eos/internal/types"
 )
 
@@ -13,10 +15,10 @@ type ServiceManager interface {
 	// GetServices() []types.Service
 	RemoveServiceInstance(name string) (bool, error)
 
-	ForceStopService(name string) (StopResult, error)
-	RestartService(name string) (int, error)
+	ForceStopService(name string) (StopServiceResult, error)
+	RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
 	StartService(name string) (int, error)
-	StopService(name string) (StopResult, error)
+	StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error)
 
 	AddServiceCatalogEntry(service *types.ServiceCatalogEntry) error
 	GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)

@@ -53,9 +53,8 @@ var ValidMethods = map[MethodName]bool{
 }
 
 type DaemonRequest struct {
-	Method MethodName `json:"method"`
-	// Args   json.RawMessage `json:"args"`
-	Args []string `json:"args"`
+	Method MethodName      `json:"method"`
+	Args   json.RawMessage `json:"args"`
 }
 
 type DaemonResponse struct {
@@ -72,10 +71,73 @@ func (r *DaemonRequest) Validate() error {
 	return nil
 }
 
+type RemoveServiceInstanceArgs struct {
+	Name string `json:"name"`
+}
+
+type GetServiceInstanceArgs struct {
+	Name string `json:"name"`
+}
+
 type GetServiceInstanceResponse struct {
 	Instance ServiceRuntime `json:"instance"`
 }
 
 type GetMostRecentProcessHistoryEntryResponse struct {
 	ProcessEntry ProcessHistory `json:"process_entry"`
+}
+
+type StartServiceArgs struct {
+	Name string `json:"name"`
+}
+
+type RestartServiceArgs struct {
+	Name         string `json:"name"`
+	GracePeriod  string `json:"gracePeriod"`
+	TickerPeriod string `json:"tickerPeriod"`
+}
+
+type StopServiceArgs struct {
+	Name         string `json:"name"`
+	GracePeriod  string `json:"gracePeriod"`
+	TickerPeriod string `json:"tickerPeriod"`
+}
+
+type ForceStopServiceArgs struct {
+	Name string `json:"name"`
+}
+
+type AddServiceCatalogEntryArgs struct {
+	Service *ServiceCatalogEntry `json:"service"`
+}
+
+type GetServiceCatalogEntryArgs struct {
+	Name string `json:"name"`
+}
+
+type IsServiceRegisteredArgs struct {
+	Name string `json:"name"`
+}
+
+type RemoveServiceCatalogEntryArgs struct {
+	Name string `json:"name"`
+}
+
+type UpdateServiceCatalogEntryArgs struct {
+	Name              string `json:"name"`
+	NewDirectoryPath  string `json:"new_directory_path"`
+	NewConfigFileName string `json:"new_config_filename"`
+}
+
+type GetMostRecentProcessHistoryEntryArgs struct {
+	Name string `json:"name"`
+}
+
+type CreateServiceLogFilesArgs struct {
+	ServiceName string `json:"service_name"`
+}
+
+type GetServiceLogFilePathArgs struct {
+	ServiceName string `json:"service_name"`
+	ErrorLog    bool   `json:"error_log"`
 }

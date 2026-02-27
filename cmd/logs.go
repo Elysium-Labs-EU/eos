@@ -64,7 +64,11 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			tailArgs = append(tailArgs, *selectedLogFilepath)
 
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
+			if follow {
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
+			} else {
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "showing logs for", ui.TextBold.Render(serviceName))
+			}
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
@@ -78,9 +82,9 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&lines, "lines", 300, "Number of lines to display")
-	cmd.Flags().BoolVar(&errorLog, "error", false, "Show error logs instead of output logs")
-	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
+	cmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
+	cmd.Flags().BoolVar(&errorLog, "error", false, "show error logs instead of output logs")
+	cmd.Flags().BoolVar(&follow, "follow", false, "follow log output")
 
 	return cmd
 }

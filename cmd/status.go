@@ -31,15 +31,8 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			numberOfRegisteredServices := len(registeredServices)
 
 			if numberOfRegisteredServices == 0 {
-				cmd.PrintErrf("%s %s\n\n",
-					ui.LabelError.Render("error"),
-					"no services are registered",
-				)
-				cmd.PrintErr(
-					ui.TextMuted.Render("  run: ") +
-						ui.TextCommand.Render("eos add <path>") +
-						ui.TextMuted.Render(" to register a service") + "\n",
-				)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no services are registered")
+				cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos add <path>") + ui.TextMuted.Render(" to register a service") + "\n")
 				return
 			}
 

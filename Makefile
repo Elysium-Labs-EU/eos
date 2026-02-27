@@ -52,7 +52,7 @@ install: build
 
 test:
 	@echo "Running tests..."
-	go test ./cmd ./internal/... -race
+	go test ./cmd ./internal/... -race -count=1
 
 lint:
 	@echo "Running linters..."

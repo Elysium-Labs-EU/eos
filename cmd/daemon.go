@@ -56,7 +56,7 @@ func newDaemonCmd() *cobra.Command {
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
 			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
 
-			if err := process.StartDaemon(logToFileAndConsole, baseDir, config.Daemon, config.Health); err != nil {
+			if err := process.StartDaemon(logToFileAndConsole, baseDir, config.Daemon, config.Health, config.Shutdown); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 			}
 		},

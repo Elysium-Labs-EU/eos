@@ -54,8 +54,8 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 	if config.Command == "" {
 		return nil, fmt.Errorf("service command is required in %s", cleanedConfigFilePath)
 	}
-	if config.Runtime.Type == "" {
-		return nil, fmt.Errorf("service runtime type is required in %s", cleanedConfigFilePath)
-	}
+	// if config.Runtime.Type == "" {
+	// 	return nil, fmt.Errorf("service runtime type is required in %s", cleanedConfigFilePath)
+	// }
 	return &config, nil
 }

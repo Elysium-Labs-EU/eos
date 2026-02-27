@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,7 +171,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	}
 	if serviceInstance != nil {
 		// TODO: return found PID somehow instead?
-		return 0, fmt.Errorf("service instance already found for %s. Use 'restart' to start this service again", name)
+		return 0, fmt.Errorf("service instance already found. use 'eos restart %s' to restart this service instead", name)
 	}
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
@@ -198,23 +199,23 @@ func (m *LocalManager) StartService(name string) (int, error) {
 
 	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("failed to prepare log files for %s: %w", name, err)
+		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
 	defer func() {
 		if closeErr := logFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing the log file errored, got:\n %w", closeErr)
+			err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
 		}
 	}()
 	defer func() {
 		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("failed to close error log file for %s: %w", name, closeErr)
+			err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
 		}
 	}()
 
 	if config.Runtime.Path != "" {
 		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
-			return 0, fmt.Errorf("runtime validation failed: %w", runtimePathErr)
+			return 0, fmt.Errorf("validating config runtime: %w", runtimePathErr)
 		}
 	} else {
 		if config.Runtime.Type == "node" || config.Runtime.Type == "nodejs" {
@@ -231,7 +232,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	startCommand.Dir = service.DirectoryPath
 	env := buildEnvironment(config)
 	if err != nil {
-		return 0, fmt.Errorf("build environment failed with: %w", err)
+		return 0, fmt.Errorf("building environment: %w", err)
 	}
 	startCommand.Env = env
 	startCommand.Stdout = &logutil.TimestampWriter{W: logFile}
@@ -245,6 +246,10 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	}
 
 	pid := startCommand.Process.Pid
+	go func() {
+		_ = startCommand.Wait()
+	}()
+
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
 		killErr := syscall.Kill(pid, syscall.SIGKILL)
@@ -291,7 +296,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	return pid, nil
 }
 
-func (m *LocalManager) RestartService(name string) (pid int, err error) {
+func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotFound) {
 		return 0, fmt.Errorf("service %s not found", name)
@@ -308,31 +313,31 @@ func (m *LocalManager) RestartService(name string) (pid int, err error) {
 
 	serviceInstance, err := m.GetServiceInstance(name)
 	if err != nil {
-		return 0, fmt.Errorf("unable to check for service instance for %s, got: %w", name, err)
+		return 0, fmt.Errorf("getting service instance for %s: %w", name, err)
 	}
 	if serviceInstance == nil {
-		return 0, fmt.Errorf("no service instance found for %s, got: %w", name, err)
+		return 0, fmt.Errorf("no service instance found for %s: %w", name, err)
 	}
 
 	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("failed to prepare log files for %s: %w", name, err)
+		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
 	defer func() {
 		if closeErr := logFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing the log file errored, got:\n %w", closeErr)
+			err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
 		}
 	}()
 	defer func() {
 		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("failed to close error log file for %s: %w", name, closeErr)
+			err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
 		}
 	}()
 
 	if config.Runtime.Path != "" {
 		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
-			return 0, fmt.Errorf("runtime validation failed: %w", runtimePathErr)
+			return 0, fmt.Errorf("validating config runtime: %w", runtimePathErr)
 		}
 	} else {
 		if config.Runtime.Type == "node" || config.Runtime.Type == "nodejs" {
@@ -344,15 +349,15 @@ func (m *LocalManager) RestartService(name string) (pid int, err error) {
 
 	env := buildEnvironment(config)
 	if err != nil {
-		return 0, fmt.Errorf("build environment failed with: %w", err)
+		return 0, fmt.Errorf("building environment: %w", err)
 	}
 
-	stopResult, err := m.StopService(name)
+	stopResult, err := m.StopService(name, gracePeriod, tickerPeriod)
 	if err != nil {
-		return 0, fmt.Errorf("unable to stop for process(es) for %s, got: %w", name, err)
+		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
-	if len(stopResult.Failed) > 0 {
-		return 0, fmt.Errorf("failed to stop for process(es) for %s, got: %w", name, err)
+	if len(stopResult.Errored) > 0 {
+		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
 
 	restartCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
@@ -428,54 +433,211 @@ func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, er
 	return logFile, errorLogFile, nil
 }
 
-type StopResult struct {
-	Failed  map[int]string
-	Stopped []int
+type StopServiceResult struct {
+	Errored   map[int]string
+	Stopped   map[int]bool
+	StaleData map[int]string
 }
 
-func (m *LocalManager) StopService(name string) (StopResult, error) {
-	return m.stopServiceWithSignal(name, syscall.SIGTERM)
-}
+func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
+	requestStartTime := time.Now()
+	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGTERM)
 
-func (m *LocalManager) ForceStopService(name string) (StopResult, error) {
-	return m.stopServiceWithSignal(name, syscall.SIGKILL)
-}
-
-func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal) (StopResult, error) {
-	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
 	if err != nil {
-		return StopResult{}, fmt.Errorf("unable to check for active process history to stop for %s, got: %w", name, err)
+		return StopServiceResult{}, err
 	}
 
-	var stopped []int
-	failed := make(map[int]string)
+	countError := len(stopResult.Errored)
+	countPending := len(stopResult.Pending)
+	countAlreadyDead := len(stopResult.AlreadyDead)
+	countTotal := countError + countPending + countAlreadyDead
+
+	if countTotal == 0 {
+		return StopServiceResult{}, nil
+	}
+	if countTotal == countError {
+		return StopServiceResult{Errored: stopResult.Errored, Stopped: nil}, nil
+	}
+
+	if countPending == 0 {
+		staleDataErrors := make(map[int]string)
+
+		errorErrored := updateProcessHistoryEntriesAsUnknown(m, stopResult.Errored)
+		maps.Copy(staleDataErrors, errorErrored)
+
+		adErrored := updateProcessHistoryEntriesAsStopped(m, stopResult.AlreadyDead)
+		maps.Copy(staleDataErrors, adErrored)
+
+		return StopServiceResult{
+			Errored:   stopResult.Errored,
+			Stopped:   stopResult.AlreadyDead,
+			StaleData: staleDataErrors,
+		}, nil
+	}
+
+	ticker := time.NewTicker(tickerPeriod)
+	defer ticker.Stop()
+
+	erroredProcesses := stopResult.Errored
+	stoppedProcesses := make(map[int]bool)
+
+OuterLoop:
+	for {
+		select {
+		case <-ticker.C:
+			if time.Since(requestStartTime) > gracePeriod {
+				if len(stoppedProcesses) != countPending {
+					for pendingPID := range stopResult.Pending {
+						_, ok := stoppedProcesses[pendingPID]
+						if ok {
+							continue
+						}
+						erroredProcesses[pendingPID] = "killing service: exceeded grace period"
+					}
+				}
+
+				break OuterLoop
+			}
+
+			for pendingPID := range stopResult.Pending {
+				_, ok := stoppedProcesses[pendingPID]
+				if ok {
+					continue
+				}
+				if !isProcessAlive(pendingPID) {
+					stoppedProcesses[pendingPID] = true
+				}
+			}
+
+			if len(stoppedProcesses) == countPending {
+				break OuterLoop
+			}
+
+		case <-m.ctx.Done():
+			// User canceled, return empty result. System will check all again.
+			return StopServiceResult{}, nil
+		}
+	}
+
+	staleDataErrors := make(map[int]string)
+
+	errorErrored := updateProcessHistoryEntriesAsUnknown(m, erroredProcesses)
+	maps.Copy(staleDataErrors, errorErrored)
+
+	adErrored := updateProcessHistoryEntriesAsStopped(m, stopResult.AlreadyDead)
+	maps.Copy(staleDataErrors, adErrored)
+
+	stoppedErrored := updateProcessHistoryEntriesAsStopped(m, stoppedProcesses)
+	maps.Copy(staleDataErrors, stoppedErrored)
+
+	stoppedAndAlreadyDeadProcesses := stopResult.AlreadyDead
+	maps.Copy(stoppedAndAlreadyDeadProcesses, stoppedProcesses)
+
+	return StopServiceResult{Errored: erroredProcesses, Stopped: stoppedAndAlreadyDeadProcesses, StaleData: staleDataErrors}, nil
+}
+
+func isProcessAlive(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+func (m *LocalManager) ForceStopService(name string) (StopServiceResult, error) {
+	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGKILL)
+	if err != nil {
+		return StopServiceResult{}, err
+	}
+
+	allErrors := stopResult.Errored
+
+	errorErrored := updateProcessHistoryEntriesAsUnknown(m, stopResult.Errored)
+	maps.Copy(allErrors, errorErrored)
+
+	forceKilledProcesses := make(map[int]bool)
+	maps.Copy(forceKilledProcesses, stopResult.AlreadyDead)
+	maps.Copy(forceKilledProcesses, stopResult.Pending)
+
+	updateErrors := updateProcessHistoryEntriesAsStopped(m, forceKilledProcesses)
+	maps.Copy(allErrors, updateErrors)
+
+	return StopServiceResult{Errored: allErrors, Stopped: forceKilledProcesses}, nil
+}
+
+func updateProcessHistoryEntriesAsStopped(m *LocalManager, processes map[int]bool) map[int]string {
+	errored := make(map[int]string, len(processes))
+	for pid := range processes {
+		updates := database.ProcessHistoryUpdate{
+			State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
+			StoppedAt: ptr.TimePtr(time.Now()),
+		}
+
+		err := m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+		if err != nil {
+			errored[pid] = fmt.Sprintf("recording the change for process '%v': %v", pid, err)
+		}
+	}
+
+	return errored
+}
+
+func updateProcessHistoryEntriesAsUnknown(m *LocalManager, processes map[int]string) map[int]string {
+	errored := make(map[int]string, len(processes))
+	for pid := range processes {
+		updates := database.ProcessHistoryUpdate{
+			State: ptr.ProcessStatePtr(types.ProcessStateUnknown),
+		}
+
+		err := m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+		if err != nil {
+			errored[pid] = fmt.Sprintf("recording the change for process '%v': %v (original: %v)", pid, err, processes[pid])
+		}
+	}
+
+	return errored
+}
+
+type StopRequestResult struct {
+	AlreadyDead map[int]bool
+	Errored     map[int]string
+	Pending     map[int]bool
+}
+
+func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal) (StopRequestResult, error) {
+	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
+	if err != nil {
+		return StopRequestResult{}, fmt.Errorf("getting process history: %w", err)
+	}
+
+	pending := make(map[int]bool)
+	alreadyDead := make(map[int]bool)
+	errored := make(map[int]string)
 
 	for _, p := range processHistory {
 		processState := p.State
 		processPID := p.PID
-		if processState == types.ProcessStateRunning || processState == types.ProcessStateStarting {
-			err := syscall.Kill(processPID, signal)
-			if err != nil {
-				failed[processPID] = fmt.Sprintf("process '%v' for service '%s' errored with: %v", processPID, name, err)
-			} else {
-				updates := database.ProcessHistoryUpdate{
-					State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
-					StoppedAt: ptr.TimePtr(time.Now()),
-				}
 
-				err := m.db.UpdateProcessHistoryEntry(m.ctx, processPID, updates)
-				if err != nil {
-					failed[processPID] = fmt.Sprintf("recording the change for process '%v' for service '%s' errored with: %v", processPID, name, err)
-				} else {
-					stopped = append(stopped, processPID)
-				}
+		switch processState {
+		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
+			err := syscall.Kill(processPID, signal)
+			if errors.Is(err, syscall.ESRCH) {
+				alreadyDead[processPID] = true
+			} else if err != nil {
+				errored[processPID] = fmt.Sprintf("killing service: %v", err)
+			} else {
+				pending[processPID] = true
 			}
+		case types.ProcessStateFailed, types.ProcessStateStopped:
+			continue
 		}
 	}
 
-	return StopResult{
-		Stopped: stopped,
-		Failed:  failed,
+	return StopRequestResult{
+		AlreadyDead: alreadyDead,
+		Errored:     errored,
+		Pending:     pending,
 	}, nil
 }
 
@@ -485,7 +647,7 @@ func validateRuntimePath(runtime types.Runtime) error {
 	if !filepath.IsAbs(runtime.Path) {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("failed to get homeDir during runtime validation, got: %w", err)
+			return fmt.Errorf("getting homeDir for runtime validation: %w", err)
 		}
 		runtimePath = filepath.Join(homeDir, runtime.Path)
 	}

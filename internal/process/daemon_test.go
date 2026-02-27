@@ -16,7 +16,7 @@ func TestAllMethodsHandled(t *testing.T) {
 
 	for method := range types.ValidMethods {
 		t.Run(string(method), func(t *testing.T) {
-			req := types.DaemonRequest{Method: method, Args: []string{"test"}}
+			req := types.DaemonRequest{Method: method, Args: nil}
 			resp := executeRequest(manager, req)
 
 			// Should NOT get "unknown method" error

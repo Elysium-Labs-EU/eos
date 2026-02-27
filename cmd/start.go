@@ -49,7 +49,7 @@ func newStartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PID: %d", pid))
 			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ stream logs"))
+			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 		}}
 }

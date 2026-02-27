@@ -16,20 +16,23 @@ const (
 	DaemonLogMaxFiles      = 5
 	DaemonPIDFile          = "eos.pid"
 	DaemonSocketPath       = "eos.sock"
+	DaemonSocketTimeout    = "5s"
 	HealthMaxRestart       = 10
 	HealthTimeOutEnable    = true
 	HealthTimeOutLimit     = "10s"
 	InstallDir             = "/usr/local/bin"
 	Name                   = "eos"
+	ShutdownGracePeriod    = "5s"
 )
 
 type DaemonConfig struct {
-	PIDFile       string `yaml:"pidFile"`
-	SocketPath    string `yaml:"socketPath"`
-	LogDir        string `yaml:"logDir"`
-	LogFileName   string `yaml:"logFileName"`
-	MaxFiles      int    `yaml:"maxFiles"`
-	FileSizeLimit int64  `yaml:"fileSizeLimit"`
+	PIDFile       string        `yaml:"pidFile"`
+	SocketPath    string        `yaml:"socketPath"`
+	LogDir        string        `yaml:"logDir"`
+	LogFileName   string        `yaml:"logFileName"`
+	SocketTimeout time.Duration `yaml:"socketTimeout"`
+	MaxFiles      int           `yaml:"maxFiles"`
+	FileSizeLimit int64         `yaml:"fileSizeLimit"`
 }
 
 type TimeOutConfig struct {
@@ -42,9 +45,14 @@ type HealthConfig struct {
 	Timeout    TimeOutConfig `yaml:"timeout"`
 }
 
+type ShutdownConfig struct {
+	GracePeriod time.Duration `yaml:"gracePeriod"`
+}
+
 type SystemConfig struct {
-	Daemon DaemonConfig `yaml:"daemon"`
-	Health HealthConfig `yaml:"health"`
+	Daemon   DaemonConfig   `yaml:"daemon"`
+	Health   HealthConfig   `yaml:"health"`
+	Shutdown ShutdownConfig `yaml:"shutdown"`
 }
 
 func GetBaseDir() (string, error) {

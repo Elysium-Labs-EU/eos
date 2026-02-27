@@ -201,8 +201,14 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "no config loaded") {
-		t.Errorf("Expected config section to show 'no config loaded', got: %s", output)
+	if !strings.Contains(output, "command") || !strings.Contains(output, "/home/user/start-script.sh") {
+		t.Errorf("Expected command to be present in config section")
+	}
+	if !strings.Contains(output, "runtime") || !strings.Contains(output, "N/A") {
+		t.Errorf("Expected runtime to show 'N/A' for incomplete config, got: %s", output)
+	}
+	if !strings.Contains(output, "runtime path") || !strings.Contains(output, "N/A") {
+		t.Errorf("Expected runtime path to show 'N/A' for incomplete config, got: %s", output)
 	}
 }
 

@@ -74,6 +74,7 @@ func TestRestartCommand(t *testing.T) {
 		t.Errorf("The start command didn't complete successfully, no PID was returned")
 	}
 
+	buf.Reset()
 	cmd.SetArgs([]string{"restart", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 

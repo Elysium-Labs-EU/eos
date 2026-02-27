@@ -54,9 +54,6 @@ func TestHelpCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	t.Logf("Buffer length: %d", len(output))
-	t.Logf("Buffer content: %q", output)
-
 	if !strings.Contains(output, "eos is a modern deployment") {
 		t.Errorf("Expected help to contain description, got: '%s'", output)
 	}

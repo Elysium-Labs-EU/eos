@@ -173,15 +173,15 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 
 	found := strings.Contains(output, "PID:")
 	if !found {
-		t.Errorf("No PID substring found")
-	} else {
-		result, err := manager.ForceStopService(testFile.Name)
-		if err != nil {
-			t.Fatalf("forceStopService should not error, got: %v", err)
-		}
+		t.Fatalf("No PID substring found")
+	}
 
-		if len(result.Failed) > 0 {
-			t.Errorf("failed to forcefully stop the service, got: %v", err)
-		}
+	result, err := manager.ForceStopService(testFile.Name)
+	if err != nil {
+		t.Fatalf("forceStopService should not error, got: %v", err)
+	}
+
+	if len(result.Errored) > 0 {
+		t.Fatalf("failed to forcefully stop the service, got: %v", err)
 	}
 }

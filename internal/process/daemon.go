@@ -22,7 +22,7 @@ import (
 	"eos/internal/types"
 )
 
-func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.DaemonConfig, healthConfig config.HealthConfig) error {
+func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.DaemonConfig, healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig) error {
 	logger, err := manager.NewDaemonLogger(logToFileAndConsole, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to setup daemon logger: %w", err)
@@ -97,7 +97,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	mgr := manager.NewLocalManager(db, baseDir, ctx)
 	go handleIncomingCommands(listener, mgr, logger)
 
-	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig)
+	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig, shutdownConfig)
 	go healthMonitor.Start(ctx)
 
 	logger.Log(manager.LogLevelInfo, "daemon started successfully")
@@ -301,12 +301,12 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager
 func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
 	switch request.Method {
 	case types.MethodGetServiceInstance:
-
-		if len(request.Args) < 1 {
-			return errorResponse("GetServiceInstance requires service name")
+		var args types.GetServiceInstanceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodGetServiceInstance args: %v", err))
 		}
 
-		result, err := mgr.GetServiceInstance(request.Args[0])
+		result, err := mgr.GetServiceInstance(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -325,10 +325,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodRemoveServiceInstance:
-		if len(request.Args) < 1 {
-			return errorResponse("RemoveServiceInstance requires service name")
+		var args types.RemoveServiceInstanceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceInstance args: %v", err))
 		}
-		removed, err := mgr.RemoveServiceInstance(request.Args[0])
+		removed, err := mgr.RemoveServiceInstance(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -339,10 +340,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return types.DaemonResponse{Success: true, Data: data}
 
 	case types.MethodStartService:
-		if len(request.Args) < 1 {
-			return errorResponse("StartService requires service name")
+		var args types.StartServiceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodStartService args: %v", err))
 		}
-		pid, err := mgr.StartService(request.Args[0])
+		pid, err := mgr.StartService(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -356,10 +358,19 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodRestartService:
-		if len(request.Args) < 1 {
-			return errorResponse("RestartService requires service name")
+		var args types.RestartServiceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse("invalid MethodRestartService args")
 		}
-		pid, err := mgr.RestartService(request.Args[0])
+		gracePeriod, err := time.ParseDuration(args.GracePeriod)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
+		}
+		tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
+		}
+		pid, err := mgr.RestartService(args.Name, gracePeriod, tickerPeriod)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -373,10 +384,19 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodStopService:
-		if len(request.Args) < 1 {
-			return errorResponse("StopService requires service name")
+		var args types.StopServiceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse("invalid MethodStopService args")
 		}
-		result, err := mgr.StopService(request.Args[0])
+		gracePeriod, err := time.ParseDuration(args.GracePeriod)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
+		}
+		tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
+		}
+		result, err := mgr.StopService(args.Name, gracePeriod, tickerPeriod)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -391,10 +411,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodForceStopService:
-		if len(request.Args) < 1 {
-			return errorResponse("ForceStopService requires service name")
+		var args types.ForceStopServiceArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
 		}
-		result, err := mgr.ForceStopService(request.Args[0])
+		result, err := mgr.ForceStopService(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -408,15 +429,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodAddServiceCatalogEntry:
-		if len(request.Args) < 1 {
-			return errorResponse("AddServiceCatalogEntry requires service name")
+		var args types.AddServiceCatalogEntryArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
 		}
-
-		var service types.ServiceCatalogEntry
-		if err := json.Unmarshal([]byte(request.Args[0]), &service); err != nil {
-			return errorResponse(fmt.Sprintf("unmarshaling service data: %v", err))
-		}
-		err := mgr.AddServiceCatalogEntry(&service)
+		err := mgr.AddServiceCatalogEntry(args.Service)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -437,10 +454,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodGetServiceCatalogEntry:
-		if len(request.Args) < 1 {
-			return errorResponse("GetServiceCatalogEntry requires service name")
+		var args types.GetServiceCatalogEntryArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodGetServiceCatalogEntry args: %v", err))
 		}
-		result, err := mgr.GetServiceCatalogEntry(request.Args[0])
+		result, err := mgr.GetServiceCatalogEntry(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -454,10 +472,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodIsServiceRegistered:
-		if len(request.Args) < 1 {
-			return errorResponse("IsServiceRegistered requires service name")
+		var args types.IsServiceRegisteredArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodIsServiceRegistered args: %v", err))
 		}
-		result, err := mgr.IsServiceRegistered(request.Args[0])
+		result, err := mgr.IsServiceRegistered(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -471,10 +490,11 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodRemoveServiceCatalogEntry:
-		if len(request.Args) < 1 {
-			return errorResponse("RemoveServiceCatalogEntry requires service name")
+		var args types.RemoveServiceCatalogEntryArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceCatalogEntry args: %v", err))
 		}
-		removed, err := mgr.RemoveServiceCatalogEntry(request.Args[0])
+		removed, err := mgr.RemoveServiceCatalogEntry(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -486,20 +506,22 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return types.DaemonResponse{Success: true, Data: data}
 
 	case types.MethodUpdateServiceCatalogEntry:
-		if len(request.Args) < 3 {
-			return errorResponse("UpdateServiceCatalogEntry requires name, newDirectoryPath, newConfigFileName")
+		var args types.UpdateServiceCatalogEntryArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodUpdateServiceCatalogEntry args: %v", err))
 		}
-		err := mgr.UpdateServiceCatalogEntry(request.Args[0], request.Args[1], request.Args[2])
+		err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
 		return types.DaemonResponse{Success: true}
 
 	case types.MethodGetMostRecentProcessHistoryEntry:
-		if len(request.Args) < 1 {
-			return errorResponse("GetMostRecentProcessHistoryEntry requires service name")
+		var args types.GetMostRecentProcessHistoryEntryArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodGetMostRecentProcessHistoryEntry args: %v", err))
 		}
-		result, err := mgr.GetMostRecentProcessHistoryEntry(request.Args[0])
+		result, err := mgr.GetMostRecentProcessHistoryEntry(args.Name)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -519,11 +541,12 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 
 	case types.MethodCreateServiceLogFiles:
-		if len(request.Args) < 1 {
-			return errorResponse("CreateServiceLogFiles requires service name")
+		var args types.CreateServiceLogFilesArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodCreateServiceLogFiles args: %v", err))
 		}
 
-		logPath, errorLogPath, err := mgr.CreateServiceLogFiles(request.Args[0])
+		logPath, errorLogPath, err := mgr.CreateServiceLogFiles(args.ServiceName)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -536,21 +559,12 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return types.DaemonResponse{Success: true, Data: data}
 
 	case types.MethodGetServiceLogFilePath:
-		if len(request.Args) < 1 {
-			return errorResponse("GetServiceLogFilePath requires service name")
+		var args types.GetServiceLogFilePathArgs
+		if err := json.Unmarshal(request.Args, &args); err != nil {
+			return errorResponse(fmt.Sprintf("invalid MethodGetServiceLogFilePath args: %v", err))
 		}
 
-		type GetServiceLogFilePathRequest struct {
-			ServiceName string
-			ErrorLog    bool
-		}
-
-		var serviceLogPathRequest GetServiceLogFilePathRequest
-		if err := json.Unmarshal([]byte(request.Args[0]), &serviceLogPathRequest); err != nil {
-			return errorResponse(fmt.Sprintf("invalid args for GetServiceLogFilePath: %v", err))
-		}
-
-		filepath, err := mgr.GetServiceLogFilePath(serviceLogPathRequest.ServiceName, serviceLogPathRequest.ErrorLog)
+		filepath, err := mgr.GetServiceLogFilePath(args.ServiceName, args.ErrorLog)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -579,6 +593,6 @@ func sendErrorResponse(conn net.Conn, message string, logger *manager.DaemonLogg
 	encoder := json.NewEncoder(conn)
 	err := encoder.Encode(response)
 	if err != nil {
-		logger.Log(manager.LogLevelError, fmt.Sprintf("Failed to send error response: %v\n", err))
+		logger.Log(manager.LogLevelError, fmt.Sprintf("sending error response: %v\n", err))
 	}
 }

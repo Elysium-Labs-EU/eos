@@ -3,15 +3,17 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"eos/internal/config"
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
 
-func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newRestartCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "restart",
 		Short: "Restarts an active service",
@@ -20,6 +22,7 @@ func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()
+			cfg := getConfig()
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
@@ -41,7 +44,7 @@ func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			pid, err := mgr.RestartService(registeredService.Name)
+			pid, err := mgr.RestartService(registeredService.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("restarting service: %v", err))
@@ -49,7 +52,7 @@ func newRestartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PID: %d", pid))
 			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ stream logs"))
+			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 		}}
 }

@@ -27,6 +27,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -35,7 +36,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	var started sync.WaitGroup
 	started.Add(1)
@@ -56,6 +57,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t, WithGracePeriod(5*time.Second))
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -65,7 +67,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -160,6 +162,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -168,7 +171,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "startup-crash-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -225,9 +228,15 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Failed to kill process %d: %v", pid, err)
 	}
-	_, err = proc.Wait() // reap the zombie so isProcessAlive returns false
-	if err != nil {
-		t.Fatalf("Failed to wait for the process to exit: %v", err)
+
+	for range 50 {
+		if !hm.isProcessAlive(pid) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hm.isProcessAlive(pid) {
+		t.Fatalf("Process %d did not exit after kill", pid)
 	}
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -375,6 +384,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t, WithTimeoutLimit(100*time.Millisecond))
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -383,7 +393,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 	serviceName := "timeout-test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -491,6 +501,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -500,7 +511,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -735,6 +746,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -744,7 +756,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -807,7 +819,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("An error occurred during force stopping the service, got: %v", err)
 	}
-	if len(result.Failed) != 0 {
+	if len(result.Errored) != 0 {
 		t.Fatalf("Failed to force stop the service for this test")
 	}
 
@@ -836,8 +848,8 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 	output := buf.String()
 
-	if strings.Count(output, "\n") != 0 {
-		t.Fatal("Should not create logs when process is running")
+	if !strings.Contains(output, "is not running") {
+		t.Fatalf("Expected log about service not running, got: %s", output)
 	}
 }
 
@@ -845,6 +857,8 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t, WithMaxRestart(3))
+	shutdownConfig := createTestShutdownConfig(t)
+
 	maxRestartCount := healthConfig.MaxRestart
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -854,7 +868,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 	serviceName := "max-restart-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -1107,6 +1121,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t)
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -1115,7 +1130,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	// --- Helper to register a service ---
 	setupService := func(name string, port int) *types.ServiceCatalogEntry {
@@ -1281,6 +1296,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	tempDir := t.TempDir()
 	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 	healthConfig := createTestHealthConfig(t, WithMaxRestart(5))
+	shutdownConfig := createTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -1289,7 +1305,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig)
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "recovery-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -1434,4 +1450,34 @@ func createTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.He
 	}
 
 	return healthConfig
+}
+
+type ShutdownConfigOption func(*config.ShutdownConfig)
+
+func WithGracePeriod(gracePeriod time.Duration) ShutdownConfigOption {
+	return func(sc *config.ShutdownConfig) {
+		sc.GracePeriod = gracePeriod
+	}
+}
+
+func createTestShutdownConfig(t *testing.T, opts ...ShutdownConfigOption) *config.ShutdownConfig {
+	t.Helper()
+	shutdownConfig := &config.ShutdownConfig{
+		GracePeriod: safeParseDuration(config.ShutdownGracePeriod, time.Second*5),
+	}
+
+	for _, opt := range opts {
+		opt(shutdownConfig)
+	}
+
+	return shutdownConfig
+}
+
+func safeParseDuration(durationAsString string, fallback time.Duration) time.Duration {
+	limit, err := time.ParseDuration(durationAsString)
+	if err != nil {
+		return fallback
+	}
+
+	return limit
 }

@@ -62,13 +62,17 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				helpers.PrintKV(cmd, "status", helpers.PrintStatus(helpers.DetermineServiceStatus(processEntry.State)))
 				helpers.PrintKV(cmd, "pid", fmt.Sprintf("%d", processEntry.PID))
 				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptime(processEntry))
-				helpers.PrintKV(cmd, "error", fmt.Sprintf("%v", *processEntry.Error))
+				if processEntry.Error == nil {
+					helpers.PrintKV(cmd, "error", "N/A")
+				} else {
+					helpers.PrintKV(cmd, "error", fmt.Sprintf("%v", *processEntry.Error))
+				}
 			}
 
 			helpers.PrintSection(cmd, "Service")
 			helpers.PrintKV(cmd, "name", registeredService.Name)
 			helpers.PrintKV(cmd, "path", registeredService.DirectoryPath)
-			helpers.PrintKV(cmd, "config file", registeredService.ConfigFileName)
+			helpers.PrintKV(cmd, "config file", filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName))
 			helpers.PrintKV(cmd, "created at", registeredService.CreatedAt.String())
 
 			helpers.PrintSection(cmd, "Logging")
@@ -114,8 +118,16 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				} else {
 					helpers.PrintKV(cmd, "port", "N/A")
 				}
-				helpers.PrintKV(cmd, "runtime", config.Runtime.Type)
-				helpers.PrintKV(cmd, "runtime path", config.Runtime.Path)
+				if config.Runtime.Type == "" {
+					helpers.PrintKV(cmd, "runtime", "N/A")
+				} else {
+					helpers.PrintKV(cmd, "runtime", config.Runtime.Type)
+				}
+				if config.Runtime.Path == "" {
+					helpers.PrintKV(cmd, "runtime path", "N/A")
+				} else {
+					helpers.PrintKV(cmd, "runtime path", config.Runtime.Path)
+				}
 			} else {
 				cmd.PrintErr(ui.TextMuted.Render("  no config loaded\n"))
 			}

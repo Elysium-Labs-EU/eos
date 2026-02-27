@@ -91,6 +91,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config confi
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Daemon"))
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("pid file:"), config.Daemon.PIDFile)
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket:"), config.Daemon.SocketPath)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket timeout:"), config.Daemon.SocketTimeout)
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), config.Daemon.LogDir)
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), config.Daemon.LogFileName)
 	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max files:"), config.Daemon.MaxFiles)
@@ -103,6 +104,8 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config confi
 	} else {
 		cmd.Printf("  %s %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit, ui.TextMuted.Render("(not active)"))
 	}
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Shutdown"))
+	cmd.Printf("  %s %v\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
 }
 
 func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig, userArch string, userOS string, includePre bool) {
@@ -143,7 +146,6 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 	}
 
 	latestVersion, latestAsset, err := checkForUpdates(release, version, userArch, userOS)
-	fmt.Printf("latestVersion: %s, release: %s, version: %s\n", latestVersion, release, version)
 
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking for updates: %v", err))
