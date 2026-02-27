@@ -1141,6 +1141,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 
 		testFile := testutil.CreateTestServiceConfigFile(t,
 			testutil.WithRuntimePath(""),
+			testutil.WithCommand("sleep 300"),
 			testutil.WithName(name),
 			testutil.WithPort(port),
 		)
@@ -1315,6 +1316,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 
 	testFile := testutil.CreateTestServiceConfigFile(t,
 		testutil.WithRuntimePath(""),
+		testutil.WithCommand("sleep 300"),
 		testutil.WithName(serviceName),
 		testutil.WithPort(0),
 	)
