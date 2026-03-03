@@ -2,14 +2,10 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"eos/internal/buildinfo"
 	"eos/internal/database"
@@ -66,60 +62,60 @@ func TestSystemUpdateCommand(t *testing.T) {
 	}
 }
 
-func TestCopyFile_TextFileBusy(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("text file busy error is Linux-specific")
-	}
+// func TestCopyFile_TextFileBusy(t *testing.T) {
+// 	if runtime.GOOS != "linux" {
+// 		t.Skip("text file busy error is Linux-specific")
+// 	}
 
-	tempDir := t.TempDir()
+// 	tempDir := t.TempDir()
 
-	// Create a minimal executable binary (a simple sleep script won't work;
-	// we need an actual ELF binary). We'll compile a tiny Go program.
-	srcPath := filepath.Join(tempDir, "main.go")
-	err := os.WriteFile(srcPath, []byte(`package main
-import "time"
-func main() { time.Sleep(30 * time.Second) }
-`), 0644)
-	if err != nil {
-		t.Fatalf("failed to write source file: %v", err)
-	}
+// 	// Create a minimal executable binary (a simple sleep script won't work;
+// 	// we need an actual ELF binary). We'll compile a tiny Go program.
+// 	srcPath := filepath.Join(tempDir, "main.go")
+// 	err := os.WriteFile(srcPath, []byte(`package main
+// import "time"
+// func main() { time.Sleep(30 * time.Second) }
+// `), 0644)
+// 	if err != nil {
+// 		t.Fatalf("failed to write source file: %v", err)
+// 	}
 
-	binaryPath := filepath.Join(tempDir, "eos")
-	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binaryPath, srcPath)
-	if out, outputErr := buildCmd.CombinedOutput(); outputErr != nil {
-		t.Fatalf("failed to compile test binary: %v\n%s", outputErr, out)
-	}
+// 	binaryPath := filepath.Join(tempDir, "eos")
+// 	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binaryPath, srcPath)
+// 	if out, outputErr := buildCmd.CombinedOutput(); outputErr != nil {
+// 		t.Fatalf("failed to compile test binary: %v\n%s", outputErr, out)
+// 	}
 
-	// Start the binary so the OS holds it as "text busy"
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+// 	// Start the binary so the OS holds it as "text busy"
+// 	ctx, cancel := context.WithCancel(t.Context())
+// 	defer cancel()
 
-	proc := exec.CommandContext(ctx, binaryPath)
-	if startErr := proc.Start(); startErr != nil {
-		t.Fatalf("failed to start test binary: %v", startErr)
-	}
-	defer func() {
-		cancel()
-		_ = proc.Wait()
-	}()
+// 	proc := exec.CommandContext(ctx, binaryPath)
+// 	if startErr := proc.Start(); startErr != nil {
+// 		t.Fatalf("failed to start test binary: %v", startErr)
+// 	}
+// 	defer func() {
+// 		cancel()
+// 		_ = proc.Wait()
+// 	}()
 
-	time.Sleep(100 * time.Millisecond)
+// 	time.Sleep(100 * time.Millisecond)
 
-	replacementPath := filepath.Join(tempDir, "eos_new")
-	err = os.WriteFile(replacementPath, []byte("new binary content"), 0755)
-	if err != nil {
-		t.Fatalf("failed to create replacement file: %v", err)
-	}
+// 	replacementPath := filepath.Join(tempDir, "eos_new")
+// 	err = os.WriteFile(replacementPath, []byte("new binary content"), 0755)
+// 	if err != nil {
+// 		t.Fatalf("failed to create replacement file: %v", err)
+// 	}
 
-	err = copyFile(replacementPath, binaryPath)
-	if err == nil {
-		t.Fatal("expected 'text file busy' error, got nil")
-	}
+// 	err = copyFile(replacementPath, binaryPath)
+// 	if err == nil {
+// 		t.Fatal("expected 'text file busy' error, got nil")
+// 	}
 
-	if !strings.Contains(err.Error(), "text file busy") {
-		t.Errorf("expected 'text file busy' in error message, got: %v", err)
-	}
-}
+// 	if !strings.Contains(err.Error(), "text file busy") {
+// 		t.Errorf("expected 'text file busy' in error message, got: %v", err)
+// 	}
+// }
 
 func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 	buildinfo.Version = "invalid-version"

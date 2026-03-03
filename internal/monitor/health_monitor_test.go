@@ -70,10 +70,6 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
-	serviceDir := filepath.Join(tempDir, serviceName)
-	if mkdirErr := os.MkdirAll(serviceDir, 0755); mkdirErr != nil {
-		t.Fatalf("Failed to create service directory: %v", mkdirErr)
-	}
 
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -87,17 +83,23 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName), testutil.WithPort(port))
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	err = os.MkdirAll(fullDirPath, 0755)
+	if err != nil {
+		t.Fatalf("could not create test-project directory: %v\n", err)
+	}
+
+	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.CreateTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(port),
+		testutil.WithCommand("./"+testServiceScript.FileName))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
-	fullDirPath := filepath.Join(tempDir, "test-project")
-	err = os.MkdirAll(fullDirPath, 0755)
-
-	if err != nil {
-		t.Fatalf("could not create test-project directory: %v\n", err)
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
@@ -117,13 +119,18 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	}
 
 	pid, err := mgr.StartService(serviceCatalogEntry.Name)
-
 	if err != nil {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
 	if pid < 1 {
 		t.Fatalf("Invalid PID received after starting service, got: %v", err)
 	}
+	t.Cleanup(func() {
+		proc, findErr := os.FindProcess(pid)
+		if findErr == nil {
+			_ = proc.Kill()
+		}
+	})
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil {
@@ -179,20 +186,23 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
-		testutil.WithRuntimePath(""),
-		testutil.WithName(serviceName),
-		testutil.WithPort(0),
-	)
-	yamlData, err := yaml.Marshal(testFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
 	fullDirPath := filepath.Join(tempDir, "startup-crash-project")
 	err = os.MkdirAll(fullDirPath, 0755)
 	if err != nil {
 		t.Fatalf("Could not create project directory: %v", err)
+	}
+
+	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.CreateTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
@@ -401,20 +411,23 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
-		testutil.WithRuntimePath(""),
-		testutil.WithName(serviceName),
-		testutil.WithPort(9999)) // Port that won't open
-
-	yamlData, err := yaml.Marshal(testFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
 	fullDirPath := filepath.Join(tempDir, "timeout-test-project")
 	err = os.MkdirAll(fullDirPath, 0755)
 	if err != nil {
 		t.Fatalf("Could not create test-project directory: %v", err)
+	}
+
+	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.CreateTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(9999), // Port that won't open
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
@@ -531,17 +544,24 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName), testutil.WithPort(port))
-	yamlData, err := yaml.Marshal(testFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
 	fullDirPath := filepath.Join(tempDir, "test-project")
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
 		t.Fatalf("could not create test-project directory: %v\n", err)
+	}
+
+	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.CreateTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(port),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
 	fullPath := filepath.Join(fullDirPath, "service.yaml")
@@ -568,6 +588,12 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	if pid < 1 {
 		t.Fatalf("Invalid PID received after starting service, got: %v", err)
 	}
+	t.Cleanup(func() {
+		proc, findErr := os.FindProcess(pid)
+		if findErr == nil {
+			_ = proc.Kill()
+		}
+	})
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil {
@@ -776,7 +802,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName), testutil.WithPort(port))
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName), testutil.WithPort(port))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)

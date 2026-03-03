@@ -22,7 +22,7 @@ func TestRestartCommand(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithRuntimePath(""))
+	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

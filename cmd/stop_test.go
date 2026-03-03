@@ -28,12 +28,6 @@ func TestStopCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash
-trap 'exit 0' SIGTERM SIGINT
-while true; do
-    sleep 1
-done`
-
 	fullDirPath := filepath.Join(tempDir, "test-project")
 	err = os.MkdirAll(fullDirPath, 0755)
 
@@ -47,6 +41,12 @@ done`
 	if err != nil {
 		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
+
+	testStartScript := `#!/bin/bash
+trap 'exit 0' SIGTERM SIGINT
+while true; do
+    sleep 1
+done`
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
 	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)

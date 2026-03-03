@@ -3,6 +3,7 @@ package testutil
 import (
 	"database/sql"
 	"embed"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -92,6 +93,60 @@ func CreateTestServiceConfigFile(t *testing.T, opts ...ServiceConfigOption) *typ
 	}
 
 	return config
+}
+
+type ServiceScriptSetup struct {
+	Script   string `yaml:"script"`
+	DirPath  string `json:"dir_path" yaml:"dir_path"`
+	FileName string `json:"file_name" yaml:"file_name"`
+}
+
+type ServiceScriptOption func(*ServiceScriptSetup)
+
+func WithScript(script string) ServiceScriptOption {
+	return func(sss *ServiceScriptSetup) {
+		sss.Script = script
+	}
+}
+
+func WithDirPath(dirPath string) ServiceScriptOption {
+	return func(sss *ServiceScriptSetup) {
+		sss.DirPath = dirPath
+	}
+}
+
+func WithFileName(fileName string) ServiceScriptOption {
+	return func(sss *ServiceScriptSetup) {
+		sss.FileName = fileName
+	}
+}
+
+func CreateTestServiceScript(t *testing.T, opts ...ServiceScriptOption) *ServiceScriptSetup {
+	testServiceConfig := &ServiceScriptSetup{
+		Script: `#!/bin/bash
+trap 'exit 0' SIGTERM SIGINT
+while true; do
+    sleep 1
+done`,
+		DirPath:  "/",
+		FileName: "test-script.sh",
+	}
+
+	for _, opt := range opts {
+		opt(testServiceConfig)
+	}
+
+	return testServiceConfig
+}
+
+func CreateTestServiceScriptAtLocation(t *testing.T, testServiceScript ServiceScriptSetup) {
+	t.Helper()
+
+	fullPathScript := filepath.Join(testServiceScript.DirPath, testServiceScript.FileName)
+	err := os.WriteFile(fullPathScript, []byte(testServiceScript.Script), 0755) // #nosec G306 -- test files should be readable by other users/tools
+	if err != nil {
+		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
+	}
 }
 
 type DaemonConfigOption func(*config.DaemonConfig)

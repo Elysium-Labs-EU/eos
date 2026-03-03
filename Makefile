@@ -1,4 +1,4 @@
-.PHONY: help dev build install test lint clean docker-* release release-local fix
+.PHONY: help dev build install test lint clean docker-*  test-docker-* release release-local fix
 
 
 help:
@@ -54,10 +54,6 @@ test:
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
 
-test-docker-linux:
-	@echo "Running tests..."
-	docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 go test ./cmd ./internal/... -race -count=1
-
 lint:
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
@@ -106,12 +102,23 @@ docker-vps-logs:
 	@echo "Following eos logs in VPS..."
 	docker exec -it vps-test-eos journalctl -u eos -f
 
-# Clean up all Docker resources
+test-docker-build:
+	docker build -f test-files/Dockerfile.test -t eos-test .
+
+test-docker-linux: test-docker-build
+	docker run --rm eos-test
+
+test-docker-linux-verbose: test-docker-build
+	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v
+
+test-docker-linux-single: test-docker-build
+	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v -run $(TEST)
+
 docker-clean:
 	@echo "Cleaning up Docker resources..."
 	docker compose -f test-files-local/docker-compose.yml down -v 2>/dev/null || true
 	docker compose -f test-files-vps/docker-compose.yml down -v 2>/dev/null || true
-	docker system prune -f
+	docker rmi eos-test 2>/dev/null || true
 	rm -rf test-files-local/nginx-logs
 
 # Build release binaries locally (for testing before actual release)
