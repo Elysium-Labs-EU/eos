@@ -63,7 +63,21 @@ func newSystemCmd() *cobra.Command {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 				return
 			}
-			updateCmd(cmd.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, runtime.GOARCH, runtime.GOOS, includePre)
+
+			// Overrides for testing purposes
+			version := buildinfo.GetVersionOnly()
+			if override := os.Getenv("EOS_VERSION"); override != "" {
+				version = override
+			}
+			userArch := runtime.GOARCH
+			if override := os.Getenv("USER_ARCH"); override != "" {
+				userArch = override
+			}
+			userOS := runtime.GOOS
+			if override := os.Getenv("USER_OS"); override != "" {
+				userOS = override
+			}
+			updateCmd(cmd.Context(), cmd, version, installDir, systemConfig.Daemon, userArch, userOS, includePre)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -121,6 +135,13 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 	if !fileInfo.IsDir() {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", installDir))
+		return
+	}
+
+	err = checkWritable(cmd, installDir)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+		cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
 		return
 	}
 
@@ -197,8 +218,12 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "checksums match")
 
-	timestamp := time.Now().Format("20060102_150405")
-	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, timestamp)
+	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, time.Now().Format("20060102_150405"))
+	err = createDestinationFile(backupPath)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating destination file: %v", err))
+	}
+
 	if err := copyFile(binaryPath, backupPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("backing up current binary: %v", err))
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
@@ -404,6 +429,23 @@ func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, 
 	return file, tempDir, nil
 }
 
+func checkWritable(cmd *cobra.Command, dir string) error {
+	file, err := os.CreateTemp(dir, ".write-check-*")
+	if err != nil {
+		return fmt.Errorf("directory %q does not appear to be writable: %w", dir, err)
+	}
+
+	if closeErr := file.Close(); closeErr != nil {
+		return fmt.Errorf("closing temp file: %w", closeErr)
+	}
+
+	if removeErr := os.Remove(file.Name()); removeErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not remove temp file %s: %v\n", file.Name(), removeErr))
+	}
+
+	return nil
+}
+
 func validateDigest(latestAsset *Asset, binary *os.File) error {
 	_, err := binary.Seek(0, io.SeekStart)
 	if err != nil {
@@ -437,9 +479,9 @@ func copyFile(src string, dst string) (err error) {
 		}
 	}()
 
-	destination, err := os.Create(filepath.Clean(dst))
+	destination, err := os.Open(filepath.Clean(dst)) // #nosec G703 -- dst is constructed internally, not from user input
 	if err != nil {
-		return fmt.Errorf("failed to create destination file: %w", err)
+		return fmt.Errorf("failed to open destination file: %w", err)
 	}
 	defer func() {
 		if destinationCloseErr := destination.Close(); destinationCloseErr != nil && err == nil {
@@ -458,6 +500,19 @@ func copyFile(src string, dst string) (err error) {
 		}
 	}()
 
+	return nil
+}
+
+func createDestinationFile(dst string) error {
+	destination, err := os.Create(filepath.Clean(dst))
+	if err != nil {
+		return fmt.Errorf("creating destination file: %w", err)
+	}
+	defer func() {
+		if destinationErr := destination.Close(); destinationErr != nil && err == nil {
+			err = fmt.Errorf("closing destination file: %w", destinationErr)
+		}
+	}()
 	return nil
 }
 

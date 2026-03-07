@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"eos/internal/buildinfo"
 	"eos/internal/database"
 	"eos/internal/manager"
@@ -212,6 +214,21 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	if !strings.Contains(output, "info checksums match") {
 		t.Error("expected the output to contain 'info checksums match'")
+	}
+}
+
+func TestSystemUpdateCheckWritableFailed(t *testing.T) {
+	dir := t.TempDir()
+	err := os.Chmod(dir, 0555)
+	if err != nil {
+		t.Fatalf("errored during test setup")
+	}
+
+	testCmd := &cobra.Command{}
+
+	err = checkWritable(testCmd, dir)
+	if err == nil {
+		t.Fatalf("expected permission issues, got: %v", err)
 	}
 }
 

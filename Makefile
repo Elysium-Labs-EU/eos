@@ -60,6 +60,7 @@ lint:
 	golangci-lint run --timeout=5m
 	
 fix:
+	golangci-lint fmt
 	go tool fieldalignment -fix ./...
 
 ci: test lint

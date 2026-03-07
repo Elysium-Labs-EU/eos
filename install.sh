@@ -71,7 +71,6 @@ confirm() {
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
-# Check if running as root
 check_root() {
     if [ $EUID -ne 0 ]; then
         error "This script must be run as root"
@@ -80,7 +79,6 @@ check_root() {
     fi
 }
 
-# Detect download tool
 detect_download_tool() {
     if command -v curl &> /dev/null; then
         echo "curl"
@@ -97,7 +95,6 @@ detect_download_tool() {
     fi
 }
 
-# Download file
 download_file() {
     local url="$1"
     local output="$2"
@@ -110,7 +107,6 @@ download_file() {
     fi
 }
 
-# Fetch JSON field
 fetch_json_field() {
     local url="$1"
     local field="$2"
@@ -126,7 +122,6 @@ fetch_json_field() {
     echo "$response" | grep "\"$field\"" | sed -E 's/.*"([^"]+)".*/\1/' | head -1
 }
 
-# Detect architecture
 detect_arch() {
     local arch
     arch=$(uname -m)
@@ -146,7 +141,6 @@ detect_arch() {
     esac
 }
 
-# Detect package manager
 detect_package_manager() {
     if command -v apt-get &> /dev/null; then
         echo "apt"
@@ -163,7 +157,6 @@ detect_package_manager() {
     fi
 }
 
-# Check if SQLite3 is installed and functional
 check_sqlite3() {
     if ! command -v sqlite3 &> /dev/null; then
         return 1
@@ -183,7 +176,6 @@ check_sqlite3() {
     return 0
 }
 
-# Install SQLite
 install_sqlite3() {
     local pkg_manager="$1"
     
@@ -238,7 +230,6 @@ install_sqlite3() {
     return 1
 }
 
-# Setup SQLite3 with smart detection
 setup_sqlite3() {
     local pkg_manager="$1"
     
