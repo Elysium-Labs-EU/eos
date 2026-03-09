@@ -69,8 +69,8 @@ func TestStartCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "started with PID:") {
-		t.Fatal("The start command didn't complete successfully, no PID was returned")
+	if !strings.Contains(output, "started with PGID:") {
+		t.Fatal("The start command didn't complete successfully, no PGID was returned")
 	}
 }
 
@@ -138,14 +138,14 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "started with PID:") {
-		t.Errorf("The start command didn't complete successfully, no PID was returned")
+	if !strings.Contains(output, "started with PGID:") {
+		t.Errorf("The start command didn't complete successfully, no PGID was returned")
 		return
 	}
 
-	found := strings.Contains(output, "PID:")
+	found := strings.Contains(output, "PGID:")
 	if !found {
-		t.Fatalf("No PID substring found")
+		t.Fatalf("No PGID substring found")
 	}
 
 	result, err := manager.ForceStopService(testFile.Name)

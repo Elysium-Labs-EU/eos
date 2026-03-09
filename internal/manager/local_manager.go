@@ -149,7 +149,7 @@ func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath s
 	return nil
 }
 
-func (m *LocalManager) StartService(name string) (int, error) {
+func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotFound) {
 		return 0, fmt.Errorf("service %s not found", name)
@@ -170,7 +170,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		return 0, fmt.Errorf("unable to check for service instance for %s, got: %w", name, err)
 	}
 	if serviceInstance != nil {
-		// TODO: return found PID somehow instead?
+		// TODO: return found PGID somehow instead?
 		return 0, fmt.Errorf("service instance already found. use 'eos restart %s' to restart this service instead", name)
 	}
 
@@ -181,19 +181,19 @@ func (m *LocalManager) StartService(name string) (int, error) {
 
 	for _, p := range processHistory {
 		state := p.State
-		pid := p.PID
+		processPGID := p.PGID
 
 		if state == types.ProcessStateRunning {
-			process, _ := os.FindProcess(pid)
+			process, _ := os.FindProcess(processPGID)
 			signalErr := process.Signal(syscall.Signal(0))
 			// TODO: Update the process history after failing this?
 			if signalErr != nil {
-				return 0, fmt.Errorf("service either has no active process or is inaccessible with PID %d", pid)
+				return 0, fmt.Errorf("service either has no active process or is inaccessible with PGID %d", processPGID)
 			}
-			return 0, fmt.Errorf("service already running with PID %d", pid)
+			return 0, fmt.Errorf("service already running with PGID %d", processPGID)
 		}
 		if state == types.ProcessStateStarting {
-			return 0, fmt.Errorf("service already starting with PID %d", pid)
+			return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
 		}
 	}
 
@@ -226,6 +226,7 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	}
 
 	startCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
+	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// TODO: We are sourcing from a different object then the config here?
 	// TODO: Add dynamic PATH variable addition
@@ -245,18 +246,18 @@ func (m *LocalManager) StartService(name string) (int, error) {
 		return 0, fmt.Errorf("start command failed with: %w", err)
 	}
 
-	pid := startCommand.Process.Pid
+	pgid = startCommand.Process.Pid
 	go func() {
 		_ = startCommand.Wait()
 	}()
 
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
-		killErr := syscall.Kill(pid, syscall.SIGKILL)
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pid, err, killErr)
+			return 0, fmt.Errorf("unable to register service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
-		return pid, fmt.Errorf("unable to register the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("unable to register the new service instance in the database - process has been cleaned up, got: %w", err)
 	}
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
@@ -264,20 +265,20 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	})
 
 	if err != nil {
-		killErr := syscall.Kill(pid, syscall.SIGKILL)
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pid, err, killErr)
+			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
-		return pid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pid, service.Name, types.ProcessStateUnknown)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
 	if err != nil {
-		killErr := syscall.Kill(pid, syscall.SIGKILL)
+		killErr := syscall.Kill(pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pid, err, killErr)
+			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
-		return pid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
 	}
 
 	updates := database.ProcessHistoryUpdate{
@@ -289,14 +290,14 @@ func (m *LocalManager) StartService(name string) (int, error) {
 	// with the rollback behavior of RegisterServiceInstance and
 	// RegisterProcessHistoryEntry failures above. Currently a failure
 	// here leaves a running process with inconsistent DB state.
-	err = m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 	if err != nil {
-		return pid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
+		return pgid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
 	}
-	return pid, nil
+	return pgid, nil
 }
 
-func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pid int, err error) {
+func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotFound) {
 		return 0, fmt.Errorf("service %s not found", name)
@@ -361,6 +362,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 
 	restartCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
+	restartCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// TODO: We are sourcing from a different object then the config here?
 	restartCommand.Dir = service.DirectoryPath
 	restartCommand.Env = env
@@ -372,7 +374,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	if err != nil {
 		return 0, fmt.Errorf("start command failed with: %w", err)
 	}
-	pid = restartCommand.Process.Pid
+	pgid = restartCommand.Process.Pid
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    ptr.TimePtr(time.Now()),
@@ -380,20 +382,20 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	})
 
 	if err != nil {
-		killErr := syscall.Kill(pid, syscall.SIGKILL)
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pid, err, killErr)
+			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
-		return pid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pid, service.Name, types.ProcessStateUnknown)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
 	if err != nil {
-		killErr := syscall.Kill(pid, syscall.SIGKILL)
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pid, err, killErr)
+			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
-		return pid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
 	}
 
 	updates := database.ProcessHistoryUpdate{
@@ -405,11 +407,11 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	// with the rollback behavior of RegisterServiceInstance and
 	// RegisterProcessHistoryEntry failures above. Currently a failure
 	// here leaves a running process with inconsistent DB state.
-	err = m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 	if err != nil {
-		return pid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
+		return pgid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
 	}
-	return pid, nil
+	return pgid, nil
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
@@ -536,6 +538,7 @@ OuterLoop:
 	return StopServiceResult{Errored: erroredProcesses, Stopped: stoppedAndAlreadyDeadProcesses, StaleData: staleDataErrors}, nil
 }
 
+// TODO: Rewrite this?
 func isProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {
@@ -568,15 +571,15 @@ func (m *LocalManager) ForceStopService(name string) (StopServiceResult, error) 
 
 func updateProcessHistoryEntriesAsStopped(m *LocalManager, processes map[int]bool) map[int]string {
 	errored := make(map[int]string, len(processes))
-	for pid := range processes {
+	for pgid := range processes {
 		updates := database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
 			StoppedAt: ptr.TimePtr(time.Now()),
 		}
 
-		err := m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+		err := m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 		if err != nil {
-			errored[pid] = fmt.Sprintf("recording the change for process '%v': %v", pid, err)
+			errored[pgid] = fmt.Sprintf("recording the change for process '%v': %v", pgid, err)
 		}
 	}
 
@@ -585,14 +588,14 @@ func updateProcessHistoryEntriesAsStopped(m *LocalManager, processes map[int]boo
 
 func updateProcessHistoryEntriesAsUnknown(m *LocalManager, processes map[int]string) map[int]string {
 	errored := make(map[int]string, len(processes))
-	for pid := range processes {
+	for pgid := range processes {
 		updates := database.ProcessHistoryUpdate{
 			State: ptr.ProcessStatePtr(types.ProcessStateUnknown),
 		}
 
-		err := m.db.UpdateProcessHistoryEntry(m.ctx, pid, updates)
+		err := m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 		if err != nil {
-			errored[pid] = fmt.Sprintf("recording the change for process '%v': %v (original: %v)", pid, err, processes[pid])
+			errored[pgid] = fmt.Sprintf("recording the change for process '%v': %v (original: %v)", pgid, err, processes[pgid])
 		}
 	}
 
@@ -617,17 +620,17 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 
 	for _, p := range processHistory {
 		processState := p.State
-		processPID := p.PID
+		processPGID := p.PGID
 
 		switch processState {
 		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
-			err := syscall.Kill(processPID, signal)
+			err := syscall.Kill(-processPGID, signal)
 			if errors.Is(err, syscall.ESRCH) {
-				alreadyDead[processPID] = true
+				alreadyDead[processPGID] = true
 			} else if err != nil {
-				errored[processPID] = fmt.Sprintf("killing service: %v", err)
+				errored[processPGID] = fmt.Sprintf("killing service: %v", err)
 			} else {
-				pending[processPID] = true
+				pending[processPGID] = true
 			}
 		case types.ProcessStateFailed, types.ProcessStateStopped:
 			continue

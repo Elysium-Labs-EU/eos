@@ -118,15 +118,15 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Error registering service: %v\n", err)
 	}
 
-	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	pgid, err := mgr.StartService(serviceCatalogEntry.Name)
 	if err != nil {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
-	if pid < 1 {
-		t.Fatalf("Invalid PID received after starting service, got: %v", err)
+	if pgid < 1 {
+		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 	}
 	t.Cleanup(func() {
-		proc, findErr := os.FindProcess(pid)
+		proc, findErr := os.FindProcess(pgid)
 		if findErr == nil {
 			_ = proc.Kill()
 		}
@@ -221,32 +221,32 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Error registering service: %v", err)
 	}
 
-	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	pgid, err := mgr.StartService(serviceCatalogEntry.Name)
 	if err != nil {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
-	if pid < 1 {
-		t.Fatalf("Invalid PID received: %d", pid)
+	if pgid < 1 {
+		t.Fatalf("Invalid PGID received: %d", pgid)
 	}
 
 	// Kill the process immediately to simulate a crash during startup
-	proc, err := os.FindProcess(pid)
+	proc, err := os.FindProcess(pgid)
 	if err != nil {
-		t.Fatalf("Failed to find process %d: %v", pid, err)
+		t.Fatalf("Failed to find process %d: %v", pgid, err)
 	}
 	err = proc.Kill()
 	if err != nil {
-		t.Fatalf("Failed to kill process %d: %v", pid, err)
+		t.Fatalf("Failed to kill process %d: %v", pgid, err)
 	}
 
 	for range 50 {
-		if !hm.isProcessAlive(pid) {
+		if !hm.isProcessAlive(pgid) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if hm.isProcessAlive(pid) {
-		t.Fatalf("Process %d did not exit after kill", pid)
+	if hm.isProcessAlive(pgid) {
+		t.Fatalf("Process %d did not exit after kill", pgid)
 	}
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -346,7 +346,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("Service unable to start, got: %v", err)
 // 	}
 // 	if pid < 1 {
-// 		t.Fatalf("Invalid PID received after starting service, got: %v", err)
+// 		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 // 	}
 
 // 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
@@ -451,7 +451,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 	if pid < 1 {
-		t.Fatalf("Invalid PID received: %d", pid)
+		t.Fatalf("Invalid PGID received: %d", pid)
 	}
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -586,7 +586,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
 	if pid < 1 {
-		t.Fatalf("Invalid PID received after starting service, got: %v", err)
+		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 	}
 	t.Cleanup(func() {
 		proc, findErr := os.FindProcess(pid)
@@ -705,7 +705,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 		t.Fatalf("Service unable to start, got: %v", err)
 // 	}
 // 	if pid < 1 {
-// 		t.Fatalf("Invalid PID received: %d", pid)
+// 		t.Fatalf("Invalid PGID received: %d", pid)
 // 	}
 
 // 	// Transition to Running via checkStartProcess (port is still open)
@@ -837,7 +837,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
 	if pid < 1 {
-		t.Fatalf("Invalid PID received after starting service, got: %v", err)
+		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 	}
 
 	result, err := mgr.ForceStopService(serviceCatalogEntry.Name)
@@ -949,14 +949,14 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
-	fakePID := 999999
+	fakePGID := 999999
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePID, serviceName, types.ProcessStateFailed)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history: %v", err)
 	}
 
-	err = db.UpdateProcessHistoryEntry(t.Context(), fakePID, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
 		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Second)),
 		StoppedAt: ptr.TimePtr(time.Now().Add(-2 * time.Second)),
@@ -997,7 +997,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			}
 
 			// RestartService spawned a real process. We need to kill it and
-			// replace it with a fake dead PID for the next iteration.
+			// replace it with a fake dead PGID for the next iteration.
 			latestProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil {
 				t.Fatalf("Iteration %d: Failed to get latest process: %v", i, err)
@@ -1007,7 +1007,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			}
 
 			// Kill the real process and wait for it to fully exit
-			proc, err := os.FindProcess(latestProcess.PID)
+			proc, err := os.FindProcess(latestProcess.PGID)
 			if err == nil {
 				_ = proc.Kill()
 				_, err = proc.Wait() // reap the zombie
@@ -1016,7 +1016,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 				}
 			}
 
-			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PID, database.ProcessHistoryUpdate{
+			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
 				State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 				StartedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
 				StoppedAt: ptr.TimePtr(time.Now()),
@@ -1260,12 +1260,12 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Failed to register instance for %s: %v", svc3Name, err)
 	}
 
-	fakePID := 999998
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePID, svc3Name, types.ProcessStateFailed)
+	fakePGID := 999998
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, svc3Name, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history for %s: %v", svc3Name, err)
 	}
-	err = db.UpdateProcessHistoryEntry(t.Context(), fakePID, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
 		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Minute)),
 		StoppedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
@@ -1373,22 +1373,22 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Fatalf("Error registering service: %v", err)
 	}
 
-	// Start a real service so we have a live PID
-	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	// Start a real service so we have a live PGID
+	pgid, err := mgr.StartService(serviceCatalogEntry.Name)
 	if err != nil {
 		t.Fatalf("Service unable to start, got: %v", err)
 	}
-	if pid < 1 {
-		t.Fatalf("Invalid PID received: %d", pid)
+	if pgid < 1 {
+		t.Fatalf("Invalid PGID received: %d", pgid)
 	}
 
 	// Verify the process is actually alive
-	if !hm.isProcessAlive(pid) {
+	if !hm.isProcessAlive(pgid) {
 		t.Fatal("Process should be alive for this test")
 	}
 
 	// Manually mark it as Failed in the DB (simulating a false failure detection)
-	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
 		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 		StoppedAt: ptr.TimePtr(time.Now()),
 		Error:     ptr.StringPtr("falsely marked as failed"),

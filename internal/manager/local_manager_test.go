@@ -158,11 +158,11 @@ func TestStartService(t *testing.T) {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
-	pid, err := manager.StartService("test-service")
+	pgid, err := manager.StartService("test-service")
 
 	if err != nil {
 		t.Fatalf("Starting service should not error: %v\n", err)
-	} else if pid == 0 {
-		t.Fatalf("Starting service should have a failed PID, got: %v\n", err)
+	} else if pgid == 0 {
+		t.Fatalf("Starting service should have a failed PGID, got: %v\n", err)
 	}
 }

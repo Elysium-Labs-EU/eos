@@ -81,8 +81,8 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			}
 
 			cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), "failed to gracefully stop", ui.TextBold.Render(serviceName))
-			for erroredPid, errored := range stopResult.Errored {
-				cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PID %d:", erroredPid)), errored)
+			for erroredPGID, errored := range stopResult.Errored {
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 			}
 			cmd.Printf("  %s ", ui.TextMuted.Render("force quit? (y/n):"))
 
@@ -133,8 +133,8 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 
 	if len(forceStopResult.Errored) > 0 {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "failed to force stop service, manual action required")
-		for erroredPid, errored := range forceStopResult.Errored {
-			cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PID %d:", erroredPid)), errored)
+		for erroredPGID, errored := range forceStopResult.Errored {
+			cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("GPID %d:", erroredPGID)), errored)
 		}
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)) + ui.TextMuted.Render(" to view info on service") + "\n")
 		return

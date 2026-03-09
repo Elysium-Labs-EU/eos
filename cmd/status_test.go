@@ -42,7 +42,7 @@ func TestStatusCommand(t *testing.T) {
 // 	// TODO: We need a way to inject test services into the status command
 // 	// For now, let's think about what we want to see:
 // 	//
-// 	// SERVICE         STATUS    PORT    PID
+// 	// SERVICE         STATUS    PORT    PGID
 // 	// strapi          running   1337    1234
 // 	// main-website    stopped   3000    -
 // 	// donation-module running   3001    5678

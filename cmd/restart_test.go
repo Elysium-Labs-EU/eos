@@ -68,8 +68,8 @@ func TestRestartCommand(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "started with PID:") {
-		t.Errorf("The start command didn't complete successfully, no PID was returned")
+	if !strings.Contains(output, "started with PGID:") {
+		t.Errorf("The start command didn't complete successfully, no PGID was returned")
 	}
 
 	buf.Reset()
@@ -82,7 +82,7 @@ func TestRestartCommand(t *testing.T) {
 
 	output = buf.String()
 
-	if !strings.Contains(output, "restarted with PID:") {
-		t.Fatalf("The restart command didn't complete successfully, no PID was returned")
+	if !strings.Contains(output, "restarted with PGID:") {
+		t.Fatalf("The restart command didn't complete successfully, no PGID was returned")
 	}
 }

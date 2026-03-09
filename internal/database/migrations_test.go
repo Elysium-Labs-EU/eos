@@ -208,7 +208,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 	// Verify process_history columns
 	t.Run("process_history_structure", func(t *testing.T) {
 		expectedColumns := map[string]bool{
-			"pid":          false,
+			"pgid":         false,
 			"service_name": false,
 			"state":        false,
 			"error":        false,
@@ -319,7 +319,7 @@ func testSchemaConstraints(t *testing.T, db *sql.DB) {
 		}
 
 		// Try to insert process history for non-existent service - should fail with FK enabled
-		_, err = db.Exec(`INSERT INTO process_history (pid, service_name, state, created_at) VALUES (?, ?, ?, datetime('now'))`,
+		_, err = db.Exec(`INSERT INTO process_history (pgid, service_name, state, created_at) VALUES (?, ?, ?, datetime('now'))`,
 			99999, "nonexistent-service", "running")
 		if err == nil {
 			t.Error("Expected foreign key constraint violation, but insert succeeded")
@@ -332,7 +332,7 @@ func testSchemaConstraints(t *testing.T, db *sql.DB) {
 		}
 
 		// Now process history insert should succeed
-		_, err = db.Exec(`INSERT INTO process_history (pid, service_name, state, created_at) VALUES (?, ?, ?, datetime('now'))`,
+		_, err = db.Exec(`INSERT INTO process_history (pgid, service_name, state, created_at) VALUES (?, ?, ?, datetime('now'))`,
 			88888, "fk-test-service", "running")
 		if err != nil {
 			t.Errorf("Expected insert to succeed with valid FK, but got error: %v", err)

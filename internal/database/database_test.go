@@ -344,8 +344,8 @@ func TestRegisterProcessHistoryEntry(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	if entry.PID != 1234 {
-		t.Errorf("expected PID 1234, got %d", entry.PID)
+	if entry.PGID != 1234 {
+		t.Errorf("expected PGID 1234, got %d", entry.PGID)
 	}
 	if entry.ServiceName != "web-api" {
 		t.Errorf("expected service name 'web-api', got '%s'", entry.ServiceName)
@@ -355,7 +355,7 @@ func TestRegisterProcessHistoryEntry(t *testing.T) {
 	}
 }
 
-func TestGetProcessHistoryEntryByPid(t *testing.T) {
+func TestGetProcessHistoryEntryByPGID(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
 	err := db.RegisterServiceInstance(t.Context(), "web-api")
@@ -368,13 +368,13 @@ func TestGetProcessHistoryEntryByPid(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 1234)
+	entry, err := db.GetProcessHistoryEntryByPGID(t.Context(), 1234)
 	if err != nil {
-		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
+		t.Fatalf("GetProcessHistoryEntryByPGID failed: %v", err)
 	}
 
-	if entry.PID != 1234 {
-		t.Errorf("expected PID 1234, got %d", entry.PID)
+	if entry.PGID != 1234 {
+		t.Errorf("expected PGID 1234, got %d", entry.PGID)
 	}
 	if entry.ServiceName != "web-api" {
 		t.Errorf("expected 'web-api', got '%s'", entry.ServiceName)
@@ -384,12 +384,12 @@ func TestGetProcessHistoryEntryByPid(t *testing.T) {
 	}
 }
 
-func TestGetProcessHistoryEntryByPid_NotFound(t *testing.T) {
+func TestGetProcessHistoryEntryByPGID_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	_, err := db.GetProcessHistoryEntryByPid(t.Context(), 99999)
+	_, err := db.GetProcessHistoryEntryByPGID(t.Context(), 99999)
 	if err == nil {
-		t.Fatal("expected error for nonexistent PID")
+		t.Fatal("expected error for nonexistent PGID")
 	}
 }
 
@@ -427,9 +427,9 @@ func TestGetProcessHistoryEntriesByServiceName(t *testing.T) {
 		t.Fatalf("expected 2 entries for web-api, got %d", len(entries))
 	}
 
-	// Ordered by PID
-	if entries[0].PID != 100 || entries[1].PID != 200 {
-		t.Errorf("expected PIDs [100, 200], got [%d, %d]", entries[0].PID, entries[1].PID)
+	// Ordered by PGID
+	if entries[0].PGID != 100 || entries[1].PGID != 200 {
+		t.Errorf("expected PGIDs [100, 200], got [%d, %d]", entries[0].PGID, entries[1].PGID)
 	}
 }
 
@@ -472,14 +472,14 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 42)
+	entry, err := db.GetProcessHistoryEntryByPGID(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
+		t.Fatalf("GetProcessHistoryEntryByPGID failed: %v", err)
 	}
 
 	// Every field should survive the round trip
-	if entry.PID != 42 {
-		t.Errorf("PID: expected 42, got %d", entry.PID)
+	if entry.PGID != 42 {
+		t.Errorf("PGID: expected 42, got %d", entry.PGID)
 	}
 	if entry.ServiceName != "web-api" {
 		t.Errorf("ServiceName: expected 'web-api', got '%s'", entry.ServiceName)
@@ -528,9 +528,9 @@ func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), 50)
+	entry, err := db.GetProcessHistoryEntryByPGID(t.Context(), 50)
 	if err != nil {
-		t.Fatalf("GetProcessHistoryEntryByPid failed: %v", err)
+		t.Fatalf("GetProcessHistoryEntryByPGID failed: %v", err)
 	}
 
 	if entry.State != types.ProcessStateRunning {
@@ -549,7 +549,7 @@ func TestUpdateProcessHistoryEntry_NotFound(t *testing.T) {
 		State: ptr.ProcessStatePtr(types.ProcessStateFailed),
 	})
 	if err == nil {
-		t.Fatal("expected error when updating nonexistent PID")
+		t.Fatal("expected error when updating nonexistent PGID")
 	}
 }
 
@@ -572,7 +572,7 @@ func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 	}
 }
 
-func TestRemoveProcessHistoryEntryViaPid(t *testing.T) {
+func TestRemoveProcessHistoryEntryViaPGID(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
 	err := db.RegisterServiceInstance(t.Context(), "web-api")
@@ -584,28 +584,28 @@ func TestRemoveProcessHistoryEntryViaPid(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	removed, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), 1234)
+	removed, err := db.RemoveProcessHistoryEntryViaPGID(t.Context(), 1234)
 	if err != nil {
-		t.Fatalf("RemoveProcessHistoryEntryViaPid failed: %v", err)
+		t.Fatalf("RemoveProcessHistoryEntryViaPGID failed: %v", err)
 	}
 	if !removed {
 		t.Error("expected removal to succeed")
 	}
 
-	_, err = db.GetProcessHistoryEntryByPid(t.Context(), 1234)
+	_, err = db.GetProcessHistoryEntryByPGID(t.Context(), 1234)
 	if err == nil {
 		t.Error("entry should not exist after removal")
 	}
 }
 
-func TestRemoveProcessHistoryEntryViaPid_NotFound(t *testing.T) {
+func TestRemoveProcessHistoryEntryViaPGID_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	removed, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), 99999)
+	removed, err := db.RemoveProcessHistoryEntryViaPGID(t.Context(), 99999)
 	if err != nil {
-		t.Fatalf("RemoveProcessHistoryEntryViaPid failed: %v", err)
+		t.Fatalf("RemoveProcessHistoryEntryViaPGID failed: %v", err)
 	}
 	if removed {
-		t.Error("expected false when removing nonexistent PID")
+		t.Error("expected false when removing nonexistent PGID")
 	}
 }

@@ -159,35 +159,35 @@ func TestProcessHistoryCRUD(t *testing.T) {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
-	pid := 12345
+	pgid := 12345
 	state := types.ProcessStateRunning
 
 	// Create
-	entry, err := db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, state)
+	entry, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, state)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
-	if entry.PID != pid {
-		t.Errorf("Expected PID %d, got %d", pid, entry.PID)
+	if entry.PGID != pgid {
+		t.Errorf("Expected PGID %d, got %d", pgid, entry.PGID)
 	}
 	if entry.ServiceName != serviceName {
 		t.Errorf("Expected service name %s, got %s", serviceName, entry.ServiceName)
 	}
 
 	// Read
-	retrieved, err := db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	retrieved, err := db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
-	if retrieved.PID != pid {
-		t.Errorf("Expected PID %d, got %d", pid, retrieved.PID)
+	if retrieved.PGID != pgid {
+		t.Errorf("Expected PGID %d, got %d", pgid, retrieved.PGID)
 	}
 	if retrieved.ServiceName != serviceName {
 		t.Errorf("Expected service name %s, got %s", serviceName, retrieved.ServiceName)
 	}
 
 	// Delete
-	deleted, err := db.RemoveProcessHistoryEntryViaPid(t.Context(), pid)
+	deleted, err := db.RemoveProcessHistoryEntryViaPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to remove process history entry: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	_, err = db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err == nil {
 		t.Error("Expected error when getting deleted process history entry, got nil")
 	}
@@ -358,23 +358,23 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to register service instance: %v", err)
 	}
 
-	pid := 54321
+	pgid := 54321
 	initialState := types.ProcessStateStarting
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, initialState)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, initialState)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
 
 	newState := types.ProcessStateRunning
-	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
 		State: &newState,
 	})
 	if err != nil {
 		t.Fatalf("Failed to update state: %v", err)
 	}
 
-	entry, err := db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	entry, err := db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 
 	// Update started_at
 	startTime := time.Now()
-	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
 		StartedAt: &startTime,
 	})
 	if err != nil {
@@ -392,7 +392,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	// Verify update
-	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	entry, err = db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -401,14 +401,14 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	errorMsg := "test error message"
-	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
 		Error: &errorMsg,
 	})
 	if err != nil {
 		t.Fatalf("Failed to update error: %v", err)
 	}
 
-	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	entry, err = db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 
 	stopTime := time.Now()
 	stoppedState := types.ProcessStateStopped
-	err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
 		StoppedAt: &stopTime,
 		State:     &stoppedState,
 	})
@@ -426,7 +426,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 		t.Fatalf("Failed to update stopped_at: %v", err)
 	}
 
-	entry, err = db.GetProcessHistoryEntryByPid(t.Context(), pid)
+	entry, err = db.GetProcessHistoryEntryByPGID(t.Context(), pgid)
 	if err != nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		processRemoved, err := db.RemoveProcessHistoryEntryViaPid(context.Background(), pid)
+		processRemoved, err := db.RemoveProcessHistoryEntryViaPGID(context.Background(), pgid)
 		if err != nil {
 			t.Fatalf("Failed to removed process history entry in cleanup, got: %v", err)
 		}
@@ -466,11 +466,11 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 	}
 
 	// Create multiple process history entries
-	pids := []int{11111, 22222, 33333}
-	for _, pid := range pids {
-		_, registerErr := db.RegisterProcessHistoryEntry(t.Context(), pid, serviceName, types.ProcessStateRunning)
+	pgids := []int{11111, 22222, 33333}
+	for _, pgid := range pgids {
+		_, registerErr := db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, types.ProcessStateRunning)
 		if registerErr != nil {
-			t.Fatalf("Failed to register process %d: %v", pid, registerErr)
+			t.Fatalf("Failed to register process %d: %v", pgid, registerErr)
 		}
 	}
 
@@ -480,28 +480,28 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 		t.Fatalf("Failed to get process history entries: %v", err)
 	}
 
-	if len(entries) != len(pids) {
-		t.Errorf("Expected %d entries, got %d", len(pids), len(entries))
+	if len(entries) != len(pgids) {
+		t.Errorf("Expected %d entries, got %d", len(pgids), len(entries))
 	}
 
-	// Verify all PIDs are present
-	foundPIDs := make(map[int]bool)
+	// Verify all PGIDs are present
+	foundPGIDs := make(map[int]bool)
 	for _, entry := range entries {
-		foundPIDs[entry.PID] = true
+		foundPGIDs[entry.PGID] = true
 		if entry.ServiceName != serviceName {
 			t.Errorf("Expected service name %s, got %s", serviceName, entry.ServiceName)
 		}
 	}
 
-	for _, pid := range pids {
-		if !foundPIDs[pid] {
-			t.Errorf("Expected to find PID %d in results", pid)
+	for _, pgid := range pgids {
+		if !foundPGIDs[pgid] {
+			t.Errorf("Expected to find PGID %d in results", pgid)
 		}
 	}
 
 	t.Cleanup(func() {
-		for _, pid := range pids {
-			removed, err := db.RemoveProcessHistoryEntryViaPid(context.Background(), pid)
+		for _, pgid := range pgids {
+			removed, err := db.RemoveProcessHistoryEntryViaPGID(context.Background(), pgid)
 			if err != nil {
 				t.Logf("Failed to remove process history entry in cleanup, got: %v", err)
 				continue

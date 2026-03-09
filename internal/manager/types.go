@@ -7,12 +7,7 @@ import (
 )
 
 type ServiceManager interface {
-	// AddService(service *types.ServiceConfig) error
-	// GetServiceStatus(name string) (types.ServiceStatus, error)
 	GetServiceInstance(name string) (*types.ServiceRuntime, error)
-	// RemoveService(name string) error
-	// GetService(name string) (types.Service, error)
-	// GetServices() []types.Service
 	RemoveServiceInstance(name string) (bool, error)
 
 	ForceStopService(name string) (StopServiceResult, error)

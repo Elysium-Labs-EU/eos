@@ -55,12 +55,12 @@ type ProcessHistory struct {
 	UpdatedAt   *time.Time   `json:"updated_at,omitzero"`
 	ServiceName string       `json:"service_name"`
 	State       ProcessState `json:"state"`
-	PID         int          `json:"pid"`
+	PGID        int          `json:"pgid"`
 }
 
 type RunningProcess struct {
-	Cmd *exec.Cmd
-	PID int
+	Cmd  *exec.Cmd
+	PGID int
 }
 
 type Service struct {

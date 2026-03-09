@@ -32,10 +32,10 @@ type Database interface {
 	UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error
 
 	GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error)
-	GetProcessHistoryEntryByPid(ctx context.Context, pid int) (types.ProcessHistory, error)
-	RegisterProcessHistoryEntry(ctx context.Context, pid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
-	RemoveProcessHistoryEntryViaPid(ctx context.Context, pid int) (bool, error)
-	UpdateProcessHistoryEntry(ctx context.Context, pid int, updates ProcessHistoryUpdate) error
+	GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error)
+	RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
+	RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error)
+	UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error
 
 	RunMigrations(migrationsFS embed.FS, migrationsPath string) error
 	GetCurrentMigrationVersion(migrationsFS embed.FS, migrationsPath string) (uint, bool, error)
@@ -147,20 +147,20 @@ func (db *DB) RegisterServiceInstance(ctx context.Context, name string) error {
 	return nil
 }
 
-func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error) {
+func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error) {
 	instanceQuery := `
-	INSERT INTO process_history (pid, service_name, state, created_at)
+	INSERT INTO process_history (pgid, service_name, state, created_at)
 	VALUES (?, ?, ?, ?)
 	`
 	createdAt := time.Now()
 
-	_, err := db.conn.ExecContext(ctx, instanceQuery, pid, serviceName, state, createdAt)
+	_, err := db.conn.ExecContext(ctx, instanceQuery, pgid, serviceName, state, createdAt)
 	if err != nil {
 		return types.ProcessHistory{}, fmt.Errorf("could not create process history entry: %w", err)
 	}
 
 	return types.ProcessHistory{
-		PID:         pid,
+		PGID:        pgid,
 		ServiceName: serviceName,
 		State:       types.ProcessStateUnknown,
 		CreatedAt:   createdAt,
@@ -241,17 +241,17 @@ func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.Servic
 
 var ErrProcessHistoryNotFound = errors.New("process history not found")
 
-func (db *DB) GetProcessHistoryEntryByPid(ctx context.Context, pid int) (types.ProcessHistory, error) {
+func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error) {
 	query := `
-	SELECT pid, service_name, state, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, service_name, state, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
-	WHERE pid = ?
+	WHERE pgid = ?
 	`
 
-	row := db.conn.QueryRowContext(ctx, query, pid)
+	row := db.conn.QueryRowContext(ctx, query, pgid)
 	var processHistory types.ProcessHistory
 
-	err := row.Scan(&processHistory.PID,
+	err := row.Scan(&processHistory.PGID,
 		&processHistory.ServiceName,
 		&processHistory.State,
 		&processHistory.Error,
@@ -260,7 +260,7 @@ func (db *DB) GetProcessHistoryEntryByPid(ctx context.Context, pid int) (types.P
 		&processHistory.StoppedAt,
 		&processHistory.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return types.ProcessHistory{}, fmt.Errorf("%w: %v", ErrProcessHistoryNotFound, pid)
+		return types.ProcessHistory{}, fmt.Errorf("%w: %v", ErrProcessHistoryNotFound, pgid)
 	}
 	if err != nil {
 		return types.ProcessHistory{}, fmt.Errorf("could not scan process history row: %w", err)
@@ -270,10 +270,10 @@ func (db *DB) GetProcessHistoryEntryByPid(ctx context.Context, pid int) (types.P
 
 func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error) {
 	query := `
-	SELECT pid, service_name, state, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, service_name, state, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
-	ORDER BY pid
+	ORDER BY pgid
 	`
 
 	rows, err := db.conn.QueryContext(ctx, query, serviceName)
@@ -285,7 +285,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 	var processHistoryEntries []types.ProcessHistory
 	for rows.Next() {
 		var processHistory types.ProcessHistory
-		err := rows.Scan(&processHistory.PID,
+		err := rows.Scan(&processHistory.PGID,
 			&processHistory.ServiceName,
 			&processHistory.State,
 			&processHistory.Error,
@@ -358,8 +358,8 @@ func (db *DB) RemoveServiceInstance(ctx context.Context, name string) (bool, err
 	return true, nil
 }
 
-func (db *DB) RemoveProcessHistoryEntryViaPid(ctx context.Context, pid int) (bool, error) {
-	result, err := db.conn.ExecContext(ctx, "DELETE FROM process_history WHERE pid = ?", pid)
+func (db *DB) RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error) {
+	result, err := db.conn.ExecContext(ctx, "DELETE FROM process_history WHERE pgid = ?", pgid)
 	if err != nil {
 		return false, fmt.Errorf("could not remove from service_instances: %w", err)
 	}
@@ -383,7 +383,7 @@ type ProcessHistoryUpdate struct {
 	StoppedAt *time.Time
 }
 
-func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pid int, updates ProcessHistoryUpdate) error {
+func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error {
 	setParts := []string{}
 	args := []any{}
 	requestedColumns := []string{}
@@ -428,9 +428,9 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pid int, updates Pr
 	}
 
 	// #nosec G201 - column names are from a validated allowlist
-	query := fmt.Sprintf("UPDATE process_history SET %s WHERE pid = ?",
+	query := fmt.Sprintf("UPDATE process_history SET %s WHERE pgid = ?",
 		strings.Join(setParts, ", "))
-	args = append(args, pid)
+	args = append(args, pgid)
 
 	result, err := db.conn.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -442,7 +442,7 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pid int, updates Pr
 		return fmt.Errorf("could not check update result: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("process history entry with '%v' not found", pid)
+		return fmt.Errorf("process history entry with '%v' not found", pgid)
 	}
 	return nil
 }

@@ -44,13 +44,13 @@ func newRestartCmd(getManager func() manager.ServiceManager, getConfig func() *c
 				return
 			}
 
-			pid, err := mgr.RestartService(registeredService.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+			pgid, err := mgr.RestartService(registeredService.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("restarting service: %v", err))
 				return
 			}
-			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PID: %d", pid))
+			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
 			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))

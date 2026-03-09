@@ -106,10 +106,10 @@ func (hm *HealthMonitor) checkStartProcess(
 	timeoutEnabled bool,
 ) {
 	serviceName := service.Name
-	pid := process.PID
+	pgid := process.PGID
 
-	if !hm.isProcessAlive(pid) {
-		errorString := fmt.Sprintf("service %s (PID %d) died during startup", serviceName, pid)
+	if !hm.isProcessAlive(pgid) {
+		errorString := fmt.Sprintf("service %s (PGID %d) died during startup", serviceName, pgid)
 
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
@@ -117,7 +117,7 @@ func (hm *HealthMonitor) checkStartProcess(
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 		hm.logger.Log(manager.LogLevelError, errorString)
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: ptr.TimePtr(time.Now()),
 			Error:     ptr.StringPtr(errorString),
@@ -139,7 +139,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		}
 		hm.logger.Log(manager.LogLevelWarn, errorString)
 		// TODO: Add more handeling to this
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: ptr.TimePtr(time.Now()),
 			Error:     ptr.StringPtr(errorString),
@@ -188,7 +188,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("service %s is now running", serviceName))
 	}
 
-	err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
 		Error: ptr.StringPtr(""),
 	})
@@ -202,7 +202,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	// configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	// config, err := manager.LoadServiceConfig(configPath)
 	serviceName := service.Name
-	pid := process.PID
+	pgid := process.PGID
 
 	// if err != nil {
 	// 	hm.logger.Log(manager.LogLevelError,
@@ -210,7 +210,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	// 	return
 	// }
 
-	if !hm.isProcessAlive(pid) {
+	if !hm.isProcessAlive(pgid) {
 		errorString := fmt.Sprintf("service %s is not running", serviceName)
 
 		hm.logger.Log(manager.LogLevelInfo, errorString)
@@ -220,7 +220,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: ptr.TimePtr(time.Now()),
 			Error:     ptr.StringPtr(errorString),
@@ -268,7 +268,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 
 func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceRuntime, maxRestartCount *int) {
 	serviceName := service.Name
-	pid := process.PID
+	pgid := process.PGID
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 
 	config, err := manager.LoadServiceConfig(configPath)
@@ -278,7 +278,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 		return
 	}
 
-	if hm.isProcessAlive(pid) {
+	if hm.isProcessAlive(pgid) {
 		updateString := fmt.Sprintf("service %s is running", serviceName)
 
 		hm.logger.Log(manager.LogLevelInfo, updateString)
@@ -288,7 +288,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 				fmt.Sprintf("failed to log service output for %s: %v", serviceName, err))
 		}
 
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State: ptr.ProcessStatePtr(types.ProcessStateRunning),
 			Error: ptr.StringPtr(""),
 		})
@@ -330,8 +330,8 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
 	serviceName := service.Name
-	pid := process.PID
-	processIsAlive := hm.isProcessAlive(pid)
+	pgid := process.PGID
+	processIsAlive := hm.isProcessAlive(pgid)
 
 	if processIsAlive {
 		updateString := fmt.Sprintf("service %s is running", serviceName)
@@ -343,7 +343,7 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 				fmt.Sprintf("failed to log service output for %s: %v", serviceName, err))
 		}
 
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State: ptr.ProcessStatePtr(types.ProcessStateRunning),
 			Error: ptr.StringPtr(""),
 		})
@@ -364,7 +364,7 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 
-		err = hm.db.UpdateProcessHistoryEntry(ctx, pid, database.ProcessHistoryUpdate{
+		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: ptr.TimePtr(time.Now()),
 			Error:     ptr.StringPtr(errorString),

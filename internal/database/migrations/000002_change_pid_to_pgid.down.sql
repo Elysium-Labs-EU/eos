@@ -1,0 +1,1 @@
+ALTER TABLE process_history RENAME COLUMN pgid TO pid;

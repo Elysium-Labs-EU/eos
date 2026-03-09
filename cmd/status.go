@@ -42,7 +42,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				Started      string
 				Uptime       string
 				Error        string
-				PID          int
+				PGID         int
 				RestartCount int
 			}
 			var activeServices []StatusServiceEntry
@@ -85,7 +85,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				activeServices = append(activeServices, StatusServiceEntry{
 					Name:         config.Name,
 					Status:       helpers.DetermineServiceStatus(mostRecentProcess.State),
-					PID:          mostRecentProcess.PID,
+					PGID:         mostRecentProcess.PGID,
 					Started:      humanize.Time(*serviceInstance.StartedAt),
 					Uptime:       helpers.DetermineUptime(mostRecentProcess),
 					RestartCount: serviceInstance.RestartCount,
@@ -102,7 +102,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					rows = append(rows, []string{
 						svc.Name,
 						helpers.PrintStatus(svc.Status),
-						fmt.Sprintf("%d", svc.PID),
+						fmt.Sprintf("%d", svc.PGID),
 						svc.Uptime,
 						fmt.Sprintf("%d", svc.RestartCount),
 						svc.Started,
@@ -123,7 +123,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					}
 					return ui.TableOddRowStyle
 				}).
-				Headers("NAME", "STATUS", "PID", "UPTIME", "RESTARTS", "STARTED", "ERROR").
+				Headers("NAME", "STATUS", "PGID", "UPTIME", "RESTARTS", "STARTED", "ERROR").
 				Rows(rows...)
 
 			fmt.Println(t)

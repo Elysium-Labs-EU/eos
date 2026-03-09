@@ -182,7 +182,7 @@ func TestStopCommandGracePeriod(t *testing.T) {
 	stubbornScript := `#!/bin/bash 
 						# stubborn-service.sh - ignores SIGTERM, only dies to SIGKILL
 trap '' SIGTERM   # <-- this is the key line: empty handler = ignore
-echo "Stubborn service running with PID $$"
+echo "Stubborn service running with PGID $$"
 while true; do
     sleep 1
 done`
