@@ -150,6 +150,7 @@ test-install-local: release-local
 	docker exec -it vps-test-eos ls -la /usr/local/src/eos-local
 	@echo "Running install.sh..."
 	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh --local /usr/local/src/eos-local"
+	docker exec -it vps-test-eos bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash && \. "$$HOME/.nvm/nvm.sh" && nvm install 24 && corepack enable pnpm'
 
 test-install-remote:
 	@$(MAKE) docker-vps

@@ -232,6 +232,52 @@ func TestSystemUpdateCheckWritableFailed(t *testing.T) {
 	}
 }
 
+func TestSystemUpdateCopyFile(t *testing.T) {
+	dir := t.TempDir()
+
+	src, err := os.CreateTemp(dir, "srcTest")
+	if err != nil {
+		t.Fatal("creating file srcTest")
+	}
+
+	testContent := "Hello World"
+	err = os.WriteFile(src.Name(), []byte(testContent), 0644)
+	if err != nil {
+		t.Fatalf("writing file srcTest, got: %v", err)
+	}
+
+	dst, err := os.CreateTemp(dir, "dstTest")
+	if err != nil {
+		t.Fatalf("creating file dstTest, got: %v", err)
+	}
+
+	err = copyFile(src.Name(), dst.Name())
+	if err != nil {
+		t.Fatalf("copyFile errored, got: %v", err)
+	}
+
+	content, err := os.ReadFile(dst.Name())
+	if err != nil {
+		t.Fatalf("read destination file, got: %v", err)
+	}
+	if string(content) != testContent {
+		t.Fatal("expected to read same content on destination as source")
+	}
+}
+
+func TestSystemUpdateCreateDestinationFile(t *testing.T) {
+	dir := t.TempDir()
+
+	testFile := filepath.Join(dir, "dstTest")
+	err := createDestinationFile(testFile)
+	if err != nil {
+		t.Fatalf("expected create destination file to not error, got: %v", err)
+	}
+	if _, err := os.Stat(testFile); os.IsNotExist(err) {
+		t.Fatalf("expected file to exist, but it does not")
+	}
+}
+
 func TestSystemVersionCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context())

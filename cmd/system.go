@@ -479,7 +479,7 @@ func copyFile(src string, dst string) (err error) {
 		}
 	}()
 
-	destination, err := os.Open(filepath.Clean(dst)) // #nosec G703 -- dst is constructed internally, not from user input
+	destination, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_TRUNC, 0644) // #nosec G302 -- backup file should be readable by all users
 	if err != nil {
 		return fmt.Errorf("failed to open destination file: %w", err)
 	}
