@@ -20,8 +20,6 @@ sudo bash install.sh
 ### Manual Installation
 
 If you prefer to build from source:
-
-
 ```bash
 # Clone and build
 go build -o eos
@@ -30,7 +28,6 @@ go build -o eos
 ```
 
 ### Quick Reference
-
 ```bash
 # See all commands
 ./eos --help
@@ -47,7 +44,6 @@ rm ~/.eos/state.db
 ### Commands
 
 #### Register a Service
-
 ```bash
 # Register from specific YAML file
 ./eos add ./path/to/project/service.yaml
@@ -56,25 +52,29 @@ rm ~/.eos/state.db
 **Expected:** Service registered in SQLite database at `~/.eos/state.db`
 
 #### List All Services
-
 ```bash
 ./eos status
 ```
 
 **Shows:** All registered services with their current config (loaded live from filesystem)
 
-#### Start a Service
-
+#### Run a Service
 ```bash
-./eos start <service-name>
+# Start or restart a registered service by name
+./eos run <service-name>
+
+# Register and start a service from a file in one step
+./eos run -f ./path/to/service.yaml
+
+# Start only if not already running (no restart)
+./eos run --once <service-name>
 ```
 
-**Expected:** Service started via daemon, will restart if encountering failure.
+**Expected:** Service started (or restarted) via daemon. If the service is already running, it will be restarted automatically — unless `--once` is set. Using `-f` will register the service if it hasn't been registered yet, then start it.
 
 ### Service Configuration File
 
 Each service needs a `service.yaml` (or `service.yml`) file:
-
 ```yaml
 name: "cms"
 command: "/home/user/start-script.sh"
@@ -101,12 +101,17 @@ The CLI finds this file automatically when you register a directory.
 - Purpose: No state drift - config changes are immediately reflected
 
 ### Data Flow
-
 ```
 add command:
   1. Parse service.yaml
   2. Store name + path in SQLite registry
   3. Done
+
+run command:
+  1. If -f is given: parse service.yaml and register if not already registered
+  2. Look up service in SQLite registry
+  3. Start service via daemon; restart if already running
+  4. Display result with PGID
 
 status command:
   1. Read registry from SQLite (what services exist?)
