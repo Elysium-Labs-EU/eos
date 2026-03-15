@@ -278,13 +278,13 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		return
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 
 	if err := os.RemoveAll(tempDir); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, err))
 	}
 
-	cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+	cmd.Printf("\n%s %s %s\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
 }
 
 type Asset struct {

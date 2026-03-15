@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
@@ -62,35 +64,34 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 
 				serviceInstance, err := mgr.GetServiceInstance(regServiceName)
-				if err != nil {
+
+				// NOTE: We check here on both string and error type. String because of daemon serialization.
+				if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !strings.Contains(err.Error(), manager.ErrServiceNotRunning.Error()) {
 					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
 					continue
 				}
-				if serviceInstance == nil {
-					cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(regServiceName), "not yet started")
-					continue
-				}
 
+				// NOTE: We check here on both string and error type. String because of daemon serialization.
 				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
-				if err != nil {
-					fmt.Printf("Unable to get most recent process history for %s, got: \n %v\n", regServiceName, err)
+				if err != nil && !errors.Is(err, manager.ErrNotFound) && !strings.Contains(err.Error(), manager.ErrNotFound.Error()) {
+					fmt.Printf("unable to get most recent process history for %s, got: \n %v\n", regServiceName, err)
 					continue
 				}
 
-				if mostRecentProcess == nil {
-					fmt.Printf("No process history found for %s\n", regServiceName)
-					continue
+				entry := StatusServiceEntry{
+					Name:   config.Name,
+					Status: helpers.DetermineServiceStatus(mostRecentProcess),
+					Uptime: helpers.DetermineUptime(mostRecentProcess),
 				}
-
-				activeServices = append(activeServices, StatusServiceEntry{
-					Name:         config.Name,
-					Status:       helpers.DetermineServiceStatus(mostRecentProcess.State),
-					PGID:         mostRecentProcess.PGID,
-					Started:      humanize.Time(*serviceInstance.StartedAt),
-					Uptime:       helpers.DetermineUptime(mostRecentProcess),
-					RestartCount: serviceInstance.RestartCount,
-					Error:        helpers.DetermineError(mostRecentProcess.Error),
-				})
+				if mostRecentProcess != nil {
+					entry.PGID = mostRecentProcess.PGID
+					entry.Error = helpers.DetermineError(mostRecentProcess.Error)
+				}
+				if serviceInstance != nil && serviceInstance.StartedAt != nil {
+					entry.Started = humanize.Time(*serviceInstance.StartedAt)
+					entry.RestartCount = serviceInstance.RestartCount
+				}
+				activeServices = append(activeServices, entry)
 			}
 
 			rows := [][]string{}
@@ -123,7 +124,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					}
 					return ui.TableOddRowStyle
 				}).
-				Headers("NAME", "STATUS", "PGID", "UPTIME", "RESTARTS", "STARTED", "ERROR").
+				Headers("name", "status", "pgid", "uptime", "restarts", "started", "error").
 				Rows(rows...)
 
 			fmt.Println(t)

@@ -11,8 +11,11 @@ import (
 	"eos/internal/types"
 )
 
-func DetermineServiceStatus(processState types.ProcessState) types.ServiceStatus {
-	switch processState {
+func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {
+	if mostRecentProcess == nil {
+		return types.ServiceStatusStopped
+	}
+	switch mostRecentProcess.State {
 	case types.ProcessStateStopped:
 		return types.ServiceStatusStopped
 	case types.ProcessStateFailed:

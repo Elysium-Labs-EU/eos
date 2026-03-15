@@ -211,7 +211,6 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 
 				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
 
-				// TODO: Check once here first
 				registerResult, registerErr := registerServiceIfNeeded(mgr, parsedService.YamlFile, parsedService.Config.Name)
 				if registerErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
