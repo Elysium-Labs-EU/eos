@@ -19,7 +19,7 @@ func TestStartCommand(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

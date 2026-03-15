@@ -75,7 +75,7 @@ func WithEnvFile(envFile string) ServiceConfigOption {
 	}
 }
 
-func CreateTestServiceConfigFile(t *testing.T, opts ...ServiceConfigOption) *types.ServiceConfig {
+func NewTestServiceConfigFile(t *testing.T, opts ...ServiceConfigOption) *types.ServiceConfig {
 	t.Helper()
 
 	config := &types.ServiceConfig{
@@ -121,7 +121,7 @@ func WithFileName(fileName string) ServiceScriptOption {
 	}
 }
 
-func CreateTestServiceScript(t *testing.T, opts ...ServiceScriptOption) *ServiceScriptSetup {
+func NewTestServiceScript(t *testing.T, opts ...ServiceScriptOption) *ServiceScriptSetup {
 	testServiceConfig := &ServiceScriptSetup{
 		Script: `#!/bin/bash
 trap 'exit 0' SIGTERM SIGINT
@@ -139,7 +139,7 @@ done`,
 	return testServiceConfig
 }
 
-func CreateTestServiceScriptAtLocation(t *testing.T, testServiceScript ServiceScriptSetup) {
+func NewTestServiceScriptAtLocation(t *testing.T, testServiceScript ServiceScriptSetup) {
 	t.Helper()
 
 	fullPathScript := filepath.Join(testServiceScript.DirPath, testServiceScript.FileName)
@@ -187,7 +187,7 @@ func WithFileSizeLimit(fileSizeLimit int64) DaemonConfigOption {
 	}
 }
 
-func CreateTestDaemonConfig(t *testing.T, baseDir string, opts ...DaemonConfigOption) *config.DaemonConfig {
+func NewTestDaemonConfig(t *testing.T, baseDir string, opts ...DaemonConfigOption) *config.DaemonConfig {
 	t.Helper()
 
 	daemonConfig := &config.DaemonConfig{

@@ -89,30 +89,30 @@ func TestLoadServiceConfigFileNotFound(t *testing.T) {
 	}
 }
 
-func TestCreateServiceCatalogEntry(t *testing.T) {
-	_, err := CreateServiceCatalogEntry("website", "./test-files", "service.yaml")
+func TestNewServiceCatalogEntry(t *testing.T) {
+	_, err := NewServiceCatalogEntry("website", "./test-files", "service.yaml")
 	if err != nil {
-		t.Errorf("TestCreateServiceCatalogEntry should not error: %v", err)
+		t.Errorf("TestNewServiceCatalogEntry should not error: %v", err)
 	}
 }
 
-func TestCreateServiceCatalogEntryWithEmptyName(t *testing.T) {
-	_, err := CreateServiceCatalogEntry("", "./test-files", "service.yaml")
+func TestNewServiceCatalogEntryWithEmptyName(t *testing.T) {
+	_, err := NewServiceCatalogEntry("", "./test-files", "service.yaml")
 	if err == nil {
-		t.Errorf("TestCreateServiceCatalogEntry should error on empty name")
+		t.Errorf("TestNewServiceCatalogEntry should error on empty name")
 	}
 }
 
-func TestCreateServiceCatalogEntryWithEmptyPath(t *testing.T) {
-	_, err := CreateServiceCatalogEntry("website", "", "service.yaml")
+func TestNewServiceCatalogEntryWithEmptyPath(t *testing.T) {
+	_, err := NewServiceCatalogEntry("website", "", "service.yaml")
 	if err == nil {
-		t.Errorf("TestCreateServiceCatalogEntry should error on empty path")
+		t.Errorf("TestNewServiceCatalogEntry should error on empty path")
 	}
 }
 
-func TestCreateServiceCatalogEntryWithEmptyConfigFile(t *testing.T) {
-	_, err := CreateServiceCatalogEntry("website", "./test-files", "")
+func TestNewServiceCatalogEntryWithEmptyConfigFile(t *testing.T) {
+	_, err := NewServiceCatalogEntry("website", "./test-files", "")
 	if err == nil {
-		t.Errorf("TestCreateServiceCatalogEntry should error on empty configFile")
+		t.Errorf("TestNewServiceCatalogEntry should error on empty configFile")
 	}
 }

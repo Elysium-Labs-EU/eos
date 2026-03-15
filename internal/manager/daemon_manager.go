@@ -117,7 +117,6 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args json.RawMessa
 	if err := decoder.Decode(&response); err != nil {
 		return types.DaemonResponse{}, fmt.Errorf("reading response: %w", err)
 	}
-
 	if !response.Success {
 		return types.DaemonResponse{}, fmt.Errorf("daemon error: %s", response.Error)
 	}

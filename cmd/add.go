@@ -5,55 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"eos/cmd/helpers"
 	"eos/internal/manager"
 	"eos/internal/types"
 	"eos/internal/ui"
 )
-
-func findServiceFileInDirectory(dir string) string {
-	candidates := []string{
-		"service.yaml",
-		"service.yml",
-	}
-
-	for _, candidate := range candidates {
-		fullPath := filepath.Join(dir, candidate)
-		if _, err := os.Stat(fullPath); err == nil {
-			return fullPath
-		}
-	}
-
-	return ""
-}
-
-func determineYamlFile(projectPath string) (string, error) {
-	fileInfo, err := os.Stat(projectPath)
-
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("directory or file on path %s does not exist", projectPath)
-		}
-		return "", fmt.Errorf("unable to stat path %s: %w", projectPath, err)
-	}
-
-	if fileInfo.IsDir() {
-		yamlFile := findServiceFileInDirectory(projectPath)
-		if yamlFile == "" {
-			return "", fmt.Errorf("no service.yaml or service.yml found in %s", projectPath)
-		} else {
-			return yamlFile, nil
-		}
-	}
-	if strings.HasSuffix(projectPath, ".yaml") || strings.HasSuffix(projectPath, ".yml") {
-		return projectPath, nil
-	}
-	return "", fmt.Errorf("provided path is not a directory nor a yaml file")
-}
 
 func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
@@ -65,9 +25,9 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			projectPath := args[0]
 			mgr := getManager()
 
-			yamlFile, err := determineYamlFile(projectPath)
+			yamlFile, err := helpers.DetermineYamlFile(projectPath)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("unable to determine YAML file: %v", err))
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("determining YAML file: %v", err))
 				return
 			}
 
@@ -90,7 +50,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(config.Name, absPath, filepath.Base(yamlFile))
+			serviceCatalogEntry, err := manager.NewServiceCatalogEntry(config.Name, absPath, filepath.Base(yamlFile))
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating service catalog entry: %v", err))
 				return

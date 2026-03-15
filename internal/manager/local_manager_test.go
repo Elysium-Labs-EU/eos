@@ -34,7 +34,7 @@ func TestAddService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context())
 
-	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context())
 
-	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestGetService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context())
 
-	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", "./test-files", "service.yaml")
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestStartService(t *testing.T) {
 		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
-	serviceCatalogEntry, err := CreateServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}

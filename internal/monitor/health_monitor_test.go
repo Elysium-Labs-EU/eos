@@ -25,9 +25,9 @@ import (
 
 func TestHealthMonitor_Lifecycle(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -55,9 +55,9 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 
 func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t, WithGracePeriod(5*time.Second))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t, WithGracePeriod(5*time.Second))
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -89,10 +89,10 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("could not create test-project directory: %v\n", err)
 	}
 
-	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
-	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
 		testutil.WithPort(port),
@@ -108,7 +108,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
 	}
@@ -167,9 +167,9 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 
 func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -192,10 +192,10 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Could not create project directory: %v", err)
 	}
 
-	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
-	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
 		testutil.WithPort(0),
@@ -211,7 +211,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Creating service.yaml failed: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry failed: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 
 // func TestHealthMonitor_CheckStartProcess_Invalid_Port(t *testing.T) {
 // 	tempDir := t.TempDir()
-//  daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+//  daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 // 	timoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -311,7 +311,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("Failed to create service directory: %v", err)
 // 	}
 
-// 	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName))
+// 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName))
 // 	yamlData, err := yaml.Marshal(testFile)
 // 	if err != nil {
 // 		t.Fatalf("Failed to marshal test config: %v", err)
@@ -330,7 +330,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 // 	}
 
-// 	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+// 	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 // 	if err != nil {
 // 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
 // 	}
@@ -392,9 +392,9 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 
 func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t, WithTimeoutLimit(100*time.Millisecond))
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithTimeoutLimit(100*time.Millisecond))
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -417,10 +417,10 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Could not create test-project directory: %v", err)
 	}
 
-	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
-	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
 		testutil.WithPort(9999), // Port that won't open
@@ -436,7 +436,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry failed: %v", err)
 	}
@@ -512,9 +512,9 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 
 func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -551,10 +551,10 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("could not create test-project directory: %v\n", err)
 	}
 
-	testServiceScript := testutil.CreateTestServiceScript(t, testutil.WithDirPath(fullDirPath))
-	testutil.CreateTestServiceScriptAtLocation(t, *testServiceScript)
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
 		testutil.WithPort(port),
@@ -570,7 +570,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
 	}
@@ -643,7 +643,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 
 // func TestHealthMonitor_CheckRunningProcess_AliveButPortUnreachable(t *testing.T) {
 // 	tempDir := t.TempDir()
-//  daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+//  daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
 // 	timeoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -668,7 +668,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 	}
 // 	port := listener.Addr().(*net.TCPAddr).Port
 
-// 	testFile := testutil.CreateTestServiceConfigFile(t,
+// 	testFile := testutil.NewTestServiceConfigFile(t,
 // 		testutil.WithRuntimePath(""),
 // 		testutil.WithName(serviceName),
 // 		testutil.WithPort(port),
@@ -690,7 +690,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 // 	}
 
-// 	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+// 	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 // 	if err != nil {
 // 		t.Fatalf("Create service catalog entry failed: %v", err)
 // 	}
@@ -770,9 +770,9 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 
 func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -802,7 +802,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	testFile := testutil.CreateTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName), testutil.WithPort(port))
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName), testutil.WithPort(port))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)
@@ -821,7 +821,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
 	}
@@ -881,9 +881,9 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t, WithMaxRestart(3))
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	shutdownConfig := newTestShutdownConfig(t)
 
 	maxRestartCount := healthConfig.MaxRestart
 
@@ -912,7 +912,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Errorf("unable to close the listener, got: %v", closeErr)
 	}
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithRuntimePath(""),
 		testutil.WithName(serviceName),
 		testutil.WithPort(port))
@@ -934,7 +934,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry failed: %v", err)
 	}
@@ -1145,9 +1145,9 @@ func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 
 func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t)
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -1165,7 +1165,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 			t.Fatalf("Failed to create service directory for %s: %v", name, mkdirErr)
 		}
 
-		testFile := testutil.CreateTestServiceConfigFile(t,
+		testFile := testutil.NewTestServiceConfigFile(t,
 			testutil.WithRuntimePath(""),
 			testutil.WithCommand("sleep 300"),
 			testutil.WithName(name),
@@ -1188,7 +1188,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 			t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 		}
 
-		entry, svcCatalogEntryErr := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+		entry, svcCatalogEntryErr := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 		if svcCatalogEntryErr != nil {
 			t.Fatalf("Create catalog entry failed for %s: %v", name, svcCatalogEntryErr)
 		}
@@ -1321,9 +1321,9 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 
 func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := createTestHealthConfig(t, WithMaxRestart(5))
-	shutdownConfig := createTestShutdownConfig(t)
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithMaxRestart(5))
+	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
@@ -1340,7 +1340,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
-	testFile := testutil.CreateTestServiceConfigFile(t,
+	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithRuntimePath(""),
 		testutil.WithCommand("sleep 300"),
 		testutil.WithName(serviceName),
@@ -1363,7 +1363,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	serviceCatalogEntry, err := manager.CreateServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
 	if err != nil {
 		t.Fatalf("Create service catalog entry failed: %v", err)
 	}
@@ -1463,7 +1463,7 @@ func WithTimeoutLimit(timeoutLimit time.Duration) HealthConfigOption {
 	}
 }
 
-func createTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.HealthConfig {
+func newTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.HealthConfig {
 	t.Helper()
 	healthConfig := &config.HealthConfig{
 		MaxRestart: config.HealthMaxRestart,
@@ -1488,7 +1488,7 @@ func WithGracePeriod(gracePeriod time.Duration) ShutdownConfigOption {
 	}
 }
 
-func createTestShutdownConfig(t *testing.T, opts ...ShutdownConfigOption) *config.ShutdownConfig {
+func newTestShutdownConfig(t *testing.T, opts ...ShutdownConfigOption) *config.ShutdownConfig {
 	t.Helper()
 	shutdownConfig := &config.ShutdownConfig{
 		GracePeriod: safeParseDuration(config.ShutdownGracePeriod, time.Second*5),

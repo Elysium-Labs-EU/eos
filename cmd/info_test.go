@@ -103,7 +103,7 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	testFile := testutil.CreateTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t)
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)
@@ -251,7 +251,7 @@ func TestInfoNonExistentServiceCommand(t *testing.T) {
 	}
 	output := buf.String()
 
-	if !strings.Contains(output, "service not found") {
-		t.Errorf("Expected info to show 'service not found', got: %s", output)
+	if !strings.Contains(output, "service not registered") {
+		t.Errorf("Expected info to show 'service not registered', got: %s", output)
 	}
 }

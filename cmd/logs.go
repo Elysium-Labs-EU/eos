@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -37,7 +38,9 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil && !errors.Is(err, manager.ErrNotFound) {
+
+			// NOTE: We check here on both string and error type. String because of daemon serialization.
+			if err != nil && !errors.Is(err, manager.ErrNotFound) && !strings.Contains(err.Error(), manager.ErrNotFound.Error()) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 				return
 			}

@@ -74,39 +74,47 @@ func (m *LocalManager) IsServiceRegistered(name string) (bool, error) {
 	return false, nil
 }
 
-var ErrServiceNotRunning = errors.New("service is not running")
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, database.ErrServiceNotFound) ||
+		strings.Contains(err.Error(), database.ErrServiceNotFound.Error())
+}
+
+var ErrServiceNotRunning = errors.New("service not running")
 
 func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceRuntime, error) {
 	_, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("service is not registered, got:\n%w", err)
+		return nil, fmt.Errorf("service %q not registered: %w", name, err)
 	}
 
 	serviceInstance, err := m.db.GetServiceInstance(m.ctx, name)
-	if errors.Is(err, database.ErrServiceNotFound) {
+	if isNotFound(err) {
 		return nil, ErrServiceNotRunning
 	}
 	if err != nil {
-		return nil, fmt.Errorf("unknown error occurred when getting the registered service:\n%w", err)
+		return nil, fmt.Errorf("unknown error occurred getting the registered service instance:\n%w", err)
 	}
 
 	return &serviceInstance, nil
 }
 
-var ErrServiceNotFound = errors.New("service not found")
+var ErrServiceNotRegistered = errors.New("service not registered")
 
 func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error) {
 	_, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("service is not registered, got:\n%w", err)
+		return types.ServiceCatalogEntry{}, fmt.Errorf("service %q not registered: %w", name, err)
 	}
 
 	registeredService, err := m.db.GetServiceCatalogEntry(m.ctx, name)
-	if errors.Is(err, ErrServiceNotFound) {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("service was not found, got:\n%w", err)
+	if isNotFound(err) {
+		return types.ServiceCatalogEntry{}, ErrServiceNotRegistered
 	}
 	if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("unknown error occurred when getting the registered service:\n%w", err)
+		return types.ServiceCatalogEntry{}, fmt.Errorf("unknown error occurred getting the service entry:\n%w", err)
 	}
 	return registeredService, nil
 }
@@ -149,13 +157,15 @@ func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath s
 	return nil
 }
 
+var ErrAlreadyRunning = errors.New("already running")
+
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
-	if errors.Is(err, ErrServiceNotFound) {
-		return 0, fmt.Errorf("service %s not found", name)
+	if errors.Is(err, ErrServiceNotRegistered) {
+		return 0, fmt.Errorf("service %s not registered", name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("an error occurred")
+		return 0, fmt.Errorf("an error occurred: %w", err)
 	}
 
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
@@ -171,7 +181,8 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 	if serviceInstance != nil {
 		// TODO: return found PGID somehow instead?
-		return 0, fmt.Errorf("service instance already found. use 'eos restart %s' to restart this service instead", name)
+		return 0, ErrAlreadyRunning
+		// return 0, fmt.Errorf("service instance already found. use 'eos restart %s' to restart this service instead", name)
 	}
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
@@ -299,11 +310,11 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 
 func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
-	if errors.Is(err, ErrServiceNotFound) {
-		return 0, fmt.Errorf("service %s not found", name)
+	if errors.Is(err, ErrServiceNotRegistered) {
+		return 0, fmt.Errorf("service %s not registered", name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("an error occurred")
+		return 0, fmt.Errorf("an error occurred: %w", err)
 	}
 
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)

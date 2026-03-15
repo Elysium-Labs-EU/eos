@@ -12,7 +12,7 @@ import (
 	"eos/internal/types"
 )
 
-func CreateServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {
+func NewServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("received an empty name for the service")
 	}
@@ -31,7 +31,6 @@ func CreateServiceCatalogEntry(name string, path string, configFile string) (*ty
 	}
 
 	return serviceCatalogEntry, nil
-
 }
 
 func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {

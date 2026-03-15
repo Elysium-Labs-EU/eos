@@ -19,7 +19,7 @@ func TestAddCommand(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.CreateTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

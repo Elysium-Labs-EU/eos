@@ -20,7 +20,7 @@ func TestRemoveCommand(t *testing.T) {
 	cmd := newTestRootCmd(manager)
 	var buf bytes.Buffer
 
-	testFile := testutil.CreateTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -63,3 +63,6 @@ func TestRemoveCommand(t *testing.T) {
 		t.Errorf("Expected remove to show 'success cms unregistered', got: %s", output)
 	}
 }
+
+// TODO: What happens if there is no service instance
+// func TestRemoveCommandNoServiceInstance

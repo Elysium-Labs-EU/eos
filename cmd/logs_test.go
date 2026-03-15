@@ -24,7 +24,7 @@ func TestLogsCommand(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	testFile := testutil.CreateTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

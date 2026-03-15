@@ -57,7 +57,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					continue
 				}
 				if config.Name != regServiceName {
-					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("name of services drifted: %v", err))
+					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
 					continue
 				}
 

@@ -19,7 +19,7 @@ func TestUpdateCommand(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir, t.Context())
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.CreateTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t)
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestUpdateCommand(t *testing.T) {
 		return
 	}
 
-	anotherTestFile := testutil.CreateTestServiceConfigFile(t)
+	anotherTestFile := testutil.NewTestServiceConfigFile(t)
 	yamlData, err = yaml.Marshal(anotherTestFile)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)

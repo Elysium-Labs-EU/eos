@@ -54,6 +54,11 @@ test:
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
 
+test-coverage:
+	@echo "Getting test coverage..."
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out
+
 lint:
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }

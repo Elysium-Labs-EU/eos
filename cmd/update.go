@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/cmd/helpers"
 	"eos/internal/manager"
 )
 
@@ -32,7 +33,7 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Println("- Use 'eos status' to view registered services")
 				return
 			}
-			yamlFile, err := determineYamlFile(newProjectPath)
+			yamlFile, err := helpers.DetermineYamlFile(newProjectPath)
 
 			if err != nil {
 				cmd.Printf("Error determining YAML file on %v\n", newProjectPath)

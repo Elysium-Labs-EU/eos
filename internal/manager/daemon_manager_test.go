@@ -134,7 +134,7 @@ func TestWaitForSocketDelayedCreation(t *testing.T) {
 
 func TestNewDaemonLogger(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -153,7 +153,7 @@ func TestNewDaemonLogger(t *testing.T) {
 
 func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	_, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -167,7 +167,7 @@ func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 
 func TestDaemonLoggerLog(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestDaemonLoggerLog(t *testing.T) {
 
 func TestDaemonLoggerLogLevels(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
@@ -226,7 +226,7 @@ func TestDaemonLoggerLogLevels(t *testing.T) {
 
 func TestDaemonLoggerRotation(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -253,7 +253,7 @@ func TestDaemonLoggerRotation(t *testing.T) {
 
 func TestDaemonLoggerLogToConsole(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestDaemonLoggerLogToConsole(t *testing.T) {
 
 func TestDaemonLoggerLogFormat(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
@@ -290,7 +290,7 @@ func TestDaemonLoggerLogFormat(t *testing.T) {
 
 func TestDaemonLoggerCurrentSizeTracking(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.CreateTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
 	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -10,6 +11,7 @@ import (
 	"eos/internal/ui"
 )
 
+// TODO: Add interactive check for running process, giving user option to continue or not.
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <service-name>",
@@ -35,7 +37,8 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
-			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
+			// NOTE: We check here on both string and error type. String because of daemon serialization.
+			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !strings.Contains(err.Error(), manager.ErrServiceNotRunning.Error()) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service instance: %v", err))
 				return
 			}
