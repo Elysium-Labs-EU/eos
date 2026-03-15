@@ -15,8 +15,8 @@ import (
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <service-name>",
-		Short: "Unregister a service",
-		Long:  `Remove a service from the registry. This does not stop the service if it's running.`,
+		Short: "Remove a service from the registry",
+		Long:  `Unregisters a service and removes its instance if one exists. Does not stop the service process if it is currently running.`,
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]

@@ -16,23 +16,24 @@ import (
 
 func TestNewManager(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	if manager == nil {
 		t.Fatal("Manager should not be nil")
-	} else {
-		services, err := manager.GetAllServiceCatalogEntries()
-		if err != nil {
-			t.Errorf("GetAllRegisteredServices shouldn't error, got: %v\n", err)
-		} else if len(services) != 0 {
-			t.Errorf("Expected 0 services, got %d", len(services))
-		}
 	}
+	services, err := manager.GetAllServiceCatalogEntries()
+	if err != nil {
+		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v\n", err)
+	}
+	if len(services) != 0 {
+		t.Errorf("Expected 0 services, got %d", len(services))
+	}
+
 }
 
 func TestAddService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -42,23 +43,23 @@ func TestAddService(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("Adding service catalog entry should not error: %v", err)
-	} else {
-		services, err := manager.GetAllServiceCatalogEntries()
-		if err != nil {
-			t.Fatalf("Getting all service catalog entries should not error: %v", err)
-		}
-		if len(services) != 1 {
-			t.Errorf("Expected 1 service catalog entry, got %d", len(services))
-		}
-		if services[0].Name != "test-service" {
-			t.Errorf("Expected service name 'test-service', got '%s'", services[0].Name)
-		}
+
+	}
+	services, err := manager.GetAllServiceCatalogEntries()
+	if err != nil {
+		t.Fatalf("Getting all service catalog entries should not error: %v", err)
+	}
+	if len(services) != 1 {
+		t.Errorf("Expected 1 service catalog entry, got %d", len(services))
+	}
+	if services[0].Name != "test-service" {
+		t.Errorf("Expected service name 'test-service', got '%s'", services[0].Name)
 	}
 }
 
 func TestAddServiceMultipleTimes(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -69,20 +70,21 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("Adding service should not error: %v", err)
-	} else {
-		err := manager.AddServiceCatalogEntry(serviceCatalogEntry)
-
-		if err == nil {
-			t.Errorf("Expected error on adding the same service catalog entry twice")
-		} else if strings.Contains(err.Error(), "service name cannot be empty") {
-			t.Errorf("Test failed due to invalid test input, got: %v\n", err)
-		}
 	}
+
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err == nil {
+		t.Errorf("Expected error on adding the same service catalog entry twice")
+	}
+	if strings.Contains(err.Error(), "service name cannot be empty") {
+		t.Errorf("Test failed due to invalid test input, got: %v\n", err)
+	}
+
 }
 
 func TestGetService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", "./test-files", "service.yaml")
 	if err != nil {
@@ -96,14 +98,15 @@ func TestGetService(t *testing.T) {
 	found, error := manager.GetServiceCatalogEntry("test-service")
 	if error != nil {
 		t.Errorf("Service should exist")
-	} else if found.Name != "test-service" {
+	}
+	if found.Name != "test-service" {
 		t.Errorf("Expected service name 'test-service', got %s", found.Name)
 	}
 }
 
 func TestGetInvalidServiceInstance(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	serviceInstance, err := manager.GetServiceInstance("non-existent")
 
@@ -117,7 +120,7 @@ func TestGetInvalidServiceInstance(t *testing.T) {
 
 func TestStartService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context())
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	runtime := types.Runtime{
 		Type: "nodejs",
@@ -162,7 +165,26 @@ func TestStartService(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("Starting service should not error: %v\n", err)
-	} else if pgid == 0 {
+	}
+	if pgid == 0 {
 		t.Fatalf("Starting service should have a failed PGID, got: %v\n", err)
 	}
 }
+
+// func TestLocalManager_RemoveServiceInstance(t *testing.T) {}
+// func TestLocalManager_RemoveServiceCatalogEntry(t *testing.T) {}
+// func TestLocalManager_IsServiceRegistered(t *testing.T) {}
+// func TestLocalManager_GetMostRecentProcessHistoryEntry(t *testing.T) {}
+// func TestLocalManager_UpdateServiceCatalogEntry(t *testing.T) {}
+// func TestLocalManager_RestartService(t *testing.T) {}
+// func TestLocalManager_StopService(t *testing.T) {}
+// func TestIsProcessAlive(t *testing.T) {}
+// func TestLocalManager_ForceStopService(t *testing.T) {}
+// func TestUpdateProcessHistoryEntriesAsStopped(t *testing.T) {}
+// func TestUpdateProcessHistoryEntriesAsUnknown(t *testing.T) {}
+// func TestStopServiceWithSignal(t *testing.T) {}
+// func TestValidateRuntimePath(t *testing.T) {}
+// func TestLocalManager_GetServiceLogFilePath(t *testing.T) {}
+// func TestLocalManager_LogToServiceStdout(t *testing.T) {}
+// func TestLocalManager_LogToServiceStderr(t *testing.T) {}
+// func TestAppendToFile(t *testing.T) {}

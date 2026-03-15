@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,57 +8,47 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 	"eos/internal/types"
 )
 
-func TestLogsCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	testFile := testutil.NewTestServiceConfigFile(t)
-
-	yamlData, err := yaml.Marshal(testFile)
+func writeServiceYAML(t *testing.T, tempDir string, cfg *types.ServiceConfig) string {
+	t.Helper()
+	yamlData, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	fullDirPath := filepath.Join(tempDir, "test-project")
-	err = os.MkdirAll(fullDirPath, 0755)
-
-	if err != nil {
-		t.Fatalf("could not create test-project directory: %v\n", err)
-		return
+	dir := filepath.Join(tempDir, "test-project")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("Could not create test-project directory: %v", err)
 	}
 
-	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	err = os.WriteFile(fullPath, yamlData, 0644)
-	if err != nil {
-		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	path := filepath.Join(dir, "service.yaml")
+	if err := os.WriteFile(path, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
 	}
 
-	cmd.SetArgs([]string{"add", fullPath})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
+	return path
+}
+
+func TestLogsCommand(t *testing.T) {
+	cmd, buf, tempDir := setupCmd(t)
+
+	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
+	path := writeServiceYAML(t, tempDir, cfg)
+
+	cmd.SetArgs([]string{"add", path})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
+	cmd.SetArgs([]string{"run", cfg.Name})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Run command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"logs", testFile.Name, "--follow=false"})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
+	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Status command should not return an error, got : %v", err)
 	}
 
@@ -68,80 +57,38 @@ func TestLogsCommand(t *testing.T) {
 	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
 	}
-	if !strings.Contains(output, "run: eos start cms to start it") {
-		t.Errorf("Service should not have started")
+	if !strings.Contains(output, "showing logs for") {
+		t.Errorf("Expected logs to be shown, got: %v", output)
 	}
 }
 
 func TestLogsNeverRanServiceCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
+	path := writeServiceYAML(t, tempDir, cfg)
 
-	testFile := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "./start-script.sh",
-		Port:    1337,
+	cmd.SetArgs([]string{"add", path})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Add command failed: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(testFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
+	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Logs command failed: %v", err)
 	}
 
-	fullDirPath := filepath.Join(tempDir, "test-project")
-	err = os.MkdirAll(fullDirPath, 0755)
-
-	if err != nil {
-		t.Fatalf("could not create test-project directory: %v\n", err)
-		return
-	}
-
-	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	err = os.WriteFile(fullPath, yamlData, 0644)
-	if err != nil {
-		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
-	}
-
-	cmd.SetArgs([]string{"add", fullPath})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Add command should not return an error, got : %v", err)
-	}
-
-	cmd.SetArgs([]string{"logs", testFile.Name, "--follow=false"})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Status command should not return an error, got : %v", err)
-	}
-
-	output := buf.String()
-
-	if !strings.Contains(output, "has never been started") {
-		t.Errorf("Expected status to show 'has never been started', got: %s", output)
-	}
-	if strings.Contains(output, "An error occurred during getting the log file, got") {
-		t.Errorf("Log file should be found")
+	if !strings.Contains(buf.String(), "has never been started") {
+		t.Errorf("Expected 'has never been started', got: %s", buf.String())
 	}
 }
 
 func TestLogsNonExistingServiceCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, _ := setupCmd(t)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"logs", "cms", "--follow=false"})
 
-	err := cmd.ExecuteContext(t.Context())
-
-	if err != nil {
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Logs command should not return an error, got : %v", err)
 	}
 	output := buf.String()

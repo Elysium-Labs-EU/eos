@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,18 +8,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"eos/internal/database"
-	"eos/internal/manager"
 	"eos/internal/testutil"
 )
 
 func TestRestartCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -29,8 +21,8 @@ func TestRestartCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
-						echo TESTING BOOTED UP`
+	testStartScript := `#!/bin/bash
+					echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
 	err = os.MkdirAll(fullDirPath, 0755)

@@ -371,20 +371,20 @@ type ServiceLogFilesResult struct {
 	ErrorLogFilePath string `json:"errorLogFile"`
 }
 
-func (dm *DaemonManager) CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
-	args, err := json.Marshal(types.CreateServiceLogFilesArgs{ServiceName: serviceName})
+func (dm *DaemonManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
+	args, err := json.Marshal(types.NewServiceLogFilesArgs{ServiceName: serviceName})
 	if err != nil {
-		return "", "", fmt.Errorf("CreateServiceLogFiles: marshaling args: %w", err)
+		return "", "", fmt.Errorf("NewServiceLogFiles: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodCreateServiceLogFiles, args)
+	response, err := dm.sendRequest(types.MethodNewServiceLogFiles, args)
 
 	if err != nil {
-		return "", "", fmt.Errorf("CreateServiceLogFiles: request errored: %w", err)
+		return "", "", fmt.Errorf("NewServiceLogFiles: request errored: %w", err)
 	}
 
 	var result ServiceLogFilesResult
 	if err := json.Unmarshal(response.Data, &result); err != nil {
-		return "", "", fmt.Errorf("CreateServiceLogFiles: parse response data: %w", err)
+		return "", "", fmt.Errorf("NewServiceLogFiles: parse response data: %w", err)
 	}
 
 	return result.LogFilePath, result.ErrorLogFilePath, nil
@@ -420,14 +420,6 @@ type DaemonLogger struct {
 	logToConsole bool
 }
 
-type LogLevel string
-
-const (
-	LogLevelInfo  LogLevel = "INFO"
-	LogLevelWarn  LogLevel = "WARN"
-	LogLevelError LogLevel = "ERROR"
-)
-
 func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*DaemonLogger, error) {
 	logPath := filepath.Clean(filepath.Join(logDir, fileName))
 
@@ -458,7 +450,7 @@ func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, m
 	}, nil
 }
 
-func (l *DaemonLogger) Log(level LogLevel, message string) {
+func (l *DaemonLogger) Log(level logutil.LogLevel, message string) {
 	timestamp := time.Now().UTC().Format(logutil.TimestampFormat)
 	logMessage := fmt.Sprintf("[%s] %s: %s\n", timestamp, level, message)
 

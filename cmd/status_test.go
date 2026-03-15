@@ -1,23 +1,12 @@
 package cmd
 
 import (
-	"bytes"
 	"strings"
 	"testing"
-
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 )
 
 func TestStatusCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"status"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -64,14 +53,7 @@ func TestStatusCommand(t *testing.T) {
 // }
 
 func TestStatusCommmandWithServices(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"status", "--help"})
 
 	err := cmd.ExecuteContext(t.Context())

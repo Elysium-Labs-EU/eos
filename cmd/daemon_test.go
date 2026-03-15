@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,10 +9,8 @@ import (
 	"time"
 
 	"eos/internal/config"
-	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/process"
-	"eos/internal/testutil"
 )
 
 func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {
@@ -133,13 +130,7 @@ func TestDaemonLogsFileMissing(t *testing.T) {
 }
 
 func TestDaemonInfoCommandOutput(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(mgr)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"daemon", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -154,13 +145,7 @@ func TestDaemonInfoCommandOutput(t *testing.T) {
 }
 
 func TestDaemonStopCommandOutput(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(mgr)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"daemon", "stop"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -204,3 +189,6 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 	t.Logf("BUG CONFIRMED: non-root cannot write to %s (%v). "+
 		"PID/socket paths must move to a user-writable location.", prodPidFile, err)
 }
+
+// func TestForkDaemon(t *testing.T) {}
+// func TestPrintDaemonDetails(t *testing.T) {}

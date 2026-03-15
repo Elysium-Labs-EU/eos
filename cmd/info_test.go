@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,8 +8,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"eos/internal/database"
-	"eos/internal/manager"
 	"eos/internal/testutil"
 	"eos/internal/types"
 )
@@ -18,7 +15,7 @@ import (
 // TODO: Add actual node env here?
 // func TestInfoCommand(t *testing.T) {
 // db, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	manager := manager.NewLocalManager(db, tempDir, t.Context())
+// 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 // 	cmd := newTestRootCmd(manager)
 // 	var buf bytes.Buffer
 // 	cmd.SetOut(&buf)
@@ -95,13 +92,7 @@ import (
 // }
 
 func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t)
 	yamlData, err := yaml.Marshal(testFile)
@@ -156,12 +147,7 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 }
 
 func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
@@ -213,13 +199,7 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 }
 
 func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -235,13 +215,7 @@ func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
 }
 
 func TestInfoNonExistentServiceCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"info", "cms"})
 
 	err := cmd.ExecuteContext(t.Context())

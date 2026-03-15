@@ -16,7 +16,7 @@ import (
 
 func TestAddCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t)
@@ -67,7 +67,7 @@ func TestAddCommand(t *testing.T) {
 
 func TestAddIncompleteCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer
@@ -97,7 +97,7 @@ func TestAddIncompleteCommand(t *testing.T) {
 
 func TestAddInvalidYamlCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
 
 	var buf bytes.Buffer

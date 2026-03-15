@@ -26,7 +26,7 @@ const (
 
 	MethodGetMostRecentProcessHistoryEntry = "GetMostRecentProcessHistoryEntry"
 
-	MethodCreateServiceLogFiles = "CreateServiceLogFiles"
+	MethodNewServiceLogFiles    = "NewServiceLogFiles"
 	MethodGetServiceLogFilePath = "GetServiceLogFilePath"
 )
 
@@ -48,7 +48,7 @@ var ValidMethods = map[MethodName]bool{
 
 	MethodGetMostRecentProcessHistoryEntry: true,
 
-	MethodCreateServiceLogFiles: true,
+	MethodNewServiceLogFiles:    true,
 	MethodGetServiceLogFilePath: true,
 }
 
@@ -133,7 +133,7 @@ type GetMostRecentProcessHistoryEntryArgs struct {
 	Name string `json:"name"`
 }
 
-type CreateServiceLogFilesArgs struct {
+type NewServiceLogFilesArgs struct {
 	ServiceName string `json:"service_name"`
 }
 

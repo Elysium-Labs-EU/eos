@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,19 +9,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"eos/internal/buildinfo"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 )
 
 func TestSystemInfoCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"system", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -37,9 +27,7 @@ func TestSystemInfoCommand(t *testing.T) {
 }
 
 func TestSystemUpdateCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -48,9 +36,6 @@ func TestSystemUpdateCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"system", "update"})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -123,9 +108,7 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 	buildinfo.Version = "invalid-version"
 	defer func() { buildinfo.Version = "dev" }()
 
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -134,9 +117,6 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"system", "update"})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -153,9 +133,8 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 	buildinfo.Version = "v0.0.1"
 	defer func() { buildinfo.Version = "dev" }()
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+
+	cmd, buf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -168,10 +147,6 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
 	}
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 
 	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "darwin", false)
 
@@ -187,9 +162,8 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 	buildinfo.Version = "v0.0.1"
 	defer func() { buildinfo.Version = "dev" }()
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+
+	cmd, buf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -203,10 +177,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
 	}
 
-	var buf bytes.Buffer
 	cmd.SetIn(strings.NewReader("y\ny\n"))
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 
 	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "linux", false)
 
@@ -279,13 +250,7 @@ func TestSystemUpdateCreateDestinationFile(t *testing.T) {
 }
 
 func TestSystemVersionCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"system", "version"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -298,3 +263,5 @@ func TestSystemVersionCommand(t *testing.T) {
 		t.Error("expected the output to contain 'dev'")
 	}
 }
+
+// func TestReplaceBinary(t *testing.T) {}

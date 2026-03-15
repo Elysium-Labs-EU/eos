@@ -15,9 +15,7 @@ import (
 )
 
 func TestStartCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -49,10 +47,6 @@ func TestStartCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -76,7 +70,7 @@ func TestStartCommand(t *testing.T) {
 
 func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())

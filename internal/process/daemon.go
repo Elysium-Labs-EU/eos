@@ -16,6 +16,7 @@ import (
 
 	"eos/internal/config"
 	"eos/internal/database"
+	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/monitor"
 	"eos/internal/ptr"
@@ -26,11 +27,11 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	logger, err := manager.NewDaemonLogger(logToFileAndConsole, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to setup daemon logger: %w", err)
-		logger.Log(manager.LogLevelInfo, errorMessage.Error())
+		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
-	logger.Log(manager.LogLevelInfo, "Started daemon logger")
+	logger.Log(logutil.LogLevelInfo, "Started daemon logger")
 	pidFile := daemonConfig.PIDFile
 	socketPath := daemonConfig.SocketPath
 
@@ -41,13 +42,13 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 		if process, findProcessErr := os.FindProcess(oldPid); findProcessErr == nil {
 			if process.Signal(syscall.Signal(0)) == nil {
 				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
-				logger.Log(manager.LogLevelInfo, errorMessage.Error())
+				logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 				return errorMessage
 			}
 		}
 		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
-			logger.Log(manager.LogLevelError, errorMessage.Error())
+			logger.Log(logutil.LogLevelError, errorMessage.Error())
 			return errorMessage
 		}
 	}
@@ -56,7 +57,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0600)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
-		logger.Log(manager.LogLevelInfo, errorMessage.Error())
+		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
@@ -69,7 +70,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
 		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
-			logger.Log(manager.LogLevelError, errorMessage.Error())
+			logger.Log(logutil.LogLevelError, errorMessage.Error())
 			return errorMessage
 		}
 	}
@@ -78,29 +79,29 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	listener, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
-		logger.Log(manager.LogLevelInfo, errorMessage.Error())
+		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
 	db, err := database.NewDB(ctx, baseDir)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to connect to database: %w", err)
-		logger.Log(manager.LogLevelInfo, errorMessage.Error())
+		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 	defer func() {
 		if err := db.CloseDBConnection(); err != nil {
-			logger.Log(manager.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
 		}
 	}()
 
-	mgr := manager.NewLocalManager(db, baseDir, ctx)
+	mgr := manager.NewLocalManager(db, baseDir, ctx, logger)
 	go handleIncomingCommands(listener, mgr, logger)
 
 	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig, shutdownConfig)
 	go healthMonitor.Start(ctx)
 
-	logger.Log(manager.LogLevelInfo, "daemon started successfully")
+	logger.Log(logutil.LogLevelInfo, "daemon started successfully")
 	for {
 
 		select {
@@ -110,18 +111,18 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 					var status syscall.WaitStatus
 					pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
 					if err != nil {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
+						logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
 						break
 					}
 					if pid == 0 {
 						break
 					}
 					if pid < 0 {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
+						logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
 						continue
 					}
 
-					logger.Log(manager.LogLevelError, fmt.Sprintf("reaped zombie process: %d\n", pid))
+					logger.Log(logutil.LogLevelError, fmt.Sprintf("reaped zombie process: %d\n", pid))
 
 					if status.ExitStatus() == 0 {
 						updates := database.ProcessHistoryUpdate{
@@ -130,7 +131,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 						}
 						updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
 						if updateErr != nil {
-							logger.Log(manager.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
+							logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
 						}
 						continue
 					}
@@ -143,7 +144,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 
 					err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
 					if err != nil {
-						logger.Log(manager.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
+						logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
 					}
 
 					continue
@@ -151,13 +152,13 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 			}
 		case <-ctx.Done():
 			if err := listener.Close(); err != nil {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("closing listener: %v", err))
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("closing listener: %v", err))
 			}
 			if err := os.Remove(pidFile); err != nil {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
 			}
 			if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("removing socket: %v", err))
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("removing socket: %v", err))
 			}
 			return nil
 		}
@@ -265,9 +266,9 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				logger.Log(manager.LogLevelInfo, "listener closed, shutting down gracefully")
+				logger.Log(logutil.LogLevelInfo, "listener closed, shutting down gracefully")
 			} else {
-				logger.Log(manager.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
 			}
 			return
 		}
@@ -279,7 +280,7 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager.DaemonLogger) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Log(manager.LogLevelError, fmt.Sprintf("closing daemon socket: %v", err))
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("closing daemon socket: %v", err))
 		}
 	}()
 
@@ -294,7 +295,7 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(response); err != nil {
-		logger.Log(manager.LogLevelError, fmt.Sprintf("sending response: %v\n", err))
+		logger.Log(logutil.LogLevelError, fmt.Sprintf("sending response: %v\n", err))
 	}
 }
 
@@ -540,13 +541,13 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 			Data:    data,
 		}
 
-	case types.MethodCreateServiceLogFiles:
-		var args types.CreateServiceLogFilesArgs
+	case types.MethodNewServiceLogFiles:
+		var args types.NewServiceLogFilesArgs
 		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodCreateServiceLogFiles args: %v", err))
+			return errorResponse(fmt.Sprintf("invalid MethodNewServiceLogFiles args: %v", err))
 		}
 
-		logPath, errorLogPath, err := mgr.CreateServiceLogFiles(args.ServiceName)
+		logPath, errorLogPath, err := mgr.NewServiceLogFiles(args.ServiceName)
 		if err != nil {
 			return errorResponse(err.Error())
 		}
@@ -593,6 +594,6 @@ func sendErrorResponse(conn net.Conn, message string, logger *manager.DaemonLogg
 	encoder := json.NewEncoder(conn)
 	err := encoder.Encode(response)
 	if err != nil {
-		logger.Log(manager.LogLevelError, fmt.Sprintf("sending error response: %v\n", err))
+		logger.Log(logutil.LogLevelError, fmt.Sprintf("sending error response: %v\n", err))
 	}
 }

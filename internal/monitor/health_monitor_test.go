@@ -30,7 +30,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up to test daemon logger, got: %v", err)
@@ -60,7 +60,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	shutdownConfig := newTestShutdownConfig(t, WithGracePeriod(5*time.Second))
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
@@ -172,7 +172,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
@@ -296,7 +296,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 // 	timoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+// 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 // 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
 
 // 	if err != nil {
@@ -397,7 +397,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
@@ -517,7 +517,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
@@ -647,7 +647,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 	timeoutLimit := 30 * time.Second
 
 // 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+// 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 // 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
 // 	if err != nil {
 // 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
@@ -775,7 +775,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 
 	if err != nil {
@@ -888,7 +888,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	maxRestartCount := healthConfig.MaxRestart
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
@@ -966,6 +966,10 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to update fake process history: %v", err)
 	}
 
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("Failed to create service log files: %v", err)
+	}
+
 	for i := 0; i <= maxRestartCount+1; i++ {
 		processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 		if err != nil {
@@ -1006,14 +1010,13 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 				t.Fatalf("Iteration %d: Failed to get latest process", i)
 			}
 
-			// Kill the real process and wait for it to fully exit
+			// Kill the real process. RestartService's background goroutine
+			// already calls Wait() on the child, so we must not call Wait()
+			// here — doing so races with that goroutine and fails with
+			// "no child processes" when it wins.
 			proc, err := os.FindProcess(latestProcess.PGID)
 			if err == nil {
 				_ = proc.Kill()
-				_, err = proc.Wait() // reap the zombie
-				if err != nil {
-					t.Fatalf("Failed to wait for the process to exit: %v", err)
-				}
 			}
 
 			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
@@ -1150,7 +1153,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
@@ -1275,6 +1278,10 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Failed to update process history for %s: %v", svc3Name, err)
 	}
 
+	if _, _, err = mgr.NewServiceLogFiles(svc3Name); err != nil {
+		t.Fatalf("Failed to create service log files for %s: %v", svc3Name, err)
+	}
+
 	// Run the full dispatch
 	hm.checkAllServices(t.Context())
 
@@ -1326,7 +1333,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context())
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	logger, err := manager.NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
 	if err != nil {
 		log.Fatalf("Unable to set up test daemon logger, got: %v", err)
@@ -1509,3 +1516,5 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 
 	return limit
 }
+
+// func TestCheckUnknownProcess(t *testing.T) {}

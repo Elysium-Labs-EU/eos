@@ -15,10 +15,11 @@ import (
 
 func newRestartCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "restart",
-		Short: "Restarts an active service",
-		Long:  "Restarts an active service",
-		Args:  cobra.ExactArgs(1),
+		Use:        "restart",
+		Short:      "Restarts an active service",
+		Long:       "Restarts an active service",
+		Deprecated: "use the new run command instead. This command will be removed in v0.0.12.",
+		Args:       cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()

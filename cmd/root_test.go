@@ -5,20 +5,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/testutil"
 )
 
-func TestRootCommand(t *testing.T) {
-	var buf bytes.Buffer
-
+func setupCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
+	t.Helper()
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	testLogger := testutil.NewTestLogger(t)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testLogger)
+	cmd := newTestRootCmd(mgr)
 
+	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
+
+	return cmd, &buf, tempDir
+}
+
+func TestRootCommand(t *testing.T) {
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -37,15 +46,7 @@ func TestRootCommand(t *testing.T) {
 }
 
 func TestHelpCommand(t *testing.T) {
-	var buf bytes.Buffer
-
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
-
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
+	cmd, buf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"--help"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -69,3 +70,7 @@ func TestCreateSystemConfigHelper(t *testing.T) {
 		t.Fatalf("Basedir variable cannot be an empty string")
 	}
 }
+
+// func TestNewRootCmd(t *testing.T) {}
+// func TestGetManager(t *testing.T) {}
+// func TestExecute(t *testing.T) {}

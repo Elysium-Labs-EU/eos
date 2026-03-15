@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,17 +8,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"eos/internal/database"
-	"eos/internal/manager"
 	"eos/internal/testutil"
 )
 
 func TestStopCommand(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "1s")
 
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -54,11 +49,7 @@ done`
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-
 	cmd.SetIn(strings.NewReader("n\n"))
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
@@ -95,9 +86,7 @@ done`
 func TestStopCommandShortLivedScript(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "250ms")
 
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -129,11 +118,7 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-
 	cmd.SetIn(strings.NewReader("n\n"))
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
@@ -168,9 +153,7 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 }
 
 func TestStopCommandGracePeriod(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -207,11 +190,6 @@ done`
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
-
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -247,3 +225,6 @@ done`
 // TODO: Test force quit flag
 // TODO: Test grace period stopping
 // TODO: Test misbehaving processes
+
+// func TestForceStopService(t *testing.T) {}
+// func TestCleanupServiceInstance(t *testing.T) {}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"eos/internal/logutil"
 	"eos/internal/testutil"
 )
 
@@ -174,7 +175,7 @@ func TestDaemonLoggerLog(t *testing.T) {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 
-	logger.Log(LogLevelInfo, "test message")
+	logger.Log(logutil.LogLevelInfo, "test message")
 
 	content, err := os.ReadFile(logger.LogPath)
 	if err != nil {
@@ -203,9 +204,9 @@ func TestDaemonLoggerLogLevels(t *testing.T) {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 
-	logger.Log(LogLevelInfo, "info message")
-	logger.Log(LogLevelWarn, "warn message")
-	logger.Log(LogLevelError, "error message")
+	logger.Log(logutil.LogLevelInfo, "info message")
+	logger.Log(logutil.LogLevelWarn, "warn message")
+	logger.Log(logutil.LogLevelError, "error message")
 
 	content, err := os.ReadFile(logger.LogPath)
 	if err != nil {
@@ -237,7 +238,7 @@ func TestDaemonLoggerRotation(t *testing.T) {
 	logger.maxSize = 100
 
 	for range 20 {
-		logger.Log(LogLevelInfo, "This is a log message that should eventually trigger rotation")
+		logger.Log(logutil.LogLevelInfo, "This is a log message that should eventually trigger rotation")
 	}
 
 	logDir := CreateLogDirPath(tempDir)
@@ -274,7 +275,7 @@ func TestDaemonLoggerLogFormat(t *testing.T) {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 
-	logger.Log(LogLevelInfo, "formatted message")
+	logger.Log(logutil.LogLevelInfo, "formatted message")
 
 	content, err := os.ReadFile(logger.LogPath)
 	if err != nil {
@@ -298,7 +299,7 @@ func TestDaemonLoggerCurrentSizeTracking(t *testing.T) {
 	}
 
 	initialSize := logger.currentSize
-	logger.Log(LogLevelInfo, "some message")
+	logger.Log(logutil.LogLevelInfo, "some message")
 
 	if logger.currentSize <= initialSize {
 		t.Error("currentSize should increase after logging")
@@ -366,3 +367,22 @@ func TestHandleRenameExistingLogsSingleFile(t *testing.T) {
 		t.Error("test.log should be renamed to test.log.1")
 	}
 }
+
+// func TestNewDaemonManager(t *testing.T) {}
+// func TestStartDaemonProcess(t *testing.T) {}
+// func TestSendRequest(t *testing.T) {}
+// func TestDaemonManager_GetServiceInstance(t *testing.T) {}
+// func TestDaemonManager_RemoveServiceInstance(t *testing.T) {}
+// func TestDaemonManager_StartService(t *testing.T) {}
+// func TestDaemonManager_RestartService(t *testing.T) {}
+// func TestDaemonManager_StopService(t *testing.T) {}
+// func TestDaemonManager_ForceStopService(t *testing.T) {}
+// func TestDaemonManager_AddServiceCatalogEntry(t *testing.T) {}
+// func TestDaemonManager_GetAllServiceCatalogEntries(t *testing.T) {}
+// func TestDaemonManager_GetServiceCatalogEntry(t *testing.T) {}
+// func TestDaemonManager_IsServiceRegistered(t *testing.T) {}
+// func TestDaemonManager_RemoveServiceCatalogEntry(t *testing.T) {}
+// func TestDaemonManager_UpdateServiceCatalogEntry(t *testing.T) {}
+// func TestDaemonManager_GetMostRecentProcessHistoryEntry(t *testing.T) {}
+// func TestDaemonManager_NewServiceLogFiles(t *testing.T) {}
+// func TestDaemonManager_GetServiceLogFilePath(t *testing.T) {}

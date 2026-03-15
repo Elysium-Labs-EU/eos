@@ -24,6 +24,7 @@ func newDaemonCmd() *cobra.Command {
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the deployment daemon",
+		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			var err error
 			_, baseDir, config, err = createSystemConfig()
@@ -36,7 +37,8 @@ func newDaemonCmd() *cobra.Command {
 
 	startCmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start the daemon",
+		Short: "Start the daemon process",
+		Long:  "Launch the deployment daemon. By default, runs in the foreground and prints output to the console. Use --detach (-d) to fork the daemon into the background as a detached process, returning control immediately.",
 		Run: func(cmd *cobra.Command, args []string) {
 			detached, err := cmd.Flags().GetBool("detach")
 			if err != nil {
@@ -70,7 +72,8 @@ func newDaemonCmd() *cobra.Command {
 
 	stopCmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the daemon",
+		Short: "Stop the running daemon",
+		Long:  "Send a termination signal to the running daemon process. Exits cleanly if the daemon is not running. Reports an error if the process cannot be stopped.",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
 			killed, err := process.StopDaemon(config.Daemon)
@@ -88,7 +91,8 @@ func newDaemonCmd() *cobra.Command {
 
 	infoCmd := &cobra.Command{
 		Use:   "info",
-		Short: "Info on the daemon",
+		Short: "Show daemon status and configuration",
+		Long:  "Display the current state of the daemon, including whether it is running, its PID, socket path, log directory, log file name, and maximum file count. Reports clearly if the daemon is stopped or not found.",
 		Run: func(cmd *cobra.Command, args []string) {
 			status, err := process.StatusDaemon(config.Daemon)
 			if err != nil {
@@ -115,7 +119,8 @@ func newDaemonCmd() *cobra.Command {
 	var lines int
 	logsCmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Logs of the daemon",
+		Short: "Stream the daemon log output",
+		Long:  "Tail and follow the daemon's log file in real time. Defaults to the last 300 lines. Use --lines to control how many historical lines are shown before following. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
 		Run: func(cmd *cobra.Command, args []string) {
 			logPath := filepath.Join(manager.CreateLogDirPath(baseDir), config.Daemon.LogFileName)
 

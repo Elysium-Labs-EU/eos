@@ -9,6 +9,7 @@ import (
 
 	"eos/internal/config"
 	"eos/internal/database"
+	"eos/internal/logutil"
 	"eos/internal/types"
 )
 
@@ -204,4 +205,29 @@ func NewTestDaemonConfig(t *testing.T, baseDir string, opts ...DaemonConfigOptio
 	}
 
 	return daemonConfig
+}
+
+type TestLogger struct {
+	t    *testing.T
+	done chan struct{}
+}
+
+func NewTestLogger(t *testing.T) *TestLogger {
+	l := &TestLogger{
+		t:    t,
+		done: make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		close(l.done)
+	})
+	return l
+}
+
+func (l *TestLogger) Log(level logutil.LogLevel, message string) {
+	select {
+	case <-l.done:
+		// test is done, drop the message
+	default:
+		l.t.Logf("[%s] %s", level, message)
+	}
 }

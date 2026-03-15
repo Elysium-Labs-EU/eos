@@ -208,12 +208,16 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
 					return
 				}
+
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
+
 				// TODO: Check once here first
 				registerResult, registerErr := registerServiceIfNeeded(mgr, parsedService.YamlFile, parsedService.Config.Name)
 				if registerErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
 					return
 				}
+
 				if registerResult.AlreadyExists {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("service %q is already registered", registerResult.Name))
 					cmd.PrintErrf("  %s %s %s\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos update %s", registerResult.Name)), ui.TextMuted.Render("to update"))
@@ -222,6 +226,9 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				serviceName = registerResult.Name
 			} else {
 				serviceNameArg := args[0]
+
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
+
 				registeredServiceName, registeredCheckErr := isServiceRegistered(mgr, serviceNameArg)
 				if errors.Is(registeredCheckErr, ErrServiceNonExistent) {
 					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")

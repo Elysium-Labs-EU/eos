@@ -12,6 +12,7 @@ import (
 	"eos/internal/buildinfo"
 	"eos/internal/config"
 	"eos/internal/database"
+	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
@@ -236,7 +237,7 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
 		}
 
-		mgr := manager.NewLocalManager(db, baseDir, ctx)
+		mgr := manager.NewLocalManager(db, baseDir, ctx, &logutil.StderrLogger{})
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {

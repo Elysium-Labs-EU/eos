@@ -8,7 +8,7 @@ import (
 	"eos/internal/logutil"
 )
 
-func (m *LocalManager) CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
+func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
 	logDir := CreateLogDirPath(m.baseDir)
 
 	err = os.MkdirAll(logDir, 0750)

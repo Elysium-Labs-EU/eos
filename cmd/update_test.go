@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,15 +8,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"eos/internal/database"
-	"eos/internal/manager"
 	"eos/internal/testutil"
 )
 
 func TestUpdateCommand(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
-	cmd := newTestRootCmd(manager)
+	cmd, buf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t)
 
@@ -40,10 +35,6 @@ func TestUpdateCommand(t *testing.T) {
 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
 	}
 
-	var buf bytes.Buffer
-
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPath})
 
 	err = cmd.ExecuteContext(t.Context())

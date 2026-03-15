@@ -11,6 +11,7 @@ import (
 
 	"eos/internal/config"
 	"eos/internal/database"
+	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/ptr"
 	"eos/internal/types"
@@ -28,8 +29,13 @@ type HealthMonitor struct {
 	shutdownGracePeriod time.Duration
 }
 
-func NewHealthMonitor(mgr *manager.LocalManager, db *database.DB, logger *manager.DaemonLogger,
-	healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig) *HealthMonitor {
+func NewHealthMonitor(
+	mgr *manager.LocalManager,
+	db *database.DB,
+	logger *manager.DaemonLogger,
+	healthConfig config.HealthConfig,
+	shutdownConfig config.ShutdownConfig,
+) *HealthMonitor {
 	return &HealthMonitor{
 		mgr:                 mgr,
 		db:                  db,
@@ -65,7 +71,7 @@ func (hm *HealthMonitor) checkAllServices(ctx context.Context) {
 	services, err := hm.mgr.GetAllServiceCatalogEntries()
 
 	if err != nil {
-		hm.logger.Log(manager.LogLevelError,
+		hm.logger.Log(logutil.LogLevelError,
 			fmt.Sprintf("failed to get service: %v", err))
 		return
 	}
@@ -113,17 +119,17 @@ func (hm *HealthMonitor) checkStartProcess(
 
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
-		hm.logger.Log(manager.LogLevelError, errorString)
+		hm.logger.Log(logutil.LogLevelError, errorString)
 		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
 			StoppedAt: ptr.TimePtr(time.Now()),
 			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 		return
@@ -134,10 +140,10 @@ func (hm *HealthMonitor) checkStartProcess(
 
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
-		hm.logger.Log(manager.LogLevelWarn, errorString)
+		hm.logger.Log(logutil.LogLevelWarn, errorString)
 		// TODO: Add more handeling to this
 		err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
@@ -145,7 +151,7 @@ func (hm *HealthMonitor) checkStartProcess(
 			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 		return
@@ -154,7 +160,7 @@ func (hm *HealthMonitor) checkStartProcess(
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
-		hm.logger.Log(manager.LogLevelError,
+		hm.logger.Log(logutil.LogLevelError,
 			fmt.Sprintf("failed to load config for %s: %v", serviceName, err))
 		return
 	}
@@ -164,10 +170,10 @@ func (hm *HealthMonitor) checkStartProcess(
 	// if configPort != 0 && !hm.canConnectToPort(configPort) {
 	// 	errorString := fmt.Sprintf("service %s is not running on port %d", serviceName, configPort)
 
-	// 	hm.logger.Log(manager.LogLevelInfo, errorString)
+	// 	hm.logger.Log(logutil.LogLevelInfo, errorString)
 	// 	err = hm.mgr.LogToServiceStderr(serviceName, errorString)
 	// 	if err != nil {
-	// 		hm.logger.Log(manager.LogLevelError,
+	// 		hm.logger.Log(logutil.LogLevelError,
 	// 			fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 	// 	}
 	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
@@ -176,16 +182,16 @@ func (hm *HealthMonitor) checkStartProcess(
 	// 		Error:     ptr.StringPtr(errorString),
 	// 	})
 	// 	if err != nil {
-	// 		hm.logger.Log(manager.LogLevelError,
+	// 		hm.logger.Log(logutil.LogLevelError,
 	// 			fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 	// 	}
 	// 	return
 	// }
 
 	if configPort != 0 {
-		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("service %s is now running on port %d", serviceName, configPort))
+		hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("service %s is now running on port %d", serviceName, configPort))
 	} else {
-		hm.logger.Log(manager.LogLevelInfo, fmt.Sprintf("service %s is now running", serviceName))
+		hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("service %s is now running", serviceName))
 	}
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
@@ -193,7 +199,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		Error: ptr.StringPtr(""),
 	})
 	if err != nil {
-		hm.logger.Log(manager.LogLevelError,
+		hm.logger.Log(logutil.LogLevelError,
 			fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 	}
 }
@@ -205,7 +211,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	pgid := process.PGID
 
 	// if err != nil {
-	// 	hm.logger.Log(manager.LogLevelError,
+	// 	hm.logger.Log(logutil.LogLevelError,
 	// 		fmt.Sprintf("failed to load config for %s: %v", serviceName, err))
 	// 	return
 	// }
@@ -213,10 +219,10 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	if !hm.isProcessAlive(pgid) {
 		errorString := fmt.Sprintf("service %s is not running", serviceName)
 
-		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.logger.Log(logutil.LogLevelInfo, errorString)
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 
@@ -226,7 +232,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 	}
@@ -235,10 +241,10 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	// //NOTE: Does a failed check on the port mean the process is wrong, or the check is wrong?
 	// connectable, err := hm.canConnectToPort(configPort)
 	// if err != nil {
-	// 	hm.logger.Log(manager.LogLevelInfo, err.Error())
+	// 	hm.logger.Log(logutil.LogLevelInfo, err.Error())
 	// 	err = hm.mgr.LogToServiceStderr(serviceName, err.Error())
 	// 	if err != nil {
-	// 		hm.logger.Log(manager.LogLevelError,
+	// 		hm.logger.Log(logutil.LogLevelError,
 	// 			fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 	// 	}
 	// 	return
@@ -247,10 +253,10 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	// if configPort != 0 && !connectable {
 	// 	errorString := fmt.Sprintf("service %s is not running on port %d", serviceName, configPort)
 
-	// 	hm.logger.Log(manager.LogLevelInfo, errorString)
+	// 	hm.logger.Log(logutil.LogLevelInfo, errorString)
 	// 	err = hm.mgr.LogToServiceStderr(serviceName, errorString)
 	// 	if err != nil {
-	// 		hm.logger.Log(manager.LogLevelError,
+	// 		hm.logger.Log(logutil.LogLevelError,
 	// 			fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 	// 	}
 	// 	err = hm.db.UpdateProcessHistoryEntry(pid, database.ProcessHistoryUpdate{
@@ -259,7 +265,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	// 		Error:     ptr.StringPtr(errorString),
 	// 	})
 	// 	if err != nil {
-	// 		hm.logger.Log(manager.LogLevelError,
+	// 		hm.logger.Log(logutil.LogLevelError,
 	// 			fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 	// 	}
 	// 	return
@@ -273,7 +279,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
-		hm.logger.Log(manager.LogLevelError,
+		hm.logger.Log(logutil.LogLevelError,
 			fmt.Sprintf("failed to load config for %s: %v", serviceName, err))
 		return
 	}
@@ -281,10 +287,10 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 	if hm.isProcessAlive(pgid) {
 		updateString := fmt.Sprintf("service %s is running", serviceName)
 
-		hm.logger.Log(manager.LogLevelInfo, updateString)
+		hm.logger.Log(logutil.LogLevelInfo, updateString)
 		err = hm.mgr.LogToServiceStdout(serviceName, updateString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service output for %s: %v", serviceName, err))
 		}
 
@@ -293,7 +299,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 			Error: ptr.StringPtr(""),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 		return
@@ -312,16 +318,16 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 			errorString = fmt.Sprintf("restarting service %s", serviceName)
 		}
 
-		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.logger.Log(logutil.LogLevelInfo, errorString)
 		err = hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 		_, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to restart the service %s: %v", serviceName, err))
 			return
 		}
@@ -336,10 +342,10 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 	if processIsAlive {
 		updateString := fmt.Sprintf("service %s is running", serviceName)
 
-		hm.logger.Log(manager.LogLevelInfo, updateString)
+		hm.logger.Log(logutil.LogLevelInfo, updateString)
 		err := hm.mgr.LogToServiceStdout(serviceName, updateString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service output for %s: %v", serviceName, err))
 		}
 
@@ -348,7 +354,7 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 			Error: ptr.StringPtr(""),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 		return
@@ -357,10 +363,10 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 	if !processIsAlive {
 		errorString := fmt.Sprintf("service %s is not running", serviceName)
 
-		hm.logger.Log(manager.LogLevelInfo, errorString)
+		hm.logger.Log(logutil.LogLevelInfo, errorString)
 		err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to log service error output for %s: %v", serviceName, err))
 		}
 
@@ -370,7 +376,7 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 			Error:     ptr.StringPtr(errorString),
 		})
 		if err != nil {
-			hm.logger.Log(manager.LogLevelError,
+			hm.logger.Log(logutil.LogLevelError,
 				fmt.Sprintf("failed to updated process history entry for %s: %v", serviceName, err))
 		}
 	}

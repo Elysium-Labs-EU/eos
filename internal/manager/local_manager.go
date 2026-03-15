@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -21,11 +22,12 @@ import (
 type LocalManager struct {
 	db      database.Database
 	ctx     context.Context
+	logger  logutil.ProcessLogger
 	baseDir string
 }
 
-func NewLocalManager(db *database.DB, baseDir string, ctx context.Context) *LocalManager {
-	return &LocalManager{db: db, baseDir: baseDir, ctx: ctx}
+func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger logutil.ProcessLogger) *LocalManager {
+	return &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger}
 }
 
 var ErrServiceAlreadyRegistered = errors.New("service already registered")
@@ -157,6 +159,41 @@ func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath s
 	return nil
 }
 
+func newPipeForStd() (r *os.File, w *os.File, err error) {
+	r, w, err = os.Pipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating pipe: %w", err)
+	}
+
+	return r, w, nil
+}
+
+func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
+	tw := &logutil.TimestampWriter{W: w}
+	if _, copyErr := io.Copy(tw, r); copyErr != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read log pipe data to timestamp writer for %s: %v", name, copyErr))
+	}
+	if err := r.Close(); err != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read log file pipe for %s: %v", name, err))
+	}
+	if err := w.Close(); err != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing write file for %s: %v", name, err))
+	}
+}
+
+func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
+	tw := &logutil.TimestampWriter{W: w}
+	if _, copyErr := io.Copy(tw, r); copyErr != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read error log pipe data to timestamp writer for %s: %v", name, copyErr))
+	}
+	if err := r.Close(); err != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read error log file pipe for %s: %v", name, err))
+	}
+	if err := w.Close(); err != nil {
+		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing write error file for %s: %v", name, err))
+	}
+}
+
 var ErrAlreadyRunning = errors.New("already running")
 
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
@@ -182,7 +219,6 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	if serviceInstance != nil {
 		// TODO: return found PGID somehow instead?
 		return 0, ErrAlreadyRunning
-		// return 0, fmt.Errorf("service instance already found. use 'eos restart %s' to restart this service instead", name)
 	}
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
@@ -213,14 +249,52 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
+	// defer func() {
+	// 	if closeErr := logFile.Close(); closeErr != nil && err == nil {
+	// 		err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
+	// 	}
+	// }()
+	// defer func() {
+	// 	if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
+	// 		err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
+	// 	}
+	// }()
+
+	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
+	if err != nil {
+		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
+	}
+
+	readErrorLogFilePipe, writeErrorLogFilePipe, err := newPipeForStd()
+	if err != nil {
+		return 0, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
+	}
+
+	startSuccess := false
 	defer func() {
-		if closeErr := logFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
-		}
-	}()
-	defer func() {
-		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
+		if !startSuccess {
+			var closeErrs []error
+			if closeErr := readLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing read log file pipe: %w", closeErr))
+			}
+			if closeErr := writeLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing write log file pipe: %w", closeErr))
+			}
+			if closeErr := readErrorLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing read error log file pipe: %w", closeErr))
+			}
+			if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing write error log file pipe: %w", closeErr))
+			}
+			if closeErr := logFile.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing log file: %w", closeErr))
+			}
+			if closeErr := errorLogFile.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing error log file: %w", closeErr))
+			}
+			if len(closeErrs) > 0 {
+				err = errors.Join(err, errors.Join(closeErrs...))
+			}
 		}
 	}()
 
@@ -236,6 +310,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		}
 	}
 
+	// commandWithPath := filepath.Join(service.DirectoryPath, config.Command)
 	startCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -243,24 +318,35 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	// TODO: Add dynamic PATH variable addition
 	startCommand.Dir = service.DirectoryPath
 	env := buildEnvironment(config)
-	if err != nil {
-		return 0, fmt.Errorf("building environment: %w", err)
-	}
+
 	startCommand.Env = env
-	startCommand.Stdout = &logutil.TimestampWriter{W: logFile}
-	startCommand.Stderr = &logutil.TimestampWriter{W: errorLogFile}
+	startCommand.Stdout = writeLogFilePipe
+	startCommand.Stderr = writeErrorLogFilePipe
 
-	// commandWithPath := filepath.Join(service.DirectoryPath, config.Command)
-	err = startCommand.Start()
+	if startErr := startCommand.Start(); startErr != nil {
+		return 0, fmt.Errorf("start command failed with: %w", startErr)
+	}
+	startSuccess = true
 
-	if err != nil {
-		return 0, fmt.Errorf("start command failed with: %w", err)
+	if closeErr := writeLogFilePipe.Close(); closeErr != nil {
+		return 0, fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
 	}
 
-	pgid = startCommand.Process.Pid
+	if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
+		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
+	}
+
+	go m.pipeToLogFile(readLogFilePipe, logFile, name)
+	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
+
 	go func() {
 		_ = startCommand.Wait()
 	}()
+
+	pgid, err = syscall.Getpgid(startCommand.Process.Pid)
+	if err != nil {
+		return 0, fmt.Errorf("getting pgid: %w", err)
+	}
 
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
@@ -274,7 +360,6 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt: ptr.TimePtr(time.Now()),
 	})
-
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
@@ -285,7 +370,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 
 	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
 	if err != nil {
-		killErr := syscall.Kill(pgid, syscall.SIGKILL)
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
 			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
 		}
@@ -336,14 +421,52 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
+	// defer func() {
+	// 	if closeErr := logFile.Close(); closeErr != nil && err == nil {
+	// 		err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
+	// 	}
+	// }()
+	// defer func() {
+	// 	if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
+	// 		err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
+	// 	}
+	// }()
+
+	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
+	if err != nil {
+		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
+	}
+
+	readErrorLogFilePipe, writeErrorLogFilePipe, err := newPipeForStd()
+	if err != nil {
+		return 0, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
+	}
+
+	restartSuccess := false
 	defer func() {
-		if closeErr := logFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
-		}
-	}()
-	defer func() {
-		if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
+		if !restartSuccess {
+			var closeErrs []error
+			if closeErr := readLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing read log file pipe: %w", closeErr))
+			}
+			if closeErr := writeLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing write log file pipe: %w", closeErr))
+			}
+			if closeErr := readErrorLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing read error log file pipe: %w", closeErr))
+			}
+			if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing write error log file pipe: %w", closeErr))
+			}
+			if closeErr := logFile.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing log file: %w", closeErr))
+			}
+			if closeErr := errorLogFile.Close(); closeErr != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("closing error log file: %w", closeErr))
+			}
+			if len(closeErrs) > 0 {
+				err = errors.Join(err, errors.Join(closeErrs...))
+			}
 		}
 	}()
 
@@ -359,11 +482,6 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		}
 	}
 
-	env := buildEnvironment(config)
-	if err != nil {
-		return 0, fmt.Errorf("building environment: %w", err)
-	}
-
 	stopResult, err := m.StopService(name, gracePeriod, tickerPeriod)
 	if err != nil {
 		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
@@ -374,18 +492,39 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 
 	restartCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	restartCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	// TODO: We are sourcing from a different object then the config here?
 	restartCommand.Dir = service.DirectoryPath
+	env := buildEnvironment(config)
+
 	restartCommand.Env = env
-	restartCommand.Stdout = &logutil.TimestampWriter{W: logFile}
-	restartCommand.Stderr = &logutil.TimestampWriter{W: errorLogFile}
+	restartCommand.Stdout = writeLogFilePipe
+	restartCommand.Stderr = writeErrorLogFilePipe
 
-	err = restartCommand.Start()
-
-	if err != nil {
-		return 0, fmt.Errorf("start command failed with: %w", err)
+	if restartErr := restartCommand.Start(); restartErr != nil {
+		return 0, fmt.Errorf("restart command failed with: %w", restartErr)
 	}
-	pgid = restartCommand.Process.Pid
+	restartSuccess = true
+
+	if closeErr := writeLogFilePipe.Close(); closeErr != nil {
+		return 0, fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
+	}
+
+	if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
+		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
+	}
+
+	go m.pipeToLogFile(readLogFilePipe, logFile, name)
+	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
+
+	go func() {
+		_ = restartCommand.Wait()
+	}()
+
+	pgid, err = syscall.Getpgid(restartCommand.Process.Pid)
+	if err != nil {
+		return 0, fmt.Errorf("getting pgid: %w", err)
+	}
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    ptr.TimePtr(time.Now()),
@@ -426,7 +565,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
-	logPath, errorLogPath, err := m.CreateServiceLogFiles(serviceName)
+	logPath, errorLogPath, err := m.NewServiceLogFiles(serviceName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create log file paths: %w", err)
 	}

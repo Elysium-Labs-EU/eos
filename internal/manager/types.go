@@ -24,6 +24,6 @@ type ServiceManager interface {
 
 	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
 
-	CreateServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error)
+	NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error)
 	GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error)
 }

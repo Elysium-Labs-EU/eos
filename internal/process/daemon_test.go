@@ -12,7 +12,7 @@ import (
 
 func TestAllMethodsHandled(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context())
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	for method := range types.ValidMethods {
 		t.Run(string(method), func(t *testing.T) {
@@ -26,3 +26,10 @@ func TestAllMethodsHandled(t *testing.T) {
 		})
 	}
 }
+
+// func TestStartDaemon(t *testing.T) {}
+// func TestStopDaemon(t *testing.T) {}
+// func TestStatusDaemon(t *testing.T) {}
+// func TestHandleIncomingCommands(t *testing.T) {}
+// func TestHandleConnection(t *testing.T) {}
+// func TestSendErrorResponse(t *testing.T) {}
