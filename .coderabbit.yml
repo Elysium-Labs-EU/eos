@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+reviews:
+  profile: "assertive"
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        This project uses Go 1.26.1. Review against Go 1.26.1 idioms and stdlib only.
+        Do NOT suggest changes based on older Go versions.
+        Go 1.26.1 supports: rangefunc iterators, improved type inference, and all
+        features introduced up to and including 1.26. Assume all modern Go patterns
+        are available.
