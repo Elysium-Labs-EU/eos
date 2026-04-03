@@ -56,14 +56,14 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			selectedLogFilepath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
+			if lines < 0 || lines > 10000 {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "line count must be between 0 and 10000")
 				return
 			}
 
-			if lines < 0 || lines > 10000 {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "line count must be between 0 and 10000")
+			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
 				return
 			}
 
@@ -71,7 +71,7 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			if follow {
 				tailArgs = append(tailArgs, "-f")
 			}
-			tailArgs = append(tailArgs, *selectedLogFilepath)
+			tailArgs = append(tailArgs, *logPath)
 
 			if follow {
 				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
@@ -86,7 +86,7 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			err = tailLogCommand.Run()
 
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", err))
 			}
 		},
 	}

@@ -1,134 +1,111 @@
 .PHONY: help dev build install test lint clean docker-*  test-docker-* release release-local fix
 
-
-help:
-	@echo "Available targets:"
-	@echo "  make dev              - Run eos locally"
-	@echo "  make build            - Build binary with version info"
-	@echo "  make install          - Install to ~/.local/bin"
-	@echo "  make test             - Run tests"
-	@echo "  make lint             - Run all linters"
-	@echo "  make ci               - Run all CI checks locally"
-	@echo ""
-	@echo "Docker testing:"
-	@echo "  make docker-local     - Test with local Docker setup"
-	@echo "  make docker-vps       - Test install.sh in VPS simulator"
-	@echo "  make docker-clean     - Clean up Docker resources"
-	@echo ""
-	@echo "Release:"
-	@echo "  make release-local    	- Build release binaries locally"
-	@echo "  make release TAG=v1.2.0  - Tag and push a release"
-
-
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
 VERSION_PKG := eos/internal/buildinfo
 LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).GitCommit=$(COMMIT)' -X '$(VERSION_PKG).BuildDate=$(BUILD_DATE)' -w -s"
 
-
 BINARY_NAME=eos
 GOBIN=./bin
 INSTALL_PATH=~/.local/bin
 
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-28s\033[0m %s\n", $$1, $$2}' | sort
 
-dev:
+dev: ## Run eos locally
 	@echo "Running eos in development mode..."
 	go run . daemon
 
-
-build:
+build: ## Build binary with version info
 	@echo "Building eos $(VERSION)..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=0 go build $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME) .
 	@echo "Binary built: $(GOBIN)/$(BINARY_NAME)"
 
-# Install locally
-install: build
+install: build ## Install to ~/.local/bin
 	@echo "Installing to $(INSTALL_PATH)..."
 	@mkdir -p $(INSTALL_PATH)
 	cp $(GOBIN)/$(BINARY_NAME) $(INSTALL_PATH)/
 	@echo "Installed! Run 'eos --help' to get started"
 
-test:
+test: ## Run tests
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
 
-test-coverage:
+test-coverage: ## Get test coverage
 	@echo "Getting test coverage..."
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-lint:
+lint: ## Run all linters
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
 	golangci-lint run --timeout=5m
 	
-fix:
+fix: ## Fix go formatting
 	golangci-lint fmt
 	go tool fieldalignment -fix ./...
 
-ci: test lint
+ci: test lint ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
-# Docker - Local testing (nginx + eos container)
-docker-local:
+docker-local: ## Test with local Docker setup
 	@echo "Starting local Docker test environment..."
 	@mkdir -p test-files-local/nginx-logs
 	@sh -c 'docker compose -f test-files-local/docker-compose.yml up --build'
 
-docker-local-down:
+docker-local-down:  ## Tear down local Docker setup
 	docker compose -f test-files-local/docker-compose.yml down
 
-docker-local-logs:
+docker-local-logs: ## Tail logs local Docker setup
 	docker compose -f test-files-local/docker-compose.yml logs -f
 
-# Docker - VPS simulator (test install.sh)
-docker-vps:
+docker-vps: ## Test install.sh in VPS simulator
 	@echo "Starting VPS simulator..."
 	@echo "Once started, run: make docker-vps-test"
 	@sh -c 'docker compose -f test-files-vps/docker-compose.yml up --build -d'
 
-docker-vps-down:
+docker-vps-down: ## Tear down VPS simulator
 	docker compose -f test-files-vps/docker-compose.yml down
 
-docker-vps-test:
+docker-vps-test: ## Run install.sh in VPS simulator
 	@echo "Testing install.sh in VPS simulator..."
 	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
 
-docker-vps-shell:
+docker-vps-shell: ## Open shell in VPS simulator
 	@echo "Opening shell in VPS simulator..."
 	docker exec -it vps-test-eos bash
 
-docker-vps-status:
+docker-vps-status: ## Check eos service status in VPS simulator
 	@echo "Checking eos service status in VPS..."
 	docker exec -it vps-test-eos systemctl status eos
 
-docker-vps-logs:
+docker-vps-logs: ## Follow eos logs in VPS simulator
 	@echo "Following eos logs in VPS..."
 	docker exec -it vps-test-eos journalctl -u eos -f
 
-test-docker-build:
+test-docker-build: ## Build Linux test Docker image
 	docker build -f test-files/Dockerfile.test -t eos-test .
 
-test-docker-linux: test-docker-build
+test-docker-linux: test-docker-build ## Run tests in Linux Docker container
 	docker run --rm eos-test
 
-test-docker-linux-verbose: test-docker-build
+test-docker-linux-verbose: test-docker-build ## Run tests in Linux Docker container with verbose output
 	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v
 
-test-docker-linux-single: test-docker-build
+test-docker-linux-single: test-docker-build ## Run a single test in Linux Docker container (TEST=TestName)
 	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v -run $(TEST)
 
-docker-clean:
+docker-clean: ## Clean up Docker resources
 	@echo "Cleaning up Docker resources..."
 	docker compose -f test-files-local/docker-compose.yml down -v 2>/dev/null || true
 	docker compose -f test-files-vps/docker-compose.yml down -v 2>/dev/null || true
 	docker rmi eos-test 2>/dev/null || true
 	rm -rf test-files-local/nginx-logs
 
-# Build release binaries locally (for testing before actual release)
-release-local:
+release-local: ## Build release binaries locally
 	@echo "Building release binaries..."
 	@mkdir -p dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/eos-linux-amd64 .
@@ -137,17 +114,17 @@ release-local:
 	@echo "Release binaries built in ./dist/"
 	@ls -lh dist/
 
-release:
+release: ## Tag and push a release
 	@if [ -z "$(TAG)" ]; then echo "Usage: make release TAG=v1.2.0"; exit 1; fi
 	git tag -a $(TAG) -m "Release $(TAG)"
 	git push origin $(TAG)
 
-pre-release:
+pre-release: ## Tag and push a pre-release
 	@if [ -z "$(TAG)" ]; then echo "Usage: make pre-release TAG=v1.2.0-rc.1"; exit 1; fi
 	git tag -a $(TAG) -m "Pre-release $(TAG)"
 	git push origin $(TAG)
 
-test-install-local: release-local
+test-install-local: release-local ## Build and test local binary install in VPS simulator
 	@$(MAKE) docker-vps
 	@sleep 5
 	@echo "Copying binary to VPS..."
@@ -157,13 +134,13 @@ test-install-local: release-local
 	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh -y --local /usr/local/src/eos-local"
 	docker exec -it vps-test-eos bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash && \. "$$HOME/.nvm/nvm.sh" && nvm install 24 && corepack enable pnpm'
 
-test-install-remote:
+test-install-remote: ## Test remote install.sh in VPS simulator
 	@$(MAKE) docker-vps
 	@sleep 5
 	@echo "Running install.sh..."
 	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
 
-clean:
+clean: ## Remove build artifacts and clean Docker resources
 	@echo "Cleaning..."
 	rm -rf $(GOBIN) dist/
 	@$(MAKE) docker-clean
