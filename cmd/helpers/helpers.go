@@ -48,6 +48,14 @@ func DetermineUptime(mostRecentProcess *types.ProcessHistory) string {
 	return humanize.Time(*mostRecentProcess.StartedAt)
 }
 
+func DetermineProcessMemoryInMb(rssMemoryKb int64) string {
+	if rssMemoryKb <= 0 {
+		return "-"
+	}
+
+	return fmt.Sprintf("%.1f MB", float64(rssMemoryKb)/1024)
+}
+
 func DetermineError(errorStringPtr *string) string {
 	if errorStringPtr == nil {
 		return "-"

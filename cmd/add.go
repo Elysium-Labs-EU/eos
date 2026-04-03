@@ -20,7 +20,9 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Use:   "add <path>",
 		Short: "Register a service from a directory",
 		Long:  `Register a service by providing the path to a directory containing a service configuration.`,
-		Args:  cobra.ExactArgs(1),
+		Example: `  eos add ./path/to/project            # find service.yaml automatically in the directory
+ eos add ./path/to/project/service.yaml  # point directly to the config file`,
+		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			projectPath := args[0]
 			mgr := getManager()

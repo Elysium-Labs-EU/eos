@@ -15,7 +15,6 @@ import (
 
 	"eos/internal/database"
 	"eos/internal/logutil"
-	"eos/internal/ptr"
 	"eos/internal/types"
 )
 
@@ -249,17 +248,6 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
-	// defer func() {
-	// 	if closeErr := logFile.Close(); closeErr != nil && err == nil {
-	// 		err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
-	// 	}
-	// }()
-	// defer func() {
-	// 	if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-	// 		err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
-	// 	}
-	// }()
-
 	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
 	if err != nil {
 		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
@@ -298,16 +286,8 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		}
 	}()
 
-	if config.Runtime.Path != "" {
-		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
-			return 0, fmt.Errorf("validating config runtime: %w", runtimePathErr)
-		}
-	} else {
-		if config.Runtime.Type == "node" || config.Runtime.Type == "nodejs" {
-			if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
-				return 0, fmt.Errorf("node not found in system PATH")
-			}
-		}
+	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+		return 0, binaryErr
 	}
 
 	// commandWithPath := filepath.Join(service.DirectoryPath, config.Command)
@@ -358,7 +338,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
-		StartedAt: ptr.TimePtr(time.Now()),
+		StartedAt: new(time.Now()),
 	})
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
@@ -378,8 +358,8 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 
 	updates := database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateStarting),
-		StartedAt: ptr.TimePtr(time.Now()),
+		State:     new(types.ProcessStateStarting),
+		StartedAt: new(time.Now()),
 	}
 
 	// TODO: Consider adding process cleanup (kill) here for consistency
@@ -421,17 +401,6 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 
-	// defer func() {
-	// 	if closeErr := logFile.Close(); closeErr != nil && err == nil {
-	// 		err = fmt.Errorf("closing log file for %s: %w", name, closeErr)
-	// 	}
-	// }()
-	// defer func() {
-	// 	if closeErr := errorLogFile.Close(); closeErr != nil && err == nil {
-	// 		err = fmt.Errorf("closing error log file for %s: %w", name, closeErr)
-	// 	}
-	// }()
-
 	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
 	if err != nil {
 		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
@@ -470,16 +439,8 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		}
 	}()
 
-	if config.Runtime.Path != "" {
-		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
-			return 0, fmt.Errorf("validating config runtime: %w", runtimePathErr)
-		}
-	} else {
-		if config.Runtime.Type == "node" || config.Runtime.Type == "nodejs" {
-			if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
-				return 0, fmt.Errorf("node not found in system PATH")
-			}
-		}
+	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+		return 0, binaryErr
 	}
 
 	stopResult, err := m.StopService(name, gracePeriod, tickerPeriod)
@@ -527,8 +488,8 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
-		StartedAt:    ptr.TimePtr(time.Now()),
-		RestartCount: ptr.IntPtr(serviceInstance.RestartCount + 1),
+		StartedAt:    new(time.Now()),
+		RestartCount: new(serviceInstance.RestartCount + 1),
 	})
 
 	if err != nil {
@@ -549,8 +510,8 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 
 	updates := database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateStarting),
-		StartedAt: ptr.TimePtr(time.Now()),
+		State:     new(types.ProcessStateStarting),
+		StartedAt: new(time.Now()),
 	}
 
 	// TODO: Consider adding process cleanup (kill) here for consistency
@@ -562,6 +523,35 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return pgid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
 	}
 	return pgid, nil
+}
+
+func (m LocalManager) validateRuntimeBinary(config types.ServiceConfig) error {
+	if config.Runtime.Path != "" {
+		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
+			return fmt.Errorf("validating config runtime: %w", runtimePathErr)
+		}
+		// Custom path validated successfully; skip system PATH check
+		return nil
+	}
+
+	switch config.Runtime.Type {
+	case "bun":
+		if _, lookPathErr := exec.LookPath("bun"); lookPathErr != nil {
+			return fmt.Errorf("bun not found in system PATH")
+		}
+	case "deno":
+		if _, lookPathErr := exec.LookPath("deno"); lookPathErr != nil {
+			return fmt.Errorf("deno not found in system PATH")
+		}
+	case "node", "nodejs":
+		if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
+			return fmt.Errorf("node not found in system PATH")
+		}
+	default:
+		return nil
+	}
+
+	return nil
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
@@ -723,8 +713,8 @@ func updateProcessHistoryEntriesAsStopped(m *LocalManager, processes map[int]boo
 	errored := make(map[int]string, len(processes))
 	for pgid := range processes {
 		updates := database.ProcessHistoryUpdate{
-			State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
-			StoppedAt: ptr.TimePtr(time.Now()),
+			State:     new(types.ProcessStateStopped),
+			StoppedAt: new(time.Now()),
 		}
 
 		err := m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
@@ -740,7 +730,7 @@ func updateProcessHistoryEntriesAsUnknown(m *LocalManager, processes map[int]str
 	errored := make(map[int]string, len(processes))
 	for pgid := range processes {
 		updates := database.ProcessHistoryUpdate{
-			State: ptr.ProcessStatePtr(types.ProcessStateUnknown),
+			State: new(types.ProcessStateUnknown),
 		}
 
 		err := m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
@@ -814,7 +804,39 @@ func validateRuntimePath(runtime types.Runtime) error {
 		return fmt.Errorf("the specified runtime path is not a directory")
 	}
 
-	if runtime.Type == "nodejs" || runtime.Type == "node" {
+	switch runtime.Type {
+	case "bun":
+		bunPath := filepath.Join(runtimePath, "bun")
+		bunInfo, err := os.Stat(bunPath)
+		if err != nil {
+			return fmt.Errorf("unable to find bun binary in specified path")
+		}
+
+		if bunInfo.IsDir() {
+			return fmt.Errorf("the constructed full path for the runtime is a directory")
+		}
+
+		if bunInfo.Mode()&0111 == 0 {
+			return fmt.Errorf("bun binary is not executable: %s", bunPath)
+		}
+		return nil
+	case "deno":
+		denoPath := filepath.Join(runtimePath, "deno")
+		denoInfo, err := os.Stat(denoPath)
+		if err != nil {
+			return fmt.Errorf("unable to find deno binary in specified path")
+		}
+
+		if denoInfo.IsDir() {
+			return fmt.Errorf("the constructed full path for the runtime is a directory")
+		}
+
+		if denoInfo.Mode()&0111 == 0 {
+			return fmt.Errorf("deno binary is not executable: %s", denoPath)
+		}
+
+		return nil
+	case "node", "nodejs":
 		nodePath := filepath.Join(runtimePath, "node")
 		nodeInfo, err := os.Stat(nodePath)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/cmd/helpers"
 	"eos/internal/config"
 	"eos/internal/manager"
 	"eos/internal/ui"
@@ -20,7 +21,10 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 		Use:   "stop <service-name>",
 		Short: "Stop all processes for a service",
 		Long:  `Stops all the processes for a registered service.`,
-		Args:  cobra.ExactArgs(1),
+		Example: `  eos stop cms              # graceful stop with configurable grace period
+  eos stop cms --force      # immediate kill`,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/cmd/helpers"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
@@ -21,7 +22,12 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Use:   "logs",
 		Short: "View logs for a registered service",
 		Long:  `Stream or display logs for a registered service. Shows output logs by default; use --error for error logs, --lines to control history depth, and --follow to tail in real time.`,
-		Args:  cobra.ExactArgs(1),
+		Example: `  eos logs cms                   # last 300 lines of stdout log
+  eos logs cms --lines 100      # last 100 lines
+  eos logs cms --follow         # stream live output
+  eos logs cms --error          # error log instead of output log`,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()

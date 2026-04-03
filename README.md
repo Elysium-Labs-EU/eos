@@ -1,5 +1,9 @@
 # eos - Service Orchestration Tool
 
+Run and manage background services on your VPS without the overhead. eos is a lightweight process manager written in Go: register services, start them, and keep track of what's running. No Node.js runtime required, no global daemon to maintain.
+
+If you've used PM2 or similar tools and want something smaller and self-contained, eos covers the core workflow.
+
 ## Usage
 
 ### Quick Install
@@ -15,7 +19,6 @@ Using wget
 wget https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh
 sudo bash install.sh
 ```
-
 
 ### Manual Installation
 
@@ -70,7 +73,7 @@ rm ~/.eos/state.db
 ./eos run --once <service-name>
 ```
 
-**Expected:** Service started (or restarted) via daemon. If the service is already running, it will be restarted automatically — unless `--once` is set. Using `-f` will register the service if it hasn't been registered yet, then start it.
+**Expected:** Service started (or restarted) via daemon. If the service is already running, it will be restarted automatically unless `--once` is set. Using `-f` will register the service if it hasn't been registered yet, then start it.
 
 ### Service Configuration File
 

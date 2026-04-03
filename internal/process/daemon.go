@@ -19,7 +19,6 @@ import (
 	"eos/internal/logutil"
 	"eos/internal/manager"
 	"eos/internal/monitor"
-	"eos/internal/ptr"
 	"eos/internal/types"
 )
 
@@ -126,8 +125,8 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 
 					if status.ExitStatus() == 0 {
 						updates := database.ProcessHistoryUpdate{
-							State:     ptr.ProcessStatePtr(types.ProcessStateStopped),
-							StoppedAt: ptr.TimePtr(time.Now()),
+							State:     new(types.ProcessStateStopped),
+							StoppedAt: new(time.Now()),
 						}
 						updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
 						if updateErr != nil {
@@ -137,9 +136,9 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 					}
 
 					updates := database.ProcessHistoryUpdate{
-						State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
-						StoppedAt: ptr.TimePtr(time.Now()),
-						Error:     ptr.StringPtr("Zombie process has been reaped"),
+						State:     new(types.ProcessStateFailed),
+						StoppedAt: new(time.Now()),
+						Error:     new("Zombie process has been reaped"),
 					}
 
 					err = db.UpdateProcessHistoryEntry(ctx, pid, updates)

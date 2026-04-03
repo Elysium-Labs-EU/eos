@@ -11,10 +11,17 @@ import (
 
 func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "update <service-name> <new-path>",
-		Short: "Update a registered service's path",
-		Long:  `Update the directory path for an existing registered service.`,
-		Args:  cobra.ExactArgs(2),
+		Use:     "update <service-name> <new-path>",
+		Short:   "Update a registered service's path",
+		Long:    `Update the directory path for an existing registered service.`,
+		Example: `  eos update cms /new/path/to/cms`,
+		Args:    cobra.ExactArgs(2),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return helpers.ServiceNameCompletions(getManager)(cmd, args, toComplete)
+			}
+			return nil, cobra.ShellCompDirectiveDefault // second arg → file path
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			newProjectPath := args[1]

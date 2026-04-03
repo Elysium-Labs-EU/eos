@@ -18,7 +18,6 @@ import (
 	"eos/internal/config"
 	"eos/internal/database"
 	"eos/internal/manager"
-	"eos/internal/ptr"
 	"eos/internal/testutil"
 	"eos/internal/types"
 )
@@ -160,7 +159,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	if strings.Count(output, "\n") != 1 {
 		t.Fatal("No logs were created")
 	}
-	if !strings.Contains(output, "is now running on port") {
+	if !strings.Contains(output, "now running on port") {
 		t.Fatalf("Process should be running, got: %s", output)
 	}
 }
@@ -957,10 +956,10 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	}
 
 	err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
-		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Second)),
-		StoppedAt: ptr.TimePtr(time.Now().Add(-2 * time.Second)),
-		Error:     ptr.StringPtr("Simulated failure"),
+		State:     new(types.ProcessStateFailed),
+		StartedAt: new(time.Now().Add(-10 * time.Second)),
+		StoppedAt: new(time.Now().Add(-2 * time.Second)),
+		Error:     new("Simulated failure"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update fake process history: %v", err)
@@ -987,7 +986,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			t.Fatalf("Iteration %d: Failed to get service instance", i)
 		}
 
-		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, &maxRestartCount)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, maxRestartCount)
 		time.Sleep(50 * time.Millisecond)
 
 		updatedInstance, _ := hm.mgr.GetServiceInstance(serviceName)
@@ -1020,10 +1019,10 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			}
 
 			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
-				State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
-				StartedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
-				StoppedAt: ptr.TimePtr(time.Now()),
-				Error:     ptr.StringPtr("Simulated failure"),
+				State:     new(types.ProcessStateFailed),
+				StartedAt: new(time.Now().Add(-5 * time.Minute)),
+				StoppedAt: new(time.Now()),
+				Error:     new("Simulated failure"),
 			})
 			if err != nil {
 				t.Fatalf("Failed to update process history entry: %v", err)
@@ -1224,8 +1223,8 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 	// Transition to Running
 	err = db.UpdateProcessHistoryEntry(t.Context(), pid1, database.ProcessHistoryUpdate{
-		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
-		Error: ptr.StringPtr(""),
+		State: new(types.ProcessStateRunning),
+		Error: new(""),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history entry: %v", err)
@@ -1269,10 +1268,10 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Failed to register fake process history for %s: %v", svc3Name, err)
 	}
 	err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
-		StartedAt: ptr.TimePtr(time.Now().Add(-10 * time.Minute)),
-		StoppedAt: ptr.TimePtr(time.Now().Add(-5 * time.Minute)),
-		Error:     ptr.StringPtr("previous failure"),
+		State:     new(types.ProcessStateFailed),
+		StartedAt: new(time.Now().Add(-10 * time.Minute)),
+		StoppedAt: new(time.Now().Add(-5 * time.Minute)),
+		Error:     new("previous failure"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history for %s: %v", svc3Name, err)
@@ -1282,8 +1281,15 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Failed to create service log files for %s: %v", svc3Name, err)
 	}
 
+	services, err := hm.mgr.GetAllServiceCatalogEntries()
+
+	if err != nil {
+		t.Fatalf("Failed to get services: %v", err)
+		return
+	}
+
 	// Run the full dispatch
-	hm.checkAllServices(t.Context())
+	hm.checkAllServices(t.Context(), services)
 
 	// Allow time for any async effects
 	time.Sleep(200 * time.Millisecond)
@@ -1396,9 +1402,9 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 
 	// Manually mark it as Failed in the DB (simulating a false failure detection)
 	err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
-		StoppedAt: ptr.TimePtr(time.Now()),
-		Error:     ptr.StringPtr("falsely marked as failed"),
+		State:     new(types.ProcessStateFailed),
+		StoppedAt: new(time.Now()),
+		Error:     new("falsely marked as failed"),
 	})
 	if err != nil {
 		t.Fatalf("Failed to update process history: %v", err)
@@ -1422,7 +1428,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	restartCountBefore := instance.RestartCount
 
 	// Call checkFailedProcess — the process is alive, so it should recover
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, &healthConfig.MaxRestart)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, healthConfig.MaxRestart)
 
 	// Verify: state should be back to Running
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)

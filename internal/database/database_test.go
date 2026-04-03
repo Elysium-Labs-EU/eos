@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"eos/internal/database"
-	"eos/internal/ptr"
 	"eos/internal/testutil"
 	"eos/internal/types"
 )
@@ -254,7 +253,7 @@ func TestUpdateServiceInstance(t *testing.T) {
 
 	now := time.Now().Truncate(time.Second)
 	updates := database.ServiceInstanceUpdate{
-		RestartCount: ptr.IntPtr(5),
+		RestartCount: new(5),
 		StartedAt:    &now,
 	}
 	err = db.UpdateServiceInstance(t.Context(), "cms", updates)
@@ -276,7 +275,7 @@ func TestUpdateServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
 	err := db.UpdateServiceInstance(t.Context(), "ghost", database.ServiceInstanceUpdate{
-		RestartCount: ptr.IntPtr(1),
+		RestartCount: new(1),
 	})
 	if err == nil {
 		t.Fatal("expected error when updating nonexistent instance")
@@ -463,7 +462,7 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	errorMsg := "connection refused"
 
 	err = db.UpdateProcessHistoryEntry(t.Context(), 42, database.ProcessHistoryUpdate{
-		State:     ptr.ProcessStatePtr(types.ProcessStateFailed),
+		State:     new(types.ProcessStateFailed),
 		StartedAt: &startedAt,
 		StoppedAt: &stoppedAt,
 		Error:     &errorMsg,
@@ -522,7 +521,7 @@ func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 
 	// Update only state — other nullable fields should remain nil
 	err = db.UpdateProcessHistoryEntry(t.Context(), 50, database.ProcessHistoryUpdate{
-		State: ptr.ProcessStatePtr(types.ProcessStateRunning),
+		State: new(types.ProcessStateRunning),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
@@ -546,7 +545,7 @@ func TestUpdateProcessHistoryEntry_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
 	err := db.UpdateProcessHistoryEntry(t.Context(), 99999, database.ProcessHistoryUpdate{
-		State: ptr.ProcessStatePtr(types.ProcessStateFailed),
+		State: new(types.ProcessStateFailed),
 	})
 	if err == nil {
 		t.Fatal("expected error when updating nonexistent PGID")

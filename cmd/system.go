@@ -34,11 +34,14 @@ func newSystemCmd() *cobra.Command {
 	systemCmd := &cobra.Command{
 		Use:   "system",
 		Short: "Manage the eos system settings",
+		Long:  `Manage eos system settings, check for updates, and inspect runtime configuration.`,
 	}
 
 	infoCmd := &cobra.Command{
-		Use:   "info",
-		Short: "See active system information and configurations",
+		Use:     "info",
+		Short:   "See active system information and configurations",
+		Long:    `Display active EOS configuration including install paths, daemon settings, health check limits, and shutdown grace period.`,
+		Example: `  eos system info`,
 		Run: func(cmd *cobra.Command, args []string) {
 			installDir, baseDir, config, err := createSystemConfig()
 			if err != nil {
@@ -50,8 +53,10 @@ func newSystemCmd() *cobra.Command {
 	}
 
 	updateCmd := &cobra.Command{
-		Use:   "update",
-		Short: "Apply new update if available",
+		Use:     "update",
+		Short:   "Apply new update if available",
+		Long:    `Check GitHub for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
+		Example: "  eos system update        # check and apply latest stable release\n  eos system update --pre  # include pre-releases",
 		Run: func(cmd *cobra.Command, args []string) {
 			installDir, _, systemConfig, err := createSystemConfig()
 			if err != nil {
@@ -83,8 +88,10 @@ func newSystemCmd() *cobra.Command {
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
 
 	versionCmd := &cobra.Command{
-		Use:   "version",
-		Short: "Get version of system",
+		Use:     "version",
+		Short:   "Get version of system",
+		Long:    `Print the current eos version, git commit hash, and build date.`,
+		Example: `  eos system version`,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Println(buildinfo.Get())
 		},

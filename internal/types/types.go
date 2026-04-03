@@ -21,11 +21,12 @@ type Runtime struct {
 }
 
 type ServiceConfig struct {
-	Runtime Runtime `yaml:"runtime"`
-	Name    string  `json:"name" yaml:"name"`
-	Command string  `json:"command" yaml:"command"`
-	EnvFile string  `json:"env_file,omitempty" yaml:"env_file,omitempty"`
-	Port    int     `json:"port,omitempty" yaml:"port,omitempty"`
+	Runtime       Runtime `json:"runtime" yaml:"runtime"`
+	Name          string  `json:"name" yaml:"name"`
+	Command       string  `json:"command" yaml:"command"`
+	EnvFile       string  `json:"env_file,omitempty" yaml:"env_file,omitempty"`
+	Port          int     `json:"port,omitempty" yaml:"port,omitempty"`
+	MemoryLimitMb int     `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
 }
 
 type ServiceRuntime struct {
@@ -55,6 +56,7 @@ type ProcessHistory struct {
 	UpdatedAt   *time.Time   `json:"updated_at,omitzero"`
 	ServiceName string       `json:"service_name"`
 	State       ProcessState `json:"state"`
+	RssMemoryKb int64        `json:"rss_memory_kb"`
 	PGID        int          `json:"pgid"`
 }
 

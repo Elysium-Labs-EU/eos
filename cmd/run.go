@@ -154,6 +154,17 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 		eos run myservice              start or restart a registered service
 		eos run -f ./myservice.yaml    register and start from a service file
 		eos run --once myservice       start only if not already running`,
+
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) != 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			// When --file is already set, let the shell complete file paths instead
+			if f, _ := cmd.Flags().GetString("file"); f != "" {
+				return nil, cobra.ShellCompDirectiveDefault
+			}
+			return helpers.ServiceNameCompletions(getManager)(cmd, args, toComplete)
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			mgr := getManager()
 			cfg := getConfig()

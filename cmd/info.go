@@ -15,10 +15,12 @@ import (
 
 func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "info",
-		Short: "Shows info on the service",
-		Long:  "Shows info on the service",
-		Args:  cobra.ExactArgs(1),
+		Use:               "info",
+		Short:             "Shows info on the service",
+		Long:              `Show detailed information about a registered service including its process state, runtime statistics, log file paths, and full configuration.`,
+		Example:           `  eos info cms`,
+		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
+		Args:              cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()
@@ -62,6 +64,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				helpers.PrintKV(cmd, "status", helpers.PrintStatus(helpers.DetermineServiceStatus(processEntry)))
 				helpers.PrintKV(cmd, "pgid", fmt.Sprintf("%d", processEntry.PGID))
 				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptime(processEntry))
+				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMb(processEntry.RssMemoryKb))
 				if processEntry.Error == nil {
 					helpers.PrintKV(cmd, "error", "N/A")
 				} else {

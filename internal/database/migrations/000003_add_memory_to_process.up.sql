@@ -1,0 +1,1 @@
+ALTER TABLE process_history ADD COLUMN rss_memory_kb BIGINT DEFAULT 0 CHECK (rss_memory_kb >= 0);

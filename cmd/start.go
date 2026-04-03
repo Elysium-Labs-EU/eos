@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/cmd/helpers"
 	"eos/internal/database"
 	"eos/internal/manager"
 	"eos/internal/ui"
@@ -13,11 +14,12 @@ import (
 
 func newStartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:        "start",
-		Short:      "Starts a registered service",
-		Long:       "Starts up a registered service",
-		Deprecated: "use the new run command instead. This command will be removed in v0.0.12.",
-		Args:       cobra.ExactArgs(1),
+		Use:               "start",
+		Short:             "Starts a registered service",
+		Long:              "Starts up a registered service",
+		Deprecated:        "use the new run command instead. This command will be removed in v0.0.12.",
+		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
+		Args:              cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()

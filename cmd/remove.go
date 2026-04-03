@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"eos/cmd/helpers"
 	"eos/internal/manager"
 	"eos/internal/ui"
 )
@@ -14,10 +15,12 @@ import (
 // TODO: Add interactive check for running process, giving user option to continue or not.
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <service-name>",
-		Short: "Remove a service from the registry",
-		Long:  `Unregisters a service and removes its instance if one exists. Does not stop the service process if it is currently running.`,
-		Args:  cobra.ExactArgs(1),
+		Use:               "remove <service-name>",
+		Short:             "Remove a service from the registry",
+		Long:              `Unregisters a service and removes its instance if one exists. Does not stop the service process if it is currently running.`,
+		Example:           `  eos remove cms    # unregisters cms; does not stop a running process`,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Run: func(cmd *cobra.Command, args []string) {
 			serviceName := args[0]
 			mgr := getManager()

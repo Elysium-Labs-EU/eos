@@ -19,9 +19,10 @@ import (
 
 func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status",
-		Short: "Show the status of all services",
-		Long:  `Display the current status of all configured services including their running state, process IDs, and health information.`,
+		Use:     "status",
+		Short:   "Show the status of all services",
+		Long:    `Display the current status of all configured services including their running state, process IDs, and health information.`,
+		Example: `  eos status`,
 		Run: func(cmd *cobra.Command, args []string) {
 			mgr := getManager()
 			registeredServices, err := mgr.GetAllServiceCatalogEntries()
@@ -41,6 +42,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			type StatusServiceEntry struct {
 				Name         string
 				Status       types.ServiceStatus
+				MemoryMb     string
 				Started      string
 				Uptime       string
 				Error        string
@@ -86,6 +88,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				if mostRecentProcess != nil {
 					entry.PGID = mostRecentProcess.PGID
 					entry.Error = helpers.DetermineError(mostRecentProcess.Error)
+					entry.MemoryMb = helpers.DetermineProcessMemoryInMb(mostRecentProcess.RssMemoryKb)
 				}
 				if serviceInstance != nil && serviceInstance.StartedAt != nil {
 					entry.Started = humanize.Time(*serviceInstance.StartedAt)
@@ -104,6 +107,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 						svc.Name,
 						helpers.PrintStatus(svc.Status),
 						fmt.Sprintf("%d", svc.PGID),
+						svc.MemoryMb,
 						svc.Uptime,
 						fmt.Sprintf("%d", svc.RestartCount),
 						svc.Started,
@@ -124,7 +128,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					}
 					return ui.TableOddRowStyle
 				}).
-				Headers("name", "status", "pgid", "uptime", "restarts", "started", "error").
+				Headers("name", "status", "pgid", "memory", "uptime", "restarts", "started", "error").
 				Rows(rows...)
 
 			fmt.Println(t)

@@ -16,6 +16,8 @@ readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
 
+AUTO_YES=false
+
 # Print functions
 info() {
     echo -e "${BLUE}${BOLD}info${NC} $1"
@@ -47,6 +49,7 @@ usage() {
     echo "Options:"
     echo "  --local <path>    Use a local binary instead of downloading from GitHub"
     echo "  --help            Show this help message"
+    echo "  --yes, -y         Skip all confirmation prompts (non-interactive mode)"
     echo ""
     echo "Environment variables:"
     echo "  EOS_INSTALL_DIR   Install directory (default: /usr/local/bin)"
@@ -56,6 +59,13 @@ usage() {
 confirm() {
     local prompt="$1"
     local default="${2:-n}"
+
+    if [ "$AUTO_YES" = true ]; then
+        [[ "$default" =~ ^[Yy]$ ]]
+        return $?
+    fi
+
+
     local response
     
     if [ "$default" = "y" ]; then
@@ -316,6 +326,10 @@ main() {
             --help|-h)
                 usage
                 exit 0
+                ;;
+            --yes|-y)
+                AUTO_YES=true
+                shift
                 ;;
             *)
                 error "Unknown option: $1"

@@ -1,0 +1,1 @@
+ALTER TABLE process_history DROP COLUMN rss_memory_kb;
