@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/testutil"
 )
 
 func TestUpdateCommand(t *testing.T) {

@@ -1,4 +1,4 @@
-module eos
+module github.com/Elysium-Labs-EU/eos
 
 go 1.26.1
 

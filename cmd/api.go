@@ -1,10 +1,9 @@
 package cmd
 
 import (
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
-
-	"eos/internal/config"
-	"eos/internal/manager"
 )
 
 func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {

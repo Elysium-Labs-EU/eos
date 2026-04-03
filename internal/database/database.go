@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	_ "modernc.org/sqlite"
-
-	"eos/internal/types"
 )
 
 type Database interface {

@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"eos/internal/config"
-	"eos/internal/database"
-	"eos/internal/logutil"
-	"eos/internal/manager"
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 type HealthMonitor struct {

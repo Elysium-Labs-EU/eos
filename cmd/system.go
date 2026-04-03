@@ -17,13 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
-
-	"eos/internal/buildinfo"
-	"eos/internal/config"
-	"eos/internal/process"
-	"eos/internal/ui"
 )
 
 var httpClient = &http.Client{

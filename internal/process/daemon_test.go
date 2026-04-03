@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 func TestAllMethodsHandled(t *testing.T) {

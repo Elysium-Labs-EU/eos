@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
 )
 
 func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {

@@ -9,12 +9,11 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
-
-	"eos/internal/config"
-	"eos/internal/manager"
-	"eos/internal/process"
-	"eos/internal/ui"
 )
 
 func newDaemonCmd() *cobra.Command {

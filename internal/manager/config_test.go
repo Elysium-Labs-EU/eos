@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/types"
 )
 
 // TODO: Rewrite

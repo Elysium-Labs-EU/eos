@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
 )
 
 func TestMigrations(t *testing.T) {

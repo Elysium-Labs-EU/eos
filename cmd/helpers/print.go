@@ -3,10 +3,9 @@ package helpers
 import (
 	"strings"
 
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
-
-	"eos/internal/types"
-	"eos/internal/ui"
 )
 
 func PrintStatus(status types.ServiceStatus) string {

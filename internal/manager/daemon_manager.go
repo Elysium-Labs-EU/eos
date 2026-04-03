@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"eos/internal/logutil"
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 type DaemonManager struct {

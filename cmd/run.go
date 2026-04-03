@@ -8,14 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-
-	"eos/cmd/helpers"
-	"eos/internal/config"
-	"eos/internal/manager"
-	"eos/internal/types"
-	"eos/internal/ui"
 )
 
 func registerService(mgr manager.ServiceManager, yamlFile string, name string) error {

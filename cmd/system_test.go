@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
 	"github.com/spf13/cobra"
-
-	"eos/internal/buildinfo"
 )
 
 func TestSystemInfoCommand(t *testing.T) {

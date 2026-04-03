@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"eos/internal/database"
-	"eos/internal/testutil"
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 func TestRegisterService(t *testing.T) {

@@ -7,10 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
-
-	"eos/cmd/helpers"
-	"eos/internal/manager"
 )
 
 type apiLogsResult struct {

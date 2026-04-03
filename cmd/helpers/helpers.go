@@ -6,9 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/dustin/go-humanize"
-
-	"eos/internal/types"
 )
 
 func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {

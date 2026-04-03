@@ -3,10 +3,9 @@ package cmd
 import (
 	"path/filepath"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
-
-	"eos/cmd/helpers"
-	"eos/internal/manager"
 )
 
 func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {

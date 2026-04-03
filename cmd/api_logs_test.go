@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"eos/cmd/helpers"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 )
 
 func startServiceForLogsTest(t *testing.T, mgr manager.ServiceManager, tempDir string) string {

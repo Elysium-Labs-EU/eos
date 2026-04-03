@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/types"
 )
 
 func NewServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {

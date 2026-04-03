@@ -6,10 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/testutil"
-	"eos/internal/types"
 )
 
 // TODO: Add actual node env here?

@@ -1,9 +1,8 @@
 package helpers
 
 import (
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
-
-	"eos/internal/manager"
 )
 
 // ServiceNameCompletions returns a ValidArgsFunction that completes the first

@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
-
-	"eos/cmd/helpers"
-	"eos/internal/config"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/ui"
 )
 
 func newRestartCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {

@@ -6,15 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
-
-	"eos/cmd/helpers"
-	"eos/internal/manager"
-	"eos/internal/types"
-	"eos/internal/ui"
 )
 
 func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {

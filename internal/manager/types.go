@@ -3,7 +3,7 @@ package manager
 import (
 	"time"
 
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 type ServiceManager interface {

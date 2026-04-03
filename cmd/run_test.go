@@ -7,11 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 )
 
 func TestRunWithServiceFileCommand(t *testing.T) {

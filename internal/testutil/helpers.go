@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"eos/internal/config"
-	"eos/internal/database"
-	"eos/internal/logutil"
-	"eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 func SetupTestDB(t *testing.T, migrationsFS embed.FS, migrationsPath string) (*database.DB, *sql.DB, string) {

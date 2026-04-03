@@ -13,13 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
-
-	"eos/internal/config"
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
-	"eos/internal/types"
 )
 
 func TestHealthMonitor_Lifecycle(t *testing.T) {

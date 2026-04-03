@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
-
-	"eos/cmd/helpers"
-	"eos/internal/manager"
-	"eos/internal/ui"
 )
 
 // TODO: Add interactive check for running process, giving user option to continue or not.

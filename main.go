@@ -1,7 +1,7 @@
 package main
 
 import (
-	"eos/cmd"
+	"github.com/Elysium-Labs-EU/eos/cmd"
 )
 
 func main() {

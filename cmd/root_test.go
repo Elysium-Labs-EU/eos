@@ -5,11 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"github.com/spf13/cobra"
-
-	"eos/internal/database"
-	"eos/internal/manager"
-	"eos/internal/testutil"
 )
 
 func setupCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
