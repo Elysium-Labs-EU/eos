@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"time"
 )
@@ -26,38 +27,47 @@ const (
 )
 
 type DaemonConfig struct {
-	PIDFile       string        `yaml:"pidFile"`
-	SocketPath    string        `yaml:"socketPath"`
-	LogDir        string        `yaml:"logDir"`
-	LogFileName   string        `yaml:"logFileName"`
-	SocketTimeout time.Duration `yaml:"socketTimeout"`
-	MaxFiles      int           `yaml:"maxFiles"`
-	FileSizeLimit int64         `yaml:"fileSizeLimit"`
+	PIDFile       string        `json:"pid_file" yaml:"pidFile"`
+	SocketPath    string        `json:"socket_path" yaml:"socketPath"`
+	LogDir        string        `json:"log_dir" yaml:"logDir"`
+	LogFileName   string        `json:"log_file_name" yaml:"logFileName"`
+	SocketTimeout time.Duration `json:"socket_timeout" yaml:"socketTimeout"`
+	MaxFiles      int           `json:"max_files" yaml:"maxFiles"`
+	FileSizeLimit int64         `json:"file_size_limit" yaml:"fileSizeLimit"`
 }
 
 type TimeOutConfig struct {
-	Enable bool          `yaml:"enable"`
-	Limit  time.Duration `yaml:"limit"`
+	Enable bool          `json:"enable" yaml:"enable"`
+	Limit  time.Duration `json:"limit" yaml:"limit"`
 }
 
 type HealthConfig struct {
-	MaxRestart int           `yaml:"maxRestart"`
-	Timeout    TimeOutConfig `yaml:"timeout"`
+	MaxRestart int           `json:"max_restart" yaml:"maxRestart"`
+	Timeout    TimeOutConfig `json:"timeout" yaml:"timeout"`
 }
 
 type ShutdownConfig struct {
-	GracePeriod time.Duration `yaml:"gracePeriod"`
+	GracePeriod time.Duration `json:"grace_period" yaml:"gracePeriod"`
 }
 
 type SystemConfig struct {
-	Daemon   DaemonConfig   `yaml:"daemon"`
-	Health   HealthConfig   `yaml:"health"`
-	Shutdown ShutdownConfig `yaml:"shutdown"`
+	Daemon   DaemonConfig   `json:"daemon" yaml:"daemon"`
+	Health   HealthConfig   `json:"health" yaml:"health"`
+	Shutdown ShutdownConfig `json:"shutdown" yaml:"shutdown"`
 }
 
 func GetBaseDir() (string, error) {
 	if override := os.Getenv("EOS_BASE_DIR"); override != "" {
 		return override, nil
+	}
+
+	// When invoked via sudo, use the original user's home directory
+	// instead of root's, so data always lives in the invoking user's home.
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		u, err := user.Lookup(sudoUser)
+		if err == nil {
+			return filepath.Join(u.HomeDir, fmt.Sprintf(".%s", Name)), nil
+		}
 	}
 
 	homeDir, err := os.UserHomeDir()

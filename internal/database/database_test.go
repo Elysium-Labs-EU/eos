@@ -495,7 +495,7 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 		t.Errorf("StartedAt: expected %v, got %v", startedAt, *entry.StartedAt)
 	}
 	if entry.StoppedAt == nil {
-		t.Error("StoppedAt: expected non-nil — this catches the column/scan mismatch bug")
+		t.Error("StoppedAt: expected non-nil - this catches the column/scan mismatch bug")
 	} else if !entry.StoppedAt.Truncate(time.Second).Equal(stoppedAt) {
 		t.Errorf("StoppedAt: expected %v, got %v", stoppedAt, *entry.StoppedAt)
 	}
@@ -519,7 +519,7 @@ func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
-	// Update only state — other nullable fields should remain nil
+	// Update only state - other nullable fields should remain nil
 	err = db.UpdateProcessHistoryEntry(t.Context(), 50, database.ProcessHistoryUpdate{
 		State: new(types.ProcessStateRunning),
 	})

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,9 +16,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
@@ -36,7 +38,7 @@ var supportedPlatforms = []string{
 	"linux-arm64",
 }
 
-func newSystemCmd() *cobra.Command {
+func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	systemCmd := &cobra.Command{
 		Use:   "system",
 		Short: "Manage the eos system settings",
@@ -93,6 +95,33 @@ func newSystemCmd() *cobra.Command {
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
 
+	uninstallCmd := &cobra.Command{
+		Use: "uninstall",
+		Run: func(cmd *cobra.Command, args []string) {
+			installDir, baseDir, _, err := createSystemConfig()
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+				return
+			}
+
+			flagYes, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return
+			}
+
+			if !flagYes {
+				confirmed := helpers.PromptConfirm(cmd, "uninstall eos? (y/n):")
+				if !confirmed {
+					systemCmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
+					return
+				}
+			}
+			uninstallCmd(cmd, getManager, getConfig, installDir, baseDir, flagYes)
+		},
+	}
+	uninstallCmd.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
+
 	versionCmd := &cobra.Command{
 		Use:     "version",
 		Short:   "Get version of system",
@@ -105,6 +134,7 @@ func newSystemCmd() *cobra.Command {
 
 	systemCmd.AddCommand(infoCmd)
 	systemCmd.AddCommand(updateCmd)
+	systemCmd.AddCommand(uninstallCmd)
 	systemCmd.AddCommand(versionCmd)
 
 	return systemCmd
@@ -194,18 +224,9 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 	}
 
 	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(version), ui.TextBold.Render(latestVersion))
-	cmd.Printf("  %s ", ui.TextMuted.Render("upgrade? (y/n):"))
+	confirmed := helpers.PromptConfirm(cmd, "upgrade? (y/n):")
 
-	reader := bufio.NewReader(cmd.InOrStdin())
-	response, err := reader.ReadString('\n')
-
-	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", err))
-		return
-	}
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response != "y" && response != "yes" {
+	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "update canceled")
 		return
 	}
@@ -259,16 +280,9 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return
 	}
 
-	cmd.Printf("  %s ", ui.TextMuted.Render("restart daemon? (y/n):"))
+	confirmed = helpers.PromptConfirm(cmd, "restart daemon? (y/n):")
 
-	response, readErr := reader.ReadString('\n')
-	if readErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", readErr))
-		return
-	}
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response != "y" && response != "yes" {
+	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "manual daemon restart required")
 		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
 		return
@@ -572,4 +586,158 @@ func replaceBinary(src string, dst string) (err error) {
 	}
 
 	return nil
+}
+
+func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, installDir string, baseDir string, flagYes bool) {
+	mgr := getManager()
+	cfg := getConfig()
+
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for active services...")
+
+	serviceInstances, err := mgr.GetAllServiceInstances()
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting all service instances: %v", err))
+		return
+	}
+
+	numberActiveServices := len(serviceInstances)
+	if numberActiveServices == 1 {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active service", numberActiveServices))
+	} else {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active services", numberActiveServices))
+	}
+
+	if numberActiveServices > 0 {
+		stopAllServices := handleStoppingServices(cmd, mgr, cfg, serviceInstances, flagYes)
+		if !stopAllServices {
+			return
+		}
+	}
+
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
+	_, err = process.StopDaemon(cfg.Daemon)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
+		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("  to stop manually, run:"), ui.TextMuted.Render(fmt.Sprintf("kill $(cat %s)", cfg.Daemon.PIDFile)))
+	} else {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+	}
+
+	binaryRemoveErr := os.Remove(filepath.Join(installDir, "eos"))
+	if binaryRemoveErr != nil && !os.IsNotExist(binaryRemoveErr) {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing eos binary: %v", binaryRemoveErr))
+		cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
+		return
+	}
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "removed binary")
+
+	confirmed := false
+	if flagYes {
+		confirmed = true
+	} else {
+		confirmed = helpers.PromptConfirm(cmd, "remove eos system data? (y/n):")
+	}
+	if confirmed {
+		systemDataRemoveErr := os.RemoveAll(baseDir)
+		if systemDataRemoveErr != nil && !os.IsNotExist(systemDataRemoveErr) {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing eos system data: %v", systemDataRemoveErr))
+			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
+			return
+		}
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "removed eos system data")
+	} else {
+		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "skipped removal eos system data")
+		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("  to remove later, run:"), ui.TextMuted.Render(fmt.Sprintf("rm -rf %s", baseDir)))
+	}
+
+	// removeShellIntegration()
+
+	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "uninstall complete")
+}
+
+func handleStoppingServices(cmd *cobra.Command, mgr manager.ServiceManager, cfg *config.SystemConfig, serviceInstances []types.ServiceInstance, flagYes bool) bool {
+	confirmed := false
+	if flagYes {
+		confirmed = true
+	} else {
+		confirmed = helpers.PromptConfirm(cmd, "stop all services? (y/n):")
+	}
+
+	if !confirmed {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
+		return false
+	}
+	stoppedServices, erroredServices := stopServices(mgr, cfg, serviceInstances)
+
+	numberStoppedServices := len(stoppedServices)
+	if numberStoppedServices != 0 {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d services", numberStoppedServices))
+	}
+	if len(erroredServices) != 0 {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping services: %v", erroredServices))
+		confirmed := helpers.PromptConfirm(cmd, "force stop remaining services? (y/n):")
+		if !confirmed {
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled due to remaining active services")
+			return false
+		}
+		err := forceStopServices(mgr, extractServiceInstancesFromErrors(erroredServices))
+		if len(err) != 0 {
+			cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warn"), fmt.Sprintf("force stopping services: %v", err))
+		}
+	}
+
+	for _, serviceInstance := range serviceInstances {
+		if _, removeErr := mgr.RemoveServiceInstance(serviceInstance.Name); removeErr != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", removeErr))
+		}
+	}
+
+	return true
+}
+
+type StoppedServices map[string]manager.StopServiceResult
+
+type ErrorResult struct {
+	Error   error
+	Service types.ServiceInstance
+}
+type ErrorServices map[string]ErrorResult
+
+func stopServices(mgr manager.ServiceManager, cfg *config.SystemConfig, serviceInstances []types.ServiceInstance) (StoppedServices, ErrorServices) {
+	stoppedServices := make(StoppedServices)
+	erroredServices := make(ErrorServices)
+
+	for _, serviceInstance := range serviceInstances {
+		stopResult, err := mgr.StopService(serviceInstance.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+		if err != nil {
+			erroredServices[serviceInstance.Name] = ErrorResult{Service: serviceInstance, Error: err}
+			continue
+		}
+		stoppedServices[serviceInstance.Name] = stopResult
+	}
+
+	return stoppedServices, erroredServices
+}
+
+func forceStopServices(mgr manager.ServiceManager, serviceInstances []types.ServiceInstance) ErrorServices {
+	erroredServices := make(ErrorServices)
+
+	for _, serviceInstance := range serviceInstances {
+		_, err := mgr.ForceStopService(serviceInstance.Name)
+		if err != nil {
+			erroredServices[serviceInstance.Name] = ErrorResult{Service: serviceInstance, Error: err}
+			continue
+		}
+	}
+
+	return erroredServices
+}
+
+func extractServiceInstancesFromErrors(errorServices ErrorServices) []types.ServiceInstance {
+	var serviceInstances []types.ServiceInstance
+	for _, result := range errorServices {
+		serviceInstances = append(serviceInstances, result.Service)
+	}
+
+	return serviceInstances
 }

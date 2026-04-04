@@ -16,8 +16,8 @@ const (
 )
 
 type Runtime struct {
-	Type string `yaml:"type"`
-	Path string `yaml:"path"`
+	Type string `json:"type" yaml:"type"`
+	Path string `json:"path" yaml:"path"`
 }
 
 type ServiceConfig struct {
@@ -29,13 +29,13 @@ type ServiceConfig struct {
 	MemoryLimitMb int     `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
 }
 
-type ServiceRuntime struct {
-	CreatedAt       time.Time  `json:"created_at"`
-	LastHealthCheck *time.Time `json:"last_health_check" yaml:"last_health_check,omitzero"`
-	StartedAt       *time.Time `json:"started_at,omitzero"`
-	UpdatedAt       *time.Time `json:"updated_at,omitzero"`
+type ServiceInstance struct {
+	CreatedAt       time.Time  `json:"created_at" yaml:"created_at"`
+	LastHealthCheck *time.Time `json:"last_health_check,omitempty" yaml:"last_health_check,omitempty"`
+	StartedAt       *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 	Name            string     `json:"name" yaml:"name"`
-	RestartCount    int        `json:"restart_count,omitempty" yaml:"restart_count"`
+	RestartCount    int        `json:"restart_count,omitempty" yaml:"restart_count,omitempty"`
 }
 
 type ProcessState string
@@ -49,25 +49,25 @@ const (
 )
 
 type ProcessHistory struct {
-	CreatedAt   time.Time    `json:"created_at"`
-	Error       *string      `json:"error,omitempty"`
-	StartedAt   *time.Time   `json:"started_at,omitzero"`
-	StoppedAt   *time.Time   `json:"stopped_at,omitzero"`
-	UpdatedAt   *time.Time   `json:"updated_at,omitzero"`
-	ServiceName string       `json:"service_name"`
-	State       ProcessState `json:"state"`
-	RssMemoryKb int64        `json:"rss_memory_kb"`
-	PGID        int          `json:"pgid"`
+	CreatedAt   time.Time    `json:"created_at" yaml:"created_at"`
+	Error       *string      `json:"error,omitempty" yaml:"error,omitempty"`
+	StartedAt   *time.Time   `json:"started_at,omitempty" yaml:"started_at,omitempty"`
+	StoppedAt   *time.Time   `json:"stopped_at,omitempty" yaml:"stopped_at,omitempty"`
+	UpdatedAt   *time.Time   `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	ServiceName string       `json:"service_name" yaml:"service_name"`
+	State       ProcessState `json:"state" yaml:"state"`
+	RssMemoryKb int64        `json:"rss_memory_kb" yaml:"rss_memory_kb"`
+	PGID        int          `json:"pgid" yaml:"pgid"`
 }
 
 type RunningProcess struct {
-	Cmd  *exec.Cmd
-	PGID int
+	Cmd  *exec.Cmd `json:"-" yaml:"-"`
+	PGID int       `json:"pgid" yaml:"pgid"`
 }
 
 type Service struct {
-	Runtime ServiceRuntime
-	Config  ServiceConfig
+	Instance ServiceInstance `json:"instance" yaml:"instance"`
+	Config   ServiceConfig   `json:"config" yaml:"config"`
 }
 
 type ServiceCatalogEntry struct {

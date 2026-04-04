@@ -7,6 +7,6 @@ var (
 	ColorWarning = lipgloss.Color("11")  // bright yellow
 	ColorError   = lipgloss.Color("9")   // bright red
 	ColorInfo    = lipgloss.Color("12")  // bright blue
-	ColorAccent  = lipgloss.Color("14")  // bright cyan  — commands, highlights
-	ColorMuted   = lipgloss.Color("240") // dark gray    — hints, secondary text
+	ColorAccent  = lipgloss.Color("14")  // bright cyan  - commands, highlights
+	ColorMuted   = lipgloss.Color("240") // dark gray    - hints, secondary text
 )

@@ -124,7 +124,22 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args json.RawMessa
 	return response, nil
 }
 
-func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceRuntime, error) {
+func (dm *DaemonManager) GetAllServiceInstances() ([]types.ServiceInstance, error) {
+	response, err := dm.sendRequest(types.MethodGetAllServiceInstances, nil)
+
+	if err != nil {
+		return nil, fmt.Errorf("GetAllServiceInstances: request errored: %w", err)
+	}
+
+	var result types.GetAllServiceInstancesResponse
+	if err := json.Unmarshal(response.Data, &result); err != nil {
+		return nil, fmt.Errorf("GetAllServiceInstances: parse response data: %w", err)
+	}
+
+	return result.Instances, nil
+}
+
+func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
 	args, err := json.Marshal(types.GetServiceInstanceArgs{Name: name})
 	if err != nil {
 		return nil, fmt.Errorf("GetServiceInstance: marshaling args: %w", err)

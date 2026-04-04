@@ -372,7 +372,7 @@ main() {
 
     echo ""
 
-    # Version resolution — skip when using a local binary
+    # Version resolution - skip when using a local binary
     local version=""
     if [ -z "$local_binary" ]; then
         version="${EOS_VERSION:-}"
@@ -412,7 +412,7 @@ main() {
         exit 0
     fi
     
-    # Get the binary — either from local path or download
+    # Get the binary - either from local path or download
     local tmp_binary
     if [ -n "$local_binary" ]; then
         tmp_binary="$local_binary"

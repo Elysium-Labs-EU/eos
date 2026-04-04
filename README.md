@@ -81,9 +81,11 @@ Each service needs a `service.yaml` (or `service.yml`) file:
 ```yaml
 name: "cms"
 command: "/home/user/start-script.sh"
+port: 1337
 runtime:
   type: "nodejs"
   path: "/opt/homebrew/bin"
+memory_limit_mb: 200
 ```
 
 The CLI finds this file automatically when you register a directory.

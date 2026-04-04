@@ -18,7 +18,8 @@ import (
 type Database interface {
 	CloseDBConnection() error
 
-	GetServiceInstance(ctx context.Context, name string) (types.ServiceRuntime, error)
+	GetServiceInstance(ctx context.Context, name string) (types.ServiceInstance, error)
+	GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstance, error)
 	RegisterServiceInstance(ctx context.Context, name string) error
 	RemoveServiceInstance(ctx context.Context, name string) (bool, error)
 	UpdateServiceInstance(ctx context.Context, name string, updates ServiceInstanceUpdate) error
@@ -56,10 +57,10 @@ func NewDB(ctx context.Context, baseDir string) (*DB, error) {
 	}
 	_, dirty, err := db.GetCurrentMigrationVersion(MigrationsFS, MigrationsPath)
 	if err != nil {
-		return nil, fmt.Errorf("warning: Could not get schema version: %w", err)
+		return nil, fmt.Errorf("get schema version: %w", err)
 	}
 	if dirty {
-		return nil, fmt.Errorf("database is in a dirty state. Manual intervention required")
+		return nil, fmt.Errorf("database is in a dirty state: manual intervention required")
 	}
 
 	return db, nil
@@ -82,12 +83,10 @@ func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, te
 	}
 	_, dirty, err := db.GetCurrentMigrationVersion(testMigrationsFS, testMigrationsPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("warning: Could not get schema version: %w", err)
-	} else {
-		// fmt.Printf("Database schema version: %d (dirty: %v)", version, dirty)
-		if dirty {
-			return nil, nil, fmt.Errorf("database is in a dirty state. Manual intervention required")
-		}
+		return nil, nil, fmt.Errorf("get schema version: %w", err)
+	}
+	if dirty {
+		return nil, nil, fmt.Errorf("database is in a dirty state: manual intervention required")
 	}
 
 	return db, db.conn, nil
@@ -101,7 +100,7 @@ func openDB(ctx context.Context, dbPath string) (*DB, error) {
 
 	if err := conn.PingContext(ctx); err != nil {
 		if closeErr := conn.Close(); closeErr != nil {
-			return nil, fmt.Errorf("error closing the connnection to database: %w", err)
+			return nil, fmt.Errorf("close database connection: %w", closeErr)
 		}
 		return nil, fmt.Errorf("could not connect to database: %w", err)
 	}
@@ -113,7 +112,7 @@ func openDB(ctx context.Context, dbPath string) (*DB, error) {
 
 func (db *DB) CloseDBConnection() error {
 	if err := db.conn.Close(); err != nil {
-		return fmt.Errorf("error closing database: %w", err)
+		return fmt.Errorf("close database: %w", err)
 	}
 	return nil
 }
@@ -190,7 +189,7 @@ func (db *DB) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceC
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating service rows: %w", err)
+		return nil, fmt.Errorf("iterate service catalog rows: %w", err)
 	}
 
 	return services, nil
@@ -218,7 +217,37 @@ func (db *DB) GetServiceCatalogEntry(ctx context.Context, name string) (types.Se
 	return svc, nil
 }
 
-func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.ServiceRuntime, error) {
+func (db *DB) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstance, error) {
+	query := `
+	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at
+	FROM service_instances
+	ORDER BY name
+	`
+
+	rows, err := db.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("could not query service instances: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var serviceInstances []types.ServiceInstance
+	for rows.Next() {
+		var serviceInstance types.ServiceInstance
+		err := rows.Scan(&serviceInstance.Name, &serviceInstance.RestartCount, &serviceInstance.LastHealthCheck, &serviceInstance.CreatedAt, &serviceInstance.StartedAt, &serviceInstance.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("could not scan service row: %w", err)
+		}
+		serviceInstances = append(serviceInstances, serviceInstance)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate service instance rows: %w", err)
+	}
+
+	return serviceInstances, nil
+}
+
+func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.ServiceInstance, error) {
 	query := `
 	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at
 	FROM service_instances
@@ -226,14 +255,14 @@ func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.Servic
 	`
 
 	row := db.conn.QueryRowContext(ctx, query, name)
-	var svc types.ServiceRuntime
+	var svc types.ServiceInstance
 
 	err := row.Scan(&svc.Name, &svc.RestartCount, &svc.LastHealthCheck, &svc.CreatedAt, &svc.StartedAt, &svc.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return types.ServiceRuntime{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
+		return types.ServiceInstance{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
 	}
 	if err != nil {
-		return types.ServiceRuntime{}, fmt.Errorf("could not scan service row: %w", err)
+		return types.ServiceInstance{}, fmt.Errorf("could not scan service row: %w", err)
 	}
 	return svc, nil
 }
@@ -301,7 +330,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating process history rows: %w", err)
+		return nil, fmt.Errorf("iterate process history rows: %w", err)
 	}
 
 	return processHistoryEntries, nil
@@ -362,7 +391,7 @@ func (db *DB) RemoveServiceInstance(ctx context.Context, name string) (bool, err
 func (db *DB) RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error) {
 	result, err := db.conn.ExecContext(ctx, "DELETE FROM process_history WHERE pgid = ?", pgid)
 	if err != nil {
-		return false, fmt.Errorf("could not remove from service_instances: %w", err)
+		return false, fmt.Errorf("could not remove from process_history: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -450,7 +479,7 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 		return fmt.Errorf("could not check update result: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("process history entry with '%v' not found", pgid)
+		return fmt.Errorf("process history entry %v not found", pgid)
 	}
 	return nil
 }
@@ -528,7 +557,7 @@ func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates Se
 
 	result, err := db.conn.ExecContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("could not update service	instance: %w", err)
+		return fmt.Errorf("could not update service instance: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()

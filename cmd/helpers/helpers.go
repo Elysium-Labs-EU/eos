@@ -1,13 +1,17 @@
 package helpers
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/dustin/go-humanize"
+	"github.com/spf13/cobra"
 )
 
 func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {
@@ -103,4 +107,24 @@ func DetermineYamlFile(projectPath string) (string, error) {
 		return projectPath, nil
 	}
 	return "", fmt.Errorf("provided path is not a directory nor a yaml file")
+}
+
+func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
+	cmd.Printf("  %s ", ui.TextMuted.Render(prompt))
+
+	reader := bufio.NewReader(cmd.InOrStdin())
+	response, err := reader.ReadString('\n')
+
+	if err != nil {
+		// If we got io.EOF but have a response, process it anyway
+		if err == io.EOF && len(strings.TrimSpace(response)) > 0 {
+			response = strings.TrimSpace(strings.ToLower(response))
+			return response == "y" || response == "yes"
+		}
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", err))
+		return
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
 }

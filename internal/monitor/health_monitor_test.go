@@ -730,7 +730,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 // 	}()
 // 	time.Sleep(50 * time.Millisecond) // give OS time to release the port
 
-// 	// Call checkRunningProcess — process is alive, but port is unreachable
+// 	// Call checkRunningProcess - process is alive, but port is unreachable
 // 	hm.checkRunningProcess(t.Context(),serviceCatalogEntry, processHistoryEntry)
 
 // 	// Verify: state should be Failed with port-related error
@@ -1010,7 +1010,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 
 			// Kill the real process. RestartService's background goroutine
 			// already calls Wait() on the child, so we must not call Wait()
-			// here — doing so races with that goroutine and fails with
+			// here - doing so races with that goroutine and fails with
 			// "no child processes" when it wins.
 			proc, err := os.FindProcess(latestProcess.PGID)
 			if err == nil {
@@ -1327,7 +1327,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 	// The failed service with elapsed > backoff should have been restarted
 	if instance3.RestartCount < 1 {
-		t.Logf("%s: RestartCount is %d — restart may have been attempted (check logs)", svc3Name, instance3.RestartCount)
+		t.Logf("%s: RestartCount is %d - restart may have been attempted (check logs)", svc3Name, instance3.RestartCount)
 	}
 }
 
@@ -1426,7 +1426,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 
 	restartCountBefore := instance.RestartCount
 
-	// Call checkFailedProcess — the process is alive, so it should recover
+	// Call checkFailedProcess - the process is alive, so it should recover
 	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, healthConfig.MaxRestart)
 
 	// Verify: state should be back to Running

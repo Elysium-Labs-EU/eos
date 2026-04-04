@@ -248,7 +248,7 @@ func StatusDaemon(daemonConfig config.DaemonConfig) (*DaemonStatus, error) {
 	}
 
 	if err := process.Signal(syscall.Signal(0)); err != nil {
-		// signal(0) failing means the process isn't alive — this is not an error
+		// signal(0) failing means the process isn't alive - this is not an error
 		// in the function's own operation, so we return a valid status with nil error
 		return &DaemonStatus{Running: false, Pid: &activePid, Process: nil}, nil //lint:ignore nilerr intentional
 	}
@@ -300,6 +300,25 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager
 
 func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
 	switch request.Method {
+	case types.MethodGetAllServiceInstances:
+		result, err := mgr.GetAllServiceInstances()
+		if err != nil {
+			return errorResponse(err.Error())
+		}
+		if result == nil {
+			result = []types.ServiceInstance{}
+		}
+		data, err := json.Marshal(types.GetAllServiceInstancesResponse{
+			Instances: result,
+		})
+		if err != nil {
+			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+		}
+		return types.DaemonResponse{
+			Success: true,
+			Data:    data,
+		}
+
 	case types.MethodGetServiceInstance:
 		var args types.GetServiceInstanceArgs
 		if err := json.Unmarshal(request.Args, &args); err != nil {
@@ -431,7 +450,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 	case types.MethodAddServiceCatalogEntry:
 		var args types.AddServiceCatalogEntryArgs
 		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
+			return errorResponse(fmt.Sprintf("invalid MethodAddServiceCatalogEntry args: %v", err))
 		}
 		err := mgr.AddServiceCatalogEntry(args.Service)
 		if err != nil {

@@ -174,7 +174,7 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 		if removeErr != nil {
 			t.Fatalf("Removing of pid test file should not error, got: %v", removeErr)
 		}
-		t.Skip("Write to /var/run succeeded — unusual permissions on this system")
+		t.Skip("Write to /var/run succeeded - unusual permissions on this system")
 	}
 
 	if !os.IsPermission(err) {

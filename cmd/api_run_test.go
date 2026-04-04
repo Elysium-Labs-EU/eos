@@ -61,7 +61,7 @@ func TestAPIRunWithServiceName(t *testing.T) {
 		t.Fatalf("first run failed: %v\n%s", err, errBuf.String())
 	}
 
-	// Second run: by name — should restart
+	// Second run: by name - should restart
 	outBuf.Reset()
 	errBuf.Reset()
 	c = newTestRootCmd(mgr)

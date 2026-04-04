@@ -7,7 +7,8 @@ import (
 )
 
 type ServiceManager interface {
-	GetServiceInstance(name string) (*types.ServiceRuntime, error)
+	GetServiceInstance(name string) (*types.ServiceInstance, error)
+	GetAllServiceInstances() ([]types.ServiceInstance, error)
 	RemoveServiceInstance(name string) (bool, error)
 
 	ForceStopService(name string) (StopServiceResult, error)

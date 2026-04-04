@@ -9,8 +9,9 @@ type MethodName string
 
 const (
 	// MethodGetServiceStatus      = "GetServiceStatus"
-	MethodGetServiceInstance    = "GetServiceInstance"
-	MethodRemoveServiceInstance = "RemoveServiceInstance"
+	MethodGetServiceInstance     = "GetServiceInstance"
+	MethodGetAllServiceInstances = "GetAllServiceInstances"
+	MethodRemoveServiceInstance  = "RemoveServiceInstance"
 
 	MethodForceStopService = "ForceStopService"
 	MethodRestartService   = "RestartService"
@@ -31,8 +32,9 @@ const (
 )
 
 var ValidMethods = map[MethodName]bool{
-	MethodGetServiceInstance:    true,
-	MethodRemoveServiceInstance: true,
+	MethodGetServiceInstance:     true,
+	MethodRemoveServiceInstance:  true,
+	MethodGetAllServiceInstances: true,
 
 	MethodForceStopService: true,
 	MethodRestartService:   true,
@@ -80,7 +82,11 @@ type GetServiceInstanceArgs struct {
 }
 
 type GetServiceInstanceResponse struct {
-	Instance ServiceRuntime `json:"instance"`
+	Instance ServiceInstance `json:"instance"`
+}
+
+type GetAllServiceInstancesResponse struct {
+	Instances []ServiceInstance `json:"instances"`
 }
 
 type GetMostRecentProcessHistoryEntryResponse struct {
@@ -93,14 +99,14 @@ type StartServiceArgs struct {
 
 type RestartServiceArgs struct {
 	Name         string `json:"name"`
-	GracePeriod  string `json:"gracePeriod"`
-	TickerPeriod string `json:"tickerPeriod"`
+	GracePeriod  string `json:"grace_period"`
+	TickerPeriod string `json:"ticker_period"`
 }
 
 type StopServiceArgs struct {
 	Name         string `json:"name"`
-	GracePeriod  string `json:"gracePeriod"`
-	TickerPeriod string `json:"tickerPeriod"`
+	GracePeriod  string `json:"grace_period"`
+	TickerPeriod string `json:"ticker_period"`
 }
 
 type ForceStopServiceArgs struct {
@@ -126,7 +132,7 @@ type RemoveServiceCatalogEntryArgs struct {
 type UpdateServiceCatalogEntryArgs struct {
 	Name              string `json:"name"`
 	NewDirectoryPath  string `json:"new_directory_path"`
-	NewConfigFileName string `json:"new_config_filename"`
+	NewConfigFileName string `json:"new_config_file_name"`
 }
 
 type GetMostRecentProcessHistoryEntryArgs struct {

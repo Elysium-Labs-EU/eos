@@ -223,7 +223,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	}
 }
 
-func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceRuntime, maxRestartCount int) {
+func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, maxRestartCount int) {
 	serviceName := service.Name
 	pgid := process.PGID
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
@@ -453,7 +453,6 @@ func (hm *HealthMonitor) evaluateMemoryThresholds(configMemoryLimitMb int, activ
 	if configMemoryLimitMb == 0 {
 		return ReasonNone
 	}
-	fmt.Printf("configMemoryLimitMb: %v, activeRssMemoryKb: %v", configMemoryLimitMb, activeRssMemoryKb)
 	memoryLimitKb := float64(configMemoryLimitMb) * 1024.0
 
 	warningThreshold := memoryLimitKb * 0.75

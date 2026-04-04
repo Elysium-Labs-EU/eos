@@ -34,7 +34,7 @@ var ErrServiceAlreadyRegistered = errors.New("service already registered")
 func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.ServiceCatalogEntry) error {
 	isRegistered, err := m.db.IsServiceRegistered(m.ctx, newServiceCatalogEntry.Name)
 	if err != nil {
-		return fmt.Errorf("unable to check: %w", err)
+		return fmt.Errorf("check service registration: %w", err)
 	}
 	if isRegistered {
 		return ErrServiceAlreadyRegistered
@@ -51,7 +51,7 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 func (m *LocalManager) RemoveServiceInstance(name string) (bool, error) {
 	removed, err := m.db.RemoveServiceInstance(m.ctx, name)
 	if err != nil {
-		return false, fmt.Errorf("unable to remove service, got: %w", err)
+		return false, fmt.Errorf("remove service instance: %w", err)
 	}
 	return removed, nil
 }
@@ -59,7 +59,7 @@ func (m *LocalManager) RemoveServiceInstance(name string) (bool, error) {
 func (m *LocalManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 	removed, err := m.db.RemoveServiceCatalogEntry(m.ctx, name)
 	if err != nil {
-		return false, fmt.Errorf("unable to remove the service from the catalog, got: %w", err)
+		return false, fmt.Errorf("remove service catalog entry: %w", err)
 	}
 	return removed, nil
 }
@@ -67,7 +67,7 @@ func (m *LocalManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 func (m *LocalManager) IsServiceRegistered(name string) (bool, error) {
 	isRegistered, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
-		return false, fmt.Errorf("unable to check: \n %w", err)
+		return false, fmt.Errorf("check service registration: %w", err)
 	}
 	if isRegistered {
 		return true, nil
@@ -85,7 +85,7 @@ func isNotFound(err error) bool {
 
 var ErrServiceNotRunning = errors.New("service not running")
 
-func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceRuntime, error) {
+func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
 	_, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("service %q not registered: %w", name, err)
@@ -96,10 +96,18 @@ func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceRuntime, e
 		return nil, ErrServiceNotRunning
 	}
 	if err != nil {
-		return nil, fmt.Errorf("unknown error occurred getting the registered service instance:\n%w", err)
+		return nil, fmt.Errorf("get service instance: %w", err)
 	}
 
 	return &serviceInstance, nil
+}
+
+func (m *LocalManager) GetAllServiceInstances() ([]types.ServiceInstance, error) {
+	serviceInstances, err := m.db.GetAllServiceInstances(m.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get all service runtime entries: %w", err)
+	}
+	return serviceInstances, nil
 }
 
 var ErrServiceNotRegistered = errors.New("service not registered")
@@ -115,7 +123,7 @@ func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalog
 		return types.ServiceCatalogEntry{}, ErrServiceNotRegistered
 	}
 	if err != nil {
-		return types.ServiceCatalogEntry{}, fmt.Errorf("unknown error occurred getting the service entry:\n%w", err)
+		return types.ServiceCatalogEntry{}, fmt.Errorf("get service catalog entry: %w", err)
 	}
 	return registeredService, nil
 }
@@ -133,7 +141,7 @@ var ErrNotFound = errors.New("not found")
 func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("unable to check for active process history for %s, got: %w", name, err)
+		return nil, fmt.Errorf("get process history for %s: %w", name, err)
 	}
 
 	if len(processHistory) == 0 {
@@ -201,19 +209,19 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("service %s not registered", name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("an error occurred: %w", err)
+		return 0, fmt.Errorf("get service catalog entry %q: %w", name, err)
 	}
 
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := LoadServiceConfig(configPath)
 
 	if err != nil {
-		return 0, fmt.Errorf("service config for %s failed to load, got:\n %w", name, err)
+		return 0, fmt.Errorf("load service config for %s: %w", name, err)
 	}
 
 	serviceInstance, err := m.GetServiceInstance(name)
 	if err != nil && !errors.Is(err, ErrServiceNotRunning) {
-		return 0, fmt.Errorf("unable to check for service instance for %s, got: %w", name, err)
+		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
 	}
 	if serviceInstance != nil {
 		// TODO: return found PGID somehow instead?
@@ -222,7 +230,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
 	if err != nil {
-		return 0, fmt.Errorf("unable to check for active process history for %s, got: %w", name, err)
+		return 0, fmt.Errorf("get process history for %s: %w", name, err)
 	}
 
 	for _, p := range processHistory {
@@ -304,7 +312,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	startCommand.Stderr = writeErrorLogFilePipe
 
 	if startErr := startCommand.Start(); startErr != nil {
-		return 0, fmt.Errorf("start command failed with: %w", startErr)
+		return 0, fmt.Errorf("start command: %w", startErr)
 	}
 	startSuccess = true
 
@@ -332,9 +340,9 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
+			return 0, fmt.Errorf("register service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
-		return pgid, fmt.Errorf("unable to register the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("register service instance (process cleaned up): %w", err)
 	}
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
@@ -343,18 +351,18 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
+			return 0, fmt.Errorf("update service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
-		return pgid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
 	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
+			return 0, fmt.Errorf("register process history entry %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
-		return pgid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
 	}
 
 	updates := database.ProcessHistoryUpdate{
@@ -368,7 +376,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	// here leaves a running process with inconsistent DB state.
 	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 	if err != nil {
-		return pgid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
+		return pgid, fmt.Errorf("update process history entry: %w", err)
 	}
 	return pgid, nil
 }
@@ -379,21 +387,21 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("service %s not registered", name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("an error occurred: %w", err)
+		return 0, fmt.Errorf("get service catalog entry %q: %w", name, err)
 	}
 
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := LoadServiceConfig(configPath)
 	if err != nil {
-		return 0, fmt.Errorf("service config for %s failed to load, got:\n %w", name, err)
+		return 0, fmt.Errorf("load service config for %s: %w", name, err)
 	}
 
 	serviceInstance, err := m.GetServiceInstance(name)
 	if err != nil {
-		return 0, fmt.Errorf("getting service instance for %s: %w", name, err)
+		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
 	}
 	if serviceInstance == nil {
-		return 0, fmt.Errorf("no service instance found for %s: %w", name, err)
+		return 0, fmt.Errorf("no service instance for %s", name)
 	}
 
 	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
@@ -463,7 +471,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	restartCommand.Stderr = writeErrorLogFilePipe
 
 	if restartErr := restartCommand.Start(); restartErr != nil {
-		return 0, fmt.Errorf("restart command failed with: %w", restartErr)
+		return 0, fmt.Errorf("restart command: %w", restartErr)
 	}
 	restartSuccess = true
 
@@ -495,18 +503,18 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to update service instance %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
+			return 0, fmt.Errorf("update service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
-		return pgid, fmt.Errorf("unable to update the new service instance in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
 	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
-			return 0, fmt.Errorf("unable to register process %d in database (%w) and failed to clean up process (%w) - manual intervention required", pgid, err, killErr)
+			return 0, fmt.Errorf("register process history entry %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
-		return pgid, fmt.Errorf("unable to register the new process in the database - process has been cleaned up, got: %w", err)
+		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
 	}
 
 	updates := database.ProcessHistoryUpdate{
@@ -520,38 +528,9 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	// here leaves a running process with inconsistent DB state.
 	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
 	if err != nil {
-		return pgid, fmt.Errorf("unable to update the new process in the database, got: %w", err)
+		return pgid, fmt.Errorf("update process history entry: %w", err)
 	}
 	return pgid, nil
-}
-
-func (m LocalManager) validateRuntimeBinary(config types.ServiceConfig) error {
-	if config.Runtime.Path != "" {
-		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
-			return fmt.Errorf("validating config runtime: %w", runtimePathErr)
-		}
-		// Custom path validated successfully; skip system PATH check
-		return nil
-	}
-
-	switch config.Runtime.Type {
-	case "bun":
-		if _, lookPathErr := exec.LookPath("bun"); lookPathErr != nil {
-			return fmt.Errorf("bun not found in system PATH")
-		}
-	case "deno":
-		if _, lookPathErr := exec.LookPath("deno"); lookPathErr != nil {
-			return fmt.Errorf("deno not found in system PATH")
-		}
-	case "node", "nodejs":
-		if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
-			return fmt.Errorf("node not found in system PATH")
-		}
-	default:
-		return nil
-	}
-
-	return nil
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
@@ -565,11 +544,14 @@ func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, er
 	}
 	errorLogFile, err = OpenLogFile(errorLogPath)
 	if err != nil {
-		err = logFile.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to close log file - during clean up: %w", err)
+		openErr := err
+		if closeErr := logFile.Close(); closeErr != nil {
+			return nil, nil, errors.Join(
+				fmt.Errorf("open error log file: %w", openErr),
+				fmt.Errorf("close log file during cleanup: %w", closeErr),
+			)
 		}
-		return nil, nil, fmt.Errorf("failed to open error log file: %w", err)
+		return nil, nil, fmt.Errorf("open error log file: %w", openErr)
 	}
 
 	return logFile, errorLogFile, nil
@@ -784,6 +766,44 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 	}, nil
 }
 
+// type SupportedRuntime string
+
+// const (
+// 	Bun    SupportedRuntime = "bun"
+// 	Deno   SupportedRuntime = "deno"
+// 	Node   SupportedRuntime = "node"
+// 	NodeJs SupportedRuntime = "nodejs"
+// )
+
+func (m LocalManager) validateRuntimeBinary(config types.ServiceConfig) error {
+	if config.Runtime.Path != "" {
+		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
+			return fmt.Errorf("validating config runtime: %w", runtimePathErr)
+		}
+		// Custom path validated successfully; skip system PATH check
+		return nil
+	}
+
+	switch config.Runtime.Type {
+	case "bun":
+		if _, lookPathErr := exec.LookPath("bun"); lookPathErr != nil {
+			return fmt.Errorf("bun not found in system PATH: %w", lookPathErr)
+		}
+	case "deno":
+		if _, lookPathErr := exec.LookPath("deno"); lookPathErr != nil {
+			return fmt.Errorf("deno not found in system PATH: %w", lookPathErr)
+		}
+	case "node", "nodejs":
+		if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
+			return fmt.Errorf("node not found in system PATH: %w", lookPathErr)
+		}
+	default:
+		return nil
+	}
+
+	return nil
+}
+
 func validateRuntimePath(runtime types.Runtime) error {
 	runtimePath := runtime.Path
 
@@ -797,11 +817,11 @@ func validateRuntimePath(runtime types.Runtime) error {
 
 	dirInfo, err := os.Stat(runtimePath)
 	if err != nil {
-		return fmt.Errorf("the specified runtime path is not a valid location, got: %w", err)
+		return fmt.Errorf("stat runtime path: %w", err)
 	}
 
 	if !dirInfo.IsDir() {
-		return fmt.Errorf("the specified runtime path is not a directory")
+		return fmt.Errorf("runtime path is not a directory")
 	}
 
 	switch runtime.Type {
@@ -809,11 +829,11 @@ func validateRuntimePath(runtime types.Runtime) error {
 		bunPath := filepath.Join(runtimePath, "bun")
 		bunInfo, err := os.Stat(bunPath)
 		if err != nil {
-			return fmt.Errorf("unable to find bun binary in specified path")
+			return fmt.Errorf("find bun binary in runtime path: %w", err)
 		}
 
 		if bunInfo.IsDir() {
-			return fmt.Errorf("the constructed full path for the runtime is a directory")
+			return fmt.Errorf("bun runtime binary path is a directory")
 		}
 
 		if bunInfo.Mode()&0111 == 0 {
@@ -824,11 +844,11 @@ func validateRuntimePath(runtime types.Runtime) error {
 		denoPath := filepath.Join(runtimePath, "deno")
 		denoInfo, err := os.Stat(denoPath)
 		if err != nil {
-			return fmt.Errorf("unable to find deno binary in specified path")
+			return fmt.Errorf("find deno binary in runtime path: %w", err)
 		}
 
 		if denoInfo.IsDir() {
-			return fmt.Errorf("the constructed full path for the runtime is a directory")
+			return fmt.Errorf("deno runtime binary path is a directory")
 		}
 
 		if denoInfo.Mode()&0111 == 0 {
@@ -840,11 +860,11 @@ func validateRuntimePath(runtime types.Runtime) error {
 		nodePath := filepath.Join(runtimePath, "node")
 		nodeInfo, err := os.Stat(nodePath)
 		if err != nil {
-			return fmt.Errorf("unable to find node binary in specified path")
+			return fmt.Errorf("find node binary in runtime path: %w", err)
 		}
 
 		if nodeInfo.IsDir() {
-			return fmt.Errorf("the constructed full path for the runtime is a directory")
+			return fmt.Errorf("node runtime binary path is a directory")
 		}
 
 		if nodeInfo.Mode()&0111 == 0 {

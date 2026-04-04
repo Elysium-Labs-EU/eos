@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
@@ -75,7 +73,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 
 			if countStaleData > 0 {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"),
-					fmt.Sprintf("failed to update history for %d process(es) — data may be stale", countStaleData))
+					fmt.Sprintf("failed to update history for %d process(es) - data may be stale", countStaleData))
 			}
 
 			if countError == 0 {
@@ -87,19 +85,9 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			for erroredPGID, errored := range stopResult.Errored {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 			}
-			cmd.Printf("  %s ", ui.TextMuted.Render("force quit? (y/n):"))
 
-			reader := bufio.NewReader(cmd.InOrStdin())
-			response, err := reader.ReadString('\n')
-
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading input: %v", err))
-				return
-			}
-
-			response = strings.TrimSpace(strings.ToLower(response))
-
-			if response != "y" && response != "yes" {
+			confirmed := helpers.PromptConfirm(cmd, "force quit? (y/n):")
+			if !confirmed {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "force quit aborted")
 				return
 			}
@@ -131,7 +119,7 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 
 	if countStaleData > 0 {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"),
-			fmt.Sprintf("failed to update history for %d process(es) — data may be stale", countStaleData))
+			fmt.Sprintf("failed to update history for %d process(es) - data may be stale", countStaleData))
 	}
 
 	if len(forceStopResult.Errored) > 0 {
