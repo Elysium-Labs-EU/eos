@@ -61,7 +61,11 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 				if config.Name != regServiceName {
 					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
-					continue
+					cmd.PrintErrf("  %s %s %s\n",
+						ui.TextMuted.Render("run:"),
+						ui.TextCommand.Render("eos update <service-name> <new-path>"),
+						ui.TextMuted.Render("→ update the service"),
+					)
 				}
 
 				serviceInstance, err := mgr.GetServiceInstance(regServiceName)
@@ -75,12 +79,12 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				// NOTE: We check here on both string and error type. String because of daemon serialization.
 				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
 				if err != nil && !errors.Is(err, manager.ErrNotFound) && !strings.Contains(err.Error(), manager.ErrNotFound.Error()) {
-					fmt.Printf("unable to get most recent process history for %s, got: \n %v\n", regServiceName, err)
+					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
 					continue
 				}
 
 				entry := StatusServiceEntry{
-					Name:   config.Name,
+					Name:   regServiceName,
 					Status: helpers.DetermineServiceStatus(mostRecentProcess),
 					Uptime: helpers.DetermineUptime(mostRecentProcess),
 				}

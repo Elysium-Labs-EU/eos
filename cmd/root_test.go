@@ -11,22 +11,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func setupCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
+func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string) {
 	t.Helper()
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	testLogger := testutil.NewTestLogger(t)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testLogger)
-	cmd := newTestRootCmd(mgr)
+	db, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, td, t.Context(), testutil.NewTestLogger(t))
+	c := newTestRootCmd(mgr)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	var ob, eb bytes.Buffer
+	c.SetOut(&ob)
+	c.SetErr(&eb)
 
-	return cmd, &buf, tempDir
+	return c, &ob, &eb, td
 }
 
 func TestRootCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -34,7 +33,7 @@ func TestRootCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Root command should not return an error, got: %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "eos - Test version") {
 		t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
@@ -45,14 +44,14 @@ func TestRootCommand(t *testing.T) {
 }
 
 func TestHelpCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"--help"})
 
 	err := cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Help command should not return an error, go: %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "eos is a modern deployment") {
 		t.Errorf("Expected help to contain description, got: '%s'", output)

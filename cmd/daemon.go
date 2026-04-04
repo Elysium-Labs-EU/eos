@@ -48,6 +48,7 @@ func newDaemonCmd() *cobra.Command {
 			if detached {
 				if err := forkDaemon(context.Background()); err != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+					cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 					return
 				}
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")

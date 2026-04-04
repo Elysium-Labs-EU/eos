@@ -11,7 +11,7 @@ import (
 )
 
 func TestRemoveCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, errBuf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t)
 
@@ -48,12 +48,20 @@ func TestRemoveCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remove command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
+	errOutput := errBuf.String()
 
 	if !strings.Contains(output, "success cms unregistered") {
 		t.Errorf("Expected remove to show 'success cms unregistered', got: %s", output)
 	}
+	if errOutput != "" {
+		t.Errorf("Expected no errors', got: %s", errOutput)
+	}
 }
 
-// TODO: What happens if there is no service instance
-// func TestRemoveCommandNoServiceInstance
+// TODO: func TestRemoveCommandServiceNotRegistered
+// TODO: func TestRemoveCommandIsRegisteredError (requires mock manager)
+// TODO: func TestRemoveCommandWithActiveInstance
+// TODO: func TestRemoveCommandRemoveInstanceError (requires mock manager)
+// TODO: func TestRemoveCommandRemoveCatalogError (requires mock manager)
+// TODO: func TestRemoveCommandMissingArgs

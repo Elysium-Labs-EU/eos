@@ -10,67 +10,47 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// newYamlServiceFile writes a valid service.yaml into dir and returns its path.
+func newYamlServiceFile(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("could not create dir %s: %v", dir, err)
+	}
+	data, err := yaml.Marshal(testutil.NewTestServiceConfigFile(t))
+	if err != nil {
+		t.Fatalf("failed to marshal service config: %v", err)
+	}
+	path := filepath.Join(dir, "service.yaml")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+	return path
+}
+
 func TestUpdateCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
-
-	yamlData, err := yaml.Marshal(testFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
+	firstPath := newYamlServiceFile(t, filepath.Join(tempDir, "project-v1"))
+	cmd.SetArgs([]string{"add", firstPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add: unexpected error: %v", err)
 	}
 
-	fullDirPath := filepath.Join(tempDir, "test-project")
-	err = os.MkdirAll(fullDirPath, 0755)
-
-	if err != nil {
-		t.Fatalf("could not create test-project directory: %v\n", err)
-		return
+	secondPath := newYamlServiceFile(t, filepath.Join(tempDir, "project-v2"))
+	outBuf.Reset()
+	cmd.SetArgs([]string{"update", "cms", secondPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("update: unexpected error: %v", err)
 	}
 
-	fullPath := filepath.Join(fullDirPath, "service.yaml")
-	err = os.WriteFile(fullPath, yamlData, 0644)
-	if err != nil {
-		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
-	}
-
-	cmd.SetArgs([]string{"add", fullPath})
-
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("preparing update test - add should not return an error, got: %v\n", err)
-	}
-
-	fullDirPath = filepath.Join(tempDir, "test-project-2")
-	err = os.MkdirAll(fullDirPath, 0755)
-
-	if err != nil {
-		t.Fatalf("could not create test-project directory: %v\n", err)
-		return
-	}
-
-	anotherTestFile := testutil.NewTestServiceConfigFile(t)
-	yamlData, err = yaml.Marshal(anotherTestFile)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
-	fullPath = filepath.Join(fullDirPath, "service.yaml")
-	err = os.WriteFile(fullPath, yamlData, 0644)
-	if err != nil {
-		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
-	}
-
-	cmd.SetArgs([]string{"update", "cms", fullPath})
-
-	err = cmd.ExecuteContext(t.Context())
-
-	if err != nil {
-		t.Fatalf("status should not return an error, got: %v\n", err)
-	}
-	output := buf.String()
-
-	if !strings.Contains(output, "Successfully updated the service") {
-		t.Errorf("Expected update to show 'Successfully updated the service', got: %v\n", output)
+	if !strings.Contains(outBuf.String(), "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", outBuf.String())
 	}
 }
+
+// TODO: func TestUpdateCommandServiceNotRegistered
+// TODO: func TestUpdateCommandIsRegisteredError (requires mock manager)
+// TODO: func TestUpdateCommandInvalidPath
+// TODO: func TestUpdateCommandUpdateCatalogError (requires mock manager)
+// TODO: func TestUpdateCommandMissingArgs
+// TODO: func TestUpdateCommandTooManyArgs

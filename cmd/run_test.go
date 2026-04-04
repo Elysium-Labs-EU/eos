@@ -48,10 +48,10 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -60,7 +60,7 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
@@ -101,10 +101,10 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -113,14 +113,15 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -129,14 +130,14 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
+	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "restarted with PGID:") {
 		t.Fatalf("didn't complete successfully, no PGID was returned, got: %v", secondOutput)
 	}
 }
 
 func TestRunWithNameUnregisteredCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -148,15 +149,14 @@ func TestRunWithNameUnregisteredCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
-	t.Logf("output: %v", output)
+	output := errBuf.String()
 	if !strings.Contains(output, "is not registered") {
 		t.Fatalf("expected run command to fail with 'is not registered', got: %v", output)
 	}
 }
 
 func TestRunWithAmbigiousCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -170,14 +170,14 @@ func TestRunWithAmbigiousCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "error ambiguous input: --file and a service name cannot be used together") {
 		t.Fatalf("expected 'error ambiguous input: --file and a service name cannot be used together', got: %v", output)
 	}
 }
 
 func TestRunWithEmptyCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"run"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -186,14 +186,14 @@ func TestRunWithEmptyCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "error no service specified") {
 		t.Fatalf("expected 'error no service specified', got: %v", output)
 	}
 }
 
 func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -233,7 +233,7 @@ func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
@@ -274,10 +274,10 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "--once", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -286,16 +286,17 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
 
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "--once", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -304,12 +305,12 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
-	if !strings.Contains(secondOutput, "is already registered") {
-		t.Fatal("expected service to checked and registered")
+	secondErrOutput := errBuf.String()
+	if !strings.Contains(secondErrOutput, "is already registered") {
+		t.Fatalf("expected service to checked and registered, got: %v", secondErrOutput)
 	}
-	if !strings.Contains(secondOutput, "is already running") {
-		t.Fatal("expected service to be running")
+	if !strings.Contains(secondErrOutput, "is already running") {
+		t.Fatalf("expected service to be running, got: %v", secondErrOutput)
 	}
 }
 
@@ -348,10 +349,10 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -360,14 +361,15 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "--once", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -376,17 +378,17 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
-	if strings.Contains(secondOutput, "is already registered") {
-		t.Fatalf("expected no service check, got: %v", secondOutput)
+	secondErrOutput := errBuf.String()
+	if strings.Contains(secondErrOutput, "is already registered") {
+		t.Fatalf("expected no service check, got: %v", secondErrOutput)
 	}
-	if !strings.Contains(secondOutput, "is already running") {
-		t.Fatalf("expected service to be running, got: %v", secondOutput)
+	if !strings.Contains(secondErrOutput, "is already running") {
+		t.Fatalf("expected service to be running, got: %v", secondErrOutput)
 	}
 }
 
 func TestRunWithOnceFlagServiceNameUnregisteredCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -398,14 +400,14 @@ func TestRunWithOnceFlagServiceNameUnregisteredCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "is not registered") {
 		t.Fatalf("expected service to not be registered, got: %v", output)
 	}
 }
 
 func TestRunWithFileNotFound(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"run", "-f", "-"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -414,14 +416,14 @@ func TestRunWithFileNotFound(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "error parsing service file") {
 		t.Fatalf("expected service file to not be found, got: %v", output)
 	}
 }
 
 func TestRunWithInvalidYamlFile(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -466,7 +468,7 @@ func TestRunWithInvalidYamlFile(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "error parsing service file") {
 		t.Fatalf("expected service file to be inaccessible, got: %v", output)
 	}
@@ -507,10 +509,10 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -519,15 +521,16 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"stop", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -536,16 +539,17 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("stop should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
+	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "service instance cleaned up") {
 		t.Fatalf("expected service instance to be cleaned up, got: %v", secondOutput)
 	}
 
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "--once", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -554,7 +558,7 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	thirdOutput := buf.String()
+	thirdOutput := outBuf.String()
 	if !strings.Contains(thirdOutput, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
@@ -595,10 +599,10 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -607,15 +611,16 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"stop", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -624,16 +629,17 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("stop should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
+	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "service instance cleaned up") {
 		t.Fatalf("expected service instance to be cleaned up, got: %v", secondOutput)
 	}
 
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "--once", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -642,7 +648,7 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	thirdOutput := buf.String()
+	thirdOutput := outBuf.String()
 	if !strings.Contains(thirdOutput, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
@@ -683,10 +689,10 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
 
-	var buf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -695,15 +701,16 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"stop", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -712,16 +719,17 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("stop should not return an error, got: %v\n", err)
 	}
 
-	secondOutput := buf.String()
+	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "service instance cleaned up") {
 		t.Fatalf("expected service instance to be cleaned up, got: %v", secondOutput)
 	}
 
-	buf.Reset()
+	outBuf.Reset()
+	errBuf.Reset()
 	cmd = newTestRootCmd(manager)
 
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"run", testFile.Name})
 
 	err = cmd.ExecuteContext(t.Context())
@@ -730,14 +738,14 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	thirdOutput := buf.String()
+	thirdOutput := outBuf.String()
 	if !strings.Contains(thirdOutput, "started with PGID:") {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
 }
 
 func TestRunWithFileParseError(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
 	err := os.MkdirAll(fullDirPath, 0755)
@@ -759,7 +767,7 @@ func TestRunWithFileParseError(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "error parsing service file") {
 		t.Fatalf("expected parse error, got: %v", output)
 	}

@@ -1,3 +1,5 @@
+// Package cmd implements the eos CLI commands for registering, starting,
+// stopping, and monitoring background services on a VPS.
 package cmd
 
 import (
@@ -202,7 +204,7 @@ func overrideInt64ConfigValue(envKey string, defaultValue int64) int64 {
 	if override := os.Getenv(envKey); override != "" {
 		val, err := strconv.ParseInt(override, 10, 64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s %s: %s", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding int64 config value: %v", err))
+			fmt.Fprintf(os.Stderr, "%s %s: %s\n", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding int64 config value: %v", err))
 			os.Exit(1)
 		}
 		return val
@@ -214,7 +216,7 @@ func overrideBoolConfigValue(envKey string, defaultValue bool) bool {
 	if override := os.Getenv(envKey); override != "" {
 		val, err := strconv.ParseBool(override)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s %s: %s", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding bool config value: %v", err))
+			fmt.Fprintf(os.Stderr, "%s %s: %s\n", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding bool config value: %v", err))
 			os.Exit(1)
 		}
 		return val
@@ -261,6 +263,8 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 	return mgr, nil, nil
 }
 
+// Execute is the entry point for the eos CLI.
+// It builds the root command tree and exits with code 1 on error.
 func Execute() {
 	rootCmd := newRootCmd()
 

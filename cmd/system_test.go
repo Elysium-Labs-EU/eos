@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +15,7 @@ import (
 )
 
 func TestSystemInfoCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"system", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -19,14 +23,14 @@ func TestSystemInfoCommand(t *testing.T) {
 		t.Fatalf("preparing info test - add should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "System Config") {
-		t.Error("expected the output to contain 'System Config' header")
+		t.Errorf("expected the output to contain 'System Config' header, got: %s", output)
 	}
 }
 
 func TestSystemUpdateCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -42,9 +46,9 @@ func TestSystemUpdateCommand(t *testing.T) {
 		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "dev") {
-		t.Error("expected the output to contain 'dev'")
+		t.Errorf("expected the output to contain 'dev', got: %s", output)
 	}
 }
 
@@ -107,7 +111,7 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 	buildinfo.Version = "invalid-version"
 	defer func() { buildinfo.Version = "dev" }()
 
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -123,9 +127,9 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := errBuf.String()
 	if !strings.Contains(output, "invalid version tag, must start with 'v") {
-		t.Error("expected the output to contain 'invalid version tag, must start with 'v'")
+		t.Errorf("expected the output to contain 'invalid version tag, must start with 'v', got: %s", output)
 	}
 }
 
@@ -133,7 +137,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 	buildinfo.Version = "v0.0.1"
 	defer func() { buildinfo.Version = "dev" }()
 
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -147,22 +151,27 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
 	}
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "darwin", false)
+	fakeFetchRelease := func(_ context.Context, _ bool) (*Release, error) {
+		return &Release{
+			TagName: "v99.0.0",
+			Assets:  []Asset{{Name: "eos-linux-arm64"}},
+		}, nil
+	}
 
-	output := buf.String()
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary)
 
-	if !strings.Contains(output, "no usable asset found") {
-		t.Error("expected the output to contain 'no usable asset found'")
+	output := errBuf.String()
+
+	if !strings.Contains(output, "no compatible asset found") {
+		t.Errorf("expected the output to contain 'no compatible asset found', got: %s", output)
 	}
 }
 
-// TODO: Ideally we dont fetch from an actual API
-// And we are able to run the complete function
 func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 	buildinfo.Version = "v0.0.1"
 	defer func() { buildinfo.Version = "dev" }()
 
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
@@ -176,14 +185,48 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
 	}
 
+	binaryContent := []byte("fake binary")
+	sum := sha256.Sum256(binaryContent)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+
+	fakeFetchRelease := func(_ context.Context, _ bool) (*Release, error) {
+		return &Release{
+			TagName: "v99.0.0",
+			Assets: []Asset{
+				{
+					Name:               "eos-linux-arm64",
+					Digest:             digest,
+					BrowserDownloadURL: "https://github.com/fake/download",
+				},
+			},
+		}, nil
+	}
+
+	fakeDownloadBinary := func(_ context.Context, asset *Asset) (*os.File, string, error) {
+		dir := t.TempDir()
+		f, createErr := os.CreateTemp(dir, asset.Name)
+		if createErr != nil {
+			return nil, "", createErr
+		}
+		if _, writeErr := f.Write(binaryContent); writeErr != nil {
+			_ = f.Close()
+			return nil, "", writeErr
+		}
+		if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+			_ = f.Close()
+			return nil, "", seekErr
+		}
+		return f, dir, nil
+	}
+
 	cmd.SetIn(strings.NewReader("y\ny\n"))
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "linux", false)
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary)
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "info checksums match") {
-		t.Error("expected the output to contain 'info checksums match'")
+		t.Errorf("expected the output to contain 'info checksums match', got: %s", output)
 	}
 }
 
@@ -231,7 +274,7 @@ func TestSystemUpdateCopyFile(t *testing.T) {
 		t.Fatalf("read destination file, got: %v", err)
 	}
 	if string(content) != testContent {
-		t.Fatal("expected to read same content on destination as source")
+		t.Fatalf("expected to read same content on destination as source, got: %s", string(content))
 	}
 }
 
@@ -249,7 +292,7 @@ func TestSystemUpdateCreateDestinationFile(t *testing.T) {
 }
 
 func TestSystemVersionCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"system", "version"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -257,10 +300,33 @@ func TestSystemVersionCommand(t *testing.T) {
 		t.Fatalf("preparing version test - add should not return an error, got: %v\n", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "dev") {
-		t.Error("expected the output to contain 'dev'")
+		t.Errorf("expected the output to contain 'dev', got: %s", output)
 	}
 }
 
 // func TestReplaceBinary(t *testing.T) {}
+
+func TestSupportedPlatformsMatchCheckForUpdates(t *testing.T) {
+	for _, platform := range supportedPlatforms {
+		parts := strings.SplitN(platform, "-", 2)
+		if len(parts) != 2 {
+			t.Errorf("supportedPlatforms entry %q is not in os-arch format", platform)
+			continue
+		}
+		goos, goarch := parts[0], parts[1]
+
+		release := &Release{
+			TagName: "v99.0.0",
+			Assets:  []Asset{{Name: "eos-" + goos + "-" + goarch}},
+		}
+		result, err := checkForUpdates(release, "v0.0.1", goarch, goos)
+		if err != nil {
+			t.Errorf("supportedPlatforms entry %q not matched by checkForUpdates: %v", platform, err)
+		}
+		if result.Asset == nil {
+			t.Errorf("supportedPlatforms entry %q: checkForUpdates returned nil asset", platform)
+		}
+	}
+}

@@ -29,6 +29,13 @@ var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
+// supportedPlatforms lists the OS-arch combinations for which eos releases are published.
+// Keep this in sync with the build pipeline.
+var supportedPlatforms = []string{
+	"linux-amd64",
+	"linux-arm64",
+}
+
 func newSystemCmd() *cobra.Command {
 	systemCmd := &cobra.Command{
 		Use:   "system",
@@ -81,7 +88,7 @@ func newSystemCmd() *cobra.Command {
 			if override := os.Getenv("USER_OS"); override != "" {
 				userOS = override
 			}
-			updateCmd(cmd.Context(), cmd, version, installDir, systemConfig.Daemon, userArch, userOS, includePre)
+			updateCmd(cmd.Context(), cmd, version, installDir, systemConfig.Daemon, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -128,7 +135,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config confi
 	cmd.Printf("  %s %v\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
 }
 
-func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig, userArch string, userOS string, includePre bool) {
+func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, daemonConfig config.DaemonConfig, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error)) {
 	binaryPath := filepath.Join(installDir, "eos")
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
@@ -166,24 +173,23 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return
 	}
 
-	release, err := fetchLatestRelease(ctx, includePre)
+	release, err := fetchRelease(ctx, includePre)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching latest release: %v", err))
 		return
 	}
 
-	latestVersion, latestAsset, err := checkForUpdates(release, version, userArch, userOS)
+	result, err := checkForUpdates(release, version, userArch, userOS)
+	latestVersion := result.LatestVersion
+	latestAsset := result.Asset
 
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking for updates: %v", err))
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("no compatible asset found for %s-%s", userOS, userArch))
+		cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("supported platforms:"), strings.Join(supportedPlatforms, ", "))
 		return
 	}
 	if latestVersion == "" {
 		cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), "already on the latest version", ui.TextMuted.Render(fmt.Sprintf("(%s)", version)))
-		return
-	}
-	if latestAsset == nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("no compatible asset found for %s-%s", userOS, userArch))
 		return
 	}
 
@@ -205,7 +211,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", latestVersion, userOS, userArch))
-	binary, tempDir, err := handleDownloadBinary(ctx, latestAsset)
+	binary, tempDir, err := downloadBinary(ctx, latestAsset)
 
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("downloading binary: %v", err))
@@ -216,6 +222,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 	err = validateDigest(latestAsset, binary)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
 		}
@@ -282,6 +289,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 	if err := forkDaemon(ctx); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
@@ -349,11 +357,16 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 	return &release, nil
 }
 
-func checkForUpdates(release *Release, current string, arch string, os string) (latestVersion string, asset *Asset, err error) {
+type UpdateResult struct {
+	Asset         *Asset
+	LatestVersion string
+}
+
+func checkForUpdates(release *Release, current string, arch string, os string) (result UpdateResult, err error) {
 	latest := release.TagName
 
 	if semver.Compare(current, latest) >= 0 {
-		return "", nil, nil
+		return UpdateResult{}, nil
 	}
 
 	var usuableAsset *Asset
@@ -364,10 +377,10 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 	}
 
 	if usuableAsset == nil {
-		return "", nil, fmt.Errorf("no usable asset found")
+		return UpdateResult{}, fmt.Errorf("no usable asset found")
 	}
 
-	return latest, usuableAsset, nil
+	return UpdateResult{Asset: usuableAsset, LatestVersion: latest}, nil
 }
 
 func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, tempDir string, err error) {

@@ -31,7 +31,7 @@ func writeServiceYAML(t *testing.T, tempDir string, cfg *types.ServiceConfig) st
 }
 
 func TestLogsCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -51,7 +51,7 @@ func TestLogsCommand(t *testing.T) {
 		t.Fatalf("Status command should not return an error, got : %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if strings.Contains(output, "An error occurred during getting the log file, got") {
 		t.Errorf("Log file should be found")
@@ -62,7 +62,7 @@ func TestLogsCommand(t *testing.T) {
 }
 
 func TestLogsNeverRanServiceCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -77,20 +77,21 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 		t.Fatalf("Logs command failed: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "has never been started") {
-		t.Errorf("Expected 'has never been started', got: %s", buf.String())
+	output := errBuf.String()
+	if !strings.Contains(output, "has never been started") {
+		t.Errorf("Expected 'has never been started', got: %s", output)
 	}
 }
 
 func TestLogsNonExistingServiceCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 
 	cmd.SetArgs([]string{"logs", "cms", "--follow=false"})
 
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Logs command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := errBuf.String()
 
 	if !strings.Contains(output, "error cms is not registered") {
 		t.Errorf("Expected status to show 'error cms is not registered', got: %s", output)

@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -26,37 +28,45 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			newProjectPath := args[1]
 			mgr := getManager()
 
-			cmd.Printf("Updating service '%s' to path '%s'\n", serviceName, newProjectPath)
+			cmd.Printf("%s %s → %s\n", ui.LabelInfo.Render("updating"), ui.TextBold.Render(serviceName), newProjectPath)
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.Printf("Error checking service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return
 			}
 			if !exists {
-				cmd.Println("The service isn't registered")
-				cmd.Println("- Use 'eos add <path>' to register services")
-				cmd.Println("- Use 'eos status' to view registered services")
+				cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "service isn't registered.")
+				cmd.PrintErrf("  %s %s %s\n",
+					ui.TextMuted.Render("run:"),
+					ui.TextCommand.Render("eos add <path>"),
+					ui.TextMuted.Render("→ register service"),
+				)
+				cmd.PrintErrf("  %s %s %s\n",
+					ui.TextMuted.Render("run:"),
+					ui.TextCommand.Render("eos status"),
+					ui.TextMuted.Render("→ view registered services"),
+				)
 				return
 			}
 			yamlFile, err := helpers.DetermineYamlFile(newProjectPath)
 
 			if err != nil {
-				cmd.Printf("Error determining YAML file on %v\n", newProjectPath)
+				cmd.PrintErrf("%s %s: %v\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(newProjectPath), err)
 				return
 			}
 
 			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 			if err != nil {
-				cmd.Printf("Error getting absolute path: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting absolute path: %v", err))
 				return
 			}
 
 			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
 			if err != nil {
-				cmd.Printf("Error updating the service: %v\n", err)
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("updating service: %v", err))
 				return
 			}
-			cmd.Printf("Successfully updated the service %s", serviceName)
+			cmd.Printf("%s %s\n", ui.LabelSuccess.Render("updated"), ui.TextBold.Render(serviceName))
 		}}
 }

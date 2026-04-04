@@ -11,7 +11,7 @@ import (
 )
 
 func TestRestartCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -57,13 +57,13 @@ func TestRestartCommand(t *testing.T) {
 		t.Fatalf("Start command should not return an error, got : %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "started with PGID:") {
 		t.Errorf("The start command didn't complete successfully, no PGID was returned")
 	}
 
-	buf.Reset()
+	outBuf.Reset()
 	cmd.SetArgs([]string{"restart", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 
@@ -71,7 +71,7 @@ func TestRestartCommand(t *testing.T) {
 		t.Fatalf("Restart command execution error, got: %v", err)
 	}
 
-	output = buf.String()
+	output = outBuf.String()
 
 	if !strings.Contains(output, "restarted with PGID:") {
 		t.Fatalf("The restart command didn't complete successfully, no PGID was returned")

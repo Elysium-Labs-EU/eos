@@ -130,7 +130,7 @@ func TestDaemonLogsFileMissing(t *testing.T) {
 }
 
 func TestDaemonInfoCommandOutput(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"daemon", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -138,14 +138,14 @@ func TestDaemonInfoCommandOutput(t *testing.T) {
 		t.Fatalf("daemon status should not return an error, got: %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "not found") && !strings.Contains(output, "running") {
 		t.Errorf("daemon status should report running state, got: %s", output)
 	}
 }
 
 func TestDaemonStopCommandOutput(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"daemon", "stop"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -153,7 +153,7 @@ func TestDaemonStopCommandOutput(t *testing.T) {
 		t.Fatalf("daemon stop should not return a cobra error, got: %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "daemon was not running") && !strings.Contains(output, "stopping daemon...") {
 		t.Errorf("daemon stop should report outcome, got: %s", output)
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestStatusCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"status"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -14,46 +14,23 @@ func TestStatusCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := errBuf.String()
 
 	if !strings.Contains(output, "error no services are registered") {
 		t.Errorf("Expected status to show 'error no services are registered', got: %s", output)
 	}
 }
 
-// func TestStatusCommandShowsServices(t *testing.T) {
-// 	var buf bytes.Buffer
+// TODO: func TestStatusCommandGetCatalogError (requires mock manager)
+// TODO: func TestStatusCommandWithRegisteredService (add a service, check table row)
+// TODO: func TestStatusCommandConfigLoadError (registered service with missing/invalid yaml)
+// TODO: func TestStatusCommandConfigNameMismatch (config name differs from registered name)
+// TODO: func TestStatusCommandGetInstanceError (requires mock manager)
+// TODO: func TestStatusCommandGetProcessHistoryError (requires mock manager)
+// TODO: func TestStatusCommandWithRunningService (service instance present, check memory/uptime/restarts columns)
 
-// 	cmd := newRootCmd()
-// 	cmd.SetOut(&buf)
-// 	cmd.SetErr(&buf)
-
-// 	// TODO: We need a way to inject test services into the status command
-// 	// For now, let's think about what we want to see:
-// 	//
-// 	// SERVICE         STATUS    PORT    PGID
-// 	// strapi          running   1337    1234
-// 	// main-website    stopped   3000    -
-// 	// donation-module running   3001    5678
-
-// 	cmd.SetArgs([]string{"status"})
-
-// 	err := cmd.ExecuteContext(t.Context())
-// 	if err != nil {
-// 		t.Fatalf("Status command should not return an error, got: %v", err)
-// 	}
-
-// 	output := buf.String()
-// 	t.Logf("Status output: %q", output)
-
-// 	// For now, this will fail - we're writing the test first
-// 	if !strings.Contains(output, "SERVICE") {
-// 		t.Errorf("Expected status to show service table header, got: %s", output)
-// 	}
-// }
-
-func TestStatusCommmandWithServices(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+func TestStatusCommandWithServices(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"status", "--help"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -61,11 +38,12 @@ func TestStatusCommmandWithServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status help should not return an error, got: %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "Display the current status of all configured services") {
 		t.Errorf("Expected status help to describe the command, got: %s", output)
-	} else if !strings.Contains(output, "eos status") {
+	}
+	if !strings.Contains(output, "eos status") {
 		t.Errorf("Expected status help to show usage, got: %s", output)
 	}
 }

@@ -13,7 +13,7 @@ import (
 func TestStopCommand(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "1s")
 
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -72,20 +72,20 @@ done`
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "stopped 1 process") {
-		t.Errorf("Expected remove to show 'stopped 1 process', got: %s", output)
+		t.Errorf("Expected stop to show 'stopped 1 process', got: %s", output)
 	}
 	if !strings.Contains(output, "service instance cleaned up") {
-		t.Errorf("Expected remove to show 'service instance cleaned up', got: %s", output)
+		t.Errorf("Expected stop to show 'service instance cleaned up', got: %s", output)
 	}
 }
 
 func TestStopCommandShortLivedScript(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "250ms")
 
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -141,18 +141,18 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "stopped 1 process") {
-		t.Errorf("Expected remove to show 'stopped 1 process', got: %s", output)
+		t.Errorf("Expected stop to show 'stopped 1 process', got: %s", output)
 	}
 	if !strings.Contains(output, "service instance cleaned up") {
-		t.Errorf("Expected remove to show 'service instance cleaned up', got: %s", output)
+		t.Errorf("Expected stop to show 'service instance cleaned up', got: %s", output)
 	}
 }
 
 func TestStopCommandGracePeriod(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -211,13 +211,13 @@ done`
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "stopped 1 process") {
-		t.Errorf("Expected remove to show 'stopped 1 process', got: %s", output)
+		t.Errorf("Expected stop to show 'stopped 1 process', got: %s", output)
 	}
 	if !strings.Contains(output, "service instance cleaned up") {
-		t.Errorf("Expected remove to show 'service instance cleaned up', got: %s", output)
+		t.Errorf("Expected stop to show 'service instance cleaned up', got: %s", output)
 	}
 }
 

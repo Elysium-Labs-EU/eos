@@ -52,10 +52,10 @@ func TestAPILogsWithService(t *testing.T) {
 		t.Errorf("expected name %q, got %q", serviceName, result.Name)
 	}
 	if result.LogPath == "" {
-		t.Error("expected non-empty log_path")
+		t.Errorf("expected non-empty log_path, got: %+v", result)
 	}
 	if result.Lines == nil {
-		t.Error("expected lines to be non-nil")
+		t.Errorf("expected lines to be non-nil, got: %+v", result)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestAPILogsWithNoService(t *testing.T) {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
-		t.Error("expected non-empty error message in JSON")
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestAPILogsErrorWithNoService(t *testing.T) {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
-		t.Error("expected non-empty error message in JSON")
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }
 
@@ -146,6 +146,6 @@ func TestAPILogsWithExceedingLineNumber(t *testing.T) {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
-		t.Error("expected non-empty error message in JSON")
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }

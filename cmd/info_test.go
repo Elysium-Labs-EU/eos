@@ -91,7 +91,7 @@ import (
 // }
 
 func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t)
 	yamlData, err := yaml.Marshal(testFile)
@@ -124,7 +124,7 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
 	if !strings.Contains(output, "name") || !strings.Contains(output, "cms") {
 		t.Errorf("Expected name to be 'cms'")
 	}
@@ -146,7 +146,7 @@ func TestInfoOnlyRegisteredServiceCommand(t *testing.T) {
 }
 
 func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
-	cmd, buf, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
@@ -184,7 +184,7 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := outBuf.String()
 
 	if !strings.Contains(output, "command") || !strings.Contains(output, "/home/user/start-script.sh") {
 		t.Errorf("Expected command to be present in config section")
@@ -198,7 +198,7 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 }
 
 func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -206,7 +206,7 @@ func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Info command should return an error")
 	}
-	output := buf.String()
+	output := errBuf.String()
 
 	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
 		t.Errorf("Expected info to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
@@ -214,7 +214,7 @@ func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
 }
 
 func TestInfoNonExistentServiceCommand(t *testing.T) {
-	cmd, buf, _ := setupCmd(t)
+	cmd, _, errBuf, _ := setupCmd(t)
 	cmd.SetArgs([]string{"info", "cms"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -222,7 +222,7 @@ func TestInfoNonExistentServiceCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info command should not return an error, got : %v", err)
 	}
-	output := buf.String()
+	output := errBuf.String()
 
 	if !strings.Contains(output, "service not registered") {
 		t.Errorf("Expected info to show 'service not registered', got: %s", output)

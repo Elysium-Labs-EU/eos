@@ -37,10 +37,10 @@ func TestAPIRunWithServiceFile(t *testing.T) {
 		t.Errorf("expected pgid > 0, got %d", result.PGID)
 	}
 	if result.Restarted {
-		t.Error("expected restarted=false for a fresh start")
+		t.Errorf("expected restarted=false for a fresh start, got: %+v", result)
 	}
 	if result.Skipped {
-		t.Error("expected skipped=false")
+		t.Errorf("expected skipped=false, got: %+v", result)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestAPIRunWithOnceFlag_NotRunning(t *testing.T) {
 		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
 	}
 	if result.Skipped {
-		t.Error("expected skipped=false for a fresh --once start")
+		t.Errorf("expected skipped=false for a fresh --once start, got: %+v", result)
 	}
 	if result.PGID <= 0 {
 		t.Errorf("expected pgid > 0, got %d", result.PGID)
@@ -156,7 +156,7 @@ func TestAPIRunWithUnregisteredName(t *testing.T) {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
-		t.Error("expected non-empty error message in JSON")
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }
 
@@ -175,6 +175,6 @@ func TestAPIRunWithFileNotFound(t *testing.T) {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
-		t.Error("expected non-empty error message in JSON")
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }
