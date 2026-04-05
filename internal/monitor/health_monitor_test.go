@@ -125,10 +125,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 	}
 	t.Cleanup(func() {
-		proc, findErr := os.FindProcess(pgid)
-		if findErr == nil {
-			_ = proc.Kill()
-		}
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	})
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -228,14 +225,10 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Invalid PGID received: %d", pgid)
 	}
 
-	// Kill the process immediately to simulate a crash during startup
-	proc, err := os.FindProcess(pgid)
-	if err != nil {
-		t.Fatalf("Failed to find process %d: %v", pgid, err)
-	}
-	err = proc.Kill()
-	if err != nil {
-		t.Fatalf("Failed to kill process %d: %v", pgid, err)
+	// Kill the entire process group immediately to simulate a crash during startup.
+	// Use a negative pgid to match how isProcessAlive checks group liveness.
+	if err = syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+		t.Fatalf("Failed to kill process group %d: %v", pgid, err)
 	}
 
 	for range 50 {
@@ -588,10 +581,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
 	}
 	t.Cleanup(func() {
-		proc, findErr := os.FindProcess(pid)
-		if findErr == nil {
-			_ = proc.Kill()
-		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
 	})
 
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -1009,14 +999,11 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 				t.Fatalf("Iteration %d: Failed to get latest process", i)
 			}
 
-			// Kill the real process. RestartService's background goroutine
+			// Kill the entire process group. RestartService's background goroutine
 			// already calls Wait() on the child, so we must not call Wait()
 			// here - doing so races with that goroutine and fails with
 			// "no child processes" when it wins.
-			proc, err := os.FindProcess(latestProcess.PGID)
-			if err == nil {
-				_ = proc.Kill()
-			}
+			_ = syscall.Kill(-latestProcess.PGID, syscall.SIGKILL)
 
 			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
 				State:     new(types.ProcessStateFailed),
