@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1044,11 +1045,13 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 func TestHealthMonitor_IsProcessAlive(t *testing.T) {
 	hm := &HealthMonitor{}
 
-	currentPID := os.Getpid()
-	isAlive := hm.isProcessAlive(currentPID)
+	pgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Failed to get pgid: %v", err)
+	}
 
-	if !isAlive {
-		t.Fatal("Current process should be alive")
+	if !hm.isProcessAlive(pgid) {
+		t.Fatal("Current process group should be alive")
 	}
 }
 

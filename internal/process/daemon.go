@@ -106,48 +106,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 		select {
 		case sig := <-sigChan:
 			if sig == syscall.SIGCHLD {
-				for {
-					var status syscall.WaitStatus
-					pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
-					if err != nil {
-						logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
-						break
-					}
-					if pid == 0 {
-						break
-					}
-					if pid < 0 {
-						logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
-						continue
-					}
-
-					logger.Log(logutil.LogLevelError, fmt.Sprintf("reaped zombie process: %d\n", pid))
-
-					if status.ExitStatus() == 0 {
-						updates := database.ProcessHistoryUpdate{
-							State:     new(types.ProcessStateStopped),
-							StoppedAt: new(time.Now()),
-						}
-						updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
-						if updateErr != nil {
-							logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
-						}
-						continue
-					}
-
-					updates := database.ProcessHistoryUpdate{
-						State:     new(types.ProcessStateFailed),
-						StoppedAt: new(time.Now()),
-						Error:     new("Zombie process has been reaped"),
-					}
-
-					err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
-					if err != nil {
-						logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
-					}
-
-					continue
-				}
+				handleSIGCHLDRequest(ctx, db, logger)
 			}
 		case <-ctx.Done():
 			if err := listener.Close(); err != nil {
@@ -161,6 +120,61 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 			}
 			return nil
 		}
+	}
+}
+
+func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.DaemonLogger) {
+	for {
+		var status syscall.WaitStatus
+		pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+		if err != nil {
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
+			break
+		}
+		if pid == 0 {
+			break
+		}
+		if pid < 0 {
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
+			continue
+		}
+
+		logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reaped zombie process: %d\n", pid))
+
+		// Check if the process group is still alive (children still running).
+		// The reaped PID may be the PGID leader (shell), but actual service
+		// processes can still be running in the same group.
+		// If the group is alive, skip the state update. The health monitor
+		// will handle ongoing liveness tracking.
+		if pid > 1 && syscall.Kill(-pid, 0) == nil {
+			logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reaped process %d but process group still alive, skipping state update\n", pid))
+			continue
+		}
+
+		if status.ExitStatus() == 0 {
+			updates := database.ProcessHistoryUpdate{
+				State:     new(types.ProcessStateStopped),
+				StoppedAt: new(time.Now()),
+			}
+			updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
+			if updateErr != nil {
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
+			}
+			continue
+		}
+
+		updates := database.ProcessHistoryUpdate{
+			State:     new(types.ProcessStateFailed),
+			StoppedAt: new(time.Now()),
+			Error:     new("Zombie process has been reaped"),
+		}
+
+		err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
+		if err != nil {
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
+		}
+
+		continue
 	}
 }
 
@@ -266,9 +280,9 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				logger.Log(logutil.LogLevelInfo, "listener closed, shutting down gracefully")
-			} else {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
+				return
 			}
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
 			return
 		}
 

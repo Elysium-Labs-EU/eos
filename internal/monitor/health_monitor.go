@@ -339,12 +339,11 @@ func calculateBackoffDelay(restartCount int) time.Duration {
 	return time.Duration(calculatedDelayAsInt) * time.Millisecond
 }
 
-func (hm *HealthMonitor) isProcessAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
+func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
+	if pgid <= 1 {
 		return false
 	}
-	err = process.Signal(syscall.Signal(0))
+	err := syscall.Kill(-pgid, 0)
 	return err == nil
 }
 

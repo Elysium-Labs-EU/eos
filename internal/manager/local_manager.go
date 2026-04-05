@@ -238,8 +238,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		processPGID := p.PGID
 
 		if state == types.ProcessStateRunning {
-			process, _ := os.FindProcess(processPGID)
-			signalErr := process.Signal(syscall.Signal(0))
+			signalErr := syscall.Kill(-processPGID, 0)
 			// TODO: Update the process history after failing this?
 			if signalErr != nil {
 				return 0, fmt.Errorf("service either has no active process or is inaccessible with PGID %d", processPGID)
@@ -660,13 +659,11 @@ OuterLoop:
 	return StopServiceResult{Errored: erroredProcesses, Stopped: stoppedAndAlreadyDeadProcesses, StaleData: staleDataErrors}, nil
 }
 
-// TODO: Rewrite this?
-func isProcessAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
+func isProcessAlive(pgid int) bool {
+	if pgid <= 1 {
 		return false
 	}
-	err = process.Signal(syscall.Signal(0))
+	err := syscall.Kill(-pgid, 0)
 	return err == nil
 }
 

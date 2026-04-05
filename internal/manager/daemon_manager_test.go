@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,23 +86,20 @@ func TestWaitForSocketExists(t *testing.T) {
 	tempDir := t.TempDir()
 	socketPath := filepath.Join(tempDir, "test.sock")
 
-	f, err := os.Create(socketPath)
+	lc := net.ListenConfig{}
+	_, err := lc.Listen(t.Context(), "unix", socketPath)
 	if err != nil {
-		t.Fatalf("Failed to create socket file: %v", err)
-	}
-	err = f.Close()
-	if err != nil {
-		t.Fatalf("Closing the file errored: %v", err)
+		t.Fatalf("Failed to create net listener: %v", err)
 	}
 
-	err = waitForSocket(socketPath, 1*time.Second)
+	err = waitForSocket(t.Context(), socketPath, 1*time.Second)
 	if err != nil {
 		t.Errorf("waitForSocket should succeed when socket exists, got: %v", err)
 	}
 }
 
 func TestWaitForSocketTimeout(t *testing.T) {
-	err := waitForSocket("/nonexistent/socket.sock", 200*time.Millisecond)
+	err := waitForSocket(t.Context(), "/nonexistent/socket.sock", 200*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitForSocket should error on timeout")
 	}
@@ -111,25 +109,28 @@ func TestWaitForSocketTimeout(t *testing.T) {
 }
 
 func TestWaitForSocketDelayedCreation(t *testing.T) {
-	tempDir := t.TempDir()
-	socketPath := filepath.Join(tempDir, "test.sock")
+	socketDir, err := os.MkdirTemp("/tmp", "eos")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "s.sock")
 
-	// Create the socket after a short delay
+	listenerErr := make(chan error, 1)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		f, err := os.Create(socketPath)
-		if err != nil {
-			return
-		}
-		err = f.Close()
-		if err != nil {
-			t.Errorf("Closing the file errored: %v", err)
-		}
+		lc := net.ListenConfig{}
+		_, socketErr := lc.Listen(t.Context(), "unix", socketPath)
+		listenerErr <- socketErr
 	}()
 
-	err := waitForSocket(socketPath, 2*time.Second)
+	err = waitForSocket(t.Context(), socketPath, 2*time.Second)
 	if err != nil {
 		t.Errorf("waitForSocket should succeed when socket appears within timeout, got: %v", err)
+	}
+
+	if err := <-listenerErr; err != nil {
+		t.Errorf("failed to start listener in goroutine: %v", err)
 	}
 }
 

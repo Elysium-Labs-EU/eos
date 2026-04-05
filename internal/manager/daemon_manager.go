@@ -31,7 +31,7 @@ func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, so
 		return nil, fmt.Errorf("starting daemon: %w", err)
 	}
 
-	if err := waitForSocket(socketPath, socketTimeout); err != nil {
+	if err := waitForSocket(ctx, socketPath, socketTimeout); err != nil {
 		return nil, fmt.Errorf("daemon started but socket not ready: %w", err)
 	}
 
@@ -78,12 +78,17 @@ func startDaemonProcess(ctx context.Context) error {
 	return nil
 }
 
-func waitForSocket(socketPath string, timeout time.Duration) error {
+func waitForSocket(ctx context.Context, socketPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	dialer := net.Dialer{Timeout: 100 * time.Millisecond}
 
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			return nil // Socket exists
+		dialCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		conn, err := dialer.DialContext(dialCtx, "unix", socketPath)
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
