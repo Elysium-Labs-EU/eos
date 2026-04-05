@@ -152,6 +152,8 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 }
 
 func TestStopCommandGracePeriod(t *testing.T) {
+	t.Setenv("SHUTDOWN_GRACE_PERIOD", "250ms")
+
 	cmd, outBuf, _, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -204,6 +206,7 @@ done`
 		t.Fatalf("Start command should not return an error, got : %v", err)
 	}
 
+	cmd.SetIn(strings.NewReader("y\n"))
 	cmd.SetArgs([]string{"stop", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 
