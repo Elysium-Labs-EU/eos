@@ -423,6 +423,9 @@ func TestRunWithFileNotFound(t *testing.T) {
 }
 
 func TestRunWithInvalidYamlFile(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: cannot test file permission restrictions as root")
+	}
 	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())

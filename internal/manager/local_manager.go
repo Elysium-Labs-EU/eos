@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -663,8 +664,26 @@ func isProcessAlive(pgid int) bool {
 	if pgid <= 1 {
 		return false
 	}
-	err := syscall.Kill(-pgid, 0)
-	return err == nil
+	if err := syscall.Kill(-pgid, 0); err != nil {
+		return false
+	}
+	// On Linux, kill(-pgid, 0) returns nil even when the only remaining process
+	// is a zombie (exited but not yet reaped by its parent's Wait call). A zombie
+	// is not running, so we check /proc/<pgid>/stat for the 'Z' state.
+	// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught above), so no
+	// /proc check is needed there.
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
+		if err != nil {
+			return false // process entry gone or unreadable
+		}
+		statStr := string(data)
+		// Format: pid (comm) state ... — find state char after the last ')' in comm
+		if i := strings.LastIndex(statStr, ")"); i >= 0 && i+2 < len(statStr) {
+			return statStr[i+2] != 'Z'
+		}
+	}
+	return true
 }
 
 func (m *LocalManager) ForceStopService(name string) (StopServiceResult, error) {

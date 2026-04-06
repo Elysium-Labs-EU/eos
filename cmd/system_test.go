@@ -231,6 +231,9 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 }
 
 func TestSystemUpdateCheckWritableFailed(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: cannot test directory permission restrictions as root")
+	}
 	dir := t.TempDir()
 	err := os.Chmod(dir, 0555)
 	if err != nil {
