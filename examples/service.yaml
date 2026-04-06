@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../schemas/service.schema.json
+
+# Example: Node.js API server managed via nvm
+name: "api"
+command: "dist/server.js"
+port: 3000
+runtime:
+  type: "nodejs"
+  path: "~/.nvm/versions/node/v20.0.0/bin"
+memory_limit_mb: 512

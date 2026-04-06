@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeberg.org/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json",
+  "title": "eos service configuration",
+  "description": "Configuration schema for eos service.yaml files",
+  "type": "object",
+  "required": ["name", "command"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique name for the service. Used to reference it in all eos commands.",
+      "minLength": 1,
+      "examples": ["api", "cms", "worker"]
+    },
+    "command": {
+      "type": "string",
+      "description": "The entry point script or binary to run. Relative to the service directory or an absolute path.",
+      "minLength": 1,
+      "examples": ["./start.sh", "dist/server.js", "/home/user/scripts/start.sh"]
+    },
+    "port": {
+      "type": "integer",
+      "description": "Port the service listens on. Displayed in eos status.",
+      "minimum": 1,
+      "maximum": 65535,
+      "examples": [3000, 8080, 1337]
+    },
+    "memory_limit_mb": {
+      "type": "integer",
+      "description": "Soft memory limit in megabytes. eos will restart the service when exceeded.",
+      "minimum": 1,
+      "examples": [200, 512, 1024]
+    },
+    "env_file": {
+      "type": "string",
+      "description": "Path to a .env file to load into the service's environment. Relative to the service directory.",
+      "minLength": 1,
+      "examples": [".env", ".env.production"]
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Runtime configuration. Required when the service needs a specific runtime binary (Node.js, Bun, Deno).",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Runtime type.",
+          "enum": ["nodejs", "node", "bun", "deno"],
+          "examples": ["nodejs", "bun", "deno"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Absolute or home-relative (~/) path to the directory containing the runtime binary.",
+          "examples": [
+            "/opt/homebrew/bin",
+            "~/.nvm/versions/node/v20.0.0/bin",
+            "~/.bun/bin",
+            "~/.deno/bin"
+          ]
+        }
+      }
+    }
+  }
+}

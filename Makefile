@@ -114,12 +114,27 @@ release-local: ## Build release binaries locally
 	@echo "Release binaries built in ./dist/"
 	@ls -lh dist/
 
-release: ## Tag and push a release
+changelog: ## Generate CHANGELOG.md from git history
+	@echo "Generating CHANGELOG.md..."
+	@command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }
+	git cliff --output CHANGELOG.md
+	@echo "CHANGELOG.md updated"
+
+changelog-preview: ## Preview unreleased changes (does not write to file)
+	@command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }
+	git cliff --unreleased
+
+release: ## Update changelog, tag and push a release (requires TAG=v1.2.0)
 	@if [ -z "$(TAG)" ]; then echo "Usage: make release TAG=v1.2.0"; exit 1; fi
+	@command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }
+	git cliff --tag $(TAG) --output CHANGELOG.md
+	git add CHANGELOG.md
+	git diff --cached --quiet CHANGELOG.md || git commit -m "chore: update changelog for $(TAG)"
+	git push origin HEAD
 	git tag -a $(TAG) -m "Release $(TAG)"
 	git push origin $(TAG)
 
-pre-release: ## Tag and push a pre-release
+pre-release: ## Tag and push a pre-release (requires TAG=v1.2.0-rc.1, no changelog update)
 	@if [ -z "$(TAG)" ]; then echo "Usage: make pre-release TAG=v1.2.0-rc.1"; exit 1; fi
 	git tag -a $(TAG) -m "Pre-release $(TAG)"
 	git push origin $(TAG)

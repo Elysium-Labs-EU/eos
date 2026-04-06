@@ -339,12 +339,34 @@ func calculateBackoffDelay(restartCount int) time.Duration {
 	return time.Duration(calculatedDelayAsInt) * time.Millisecond
 }
 
+// isProcessAlive reports whether any live process exists in the given process group.
+//
+// On Linux, kill(-pgid, 0) returns nil even when the only remaining process is
+// a zombie — a process that has exited but has not yet been reaped by its
+// parent's Wait call. A zombie is not running, so we read /proc/<pgid>/stat and
+// treat state 'Z' as dead.
+//
+// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught by the err != nil
+// check below), so the /proc path is not needed there.
 func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 	if pgid <= 1 {
 		return false
 	}
-	err := syscall.Kill(-pgid, 0)
-	return err == nil
+	if err := syscall.Kill(-pgid, 0); err != nil {
+		return false
+	}
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
+		if err != nil {
+			return false
+		}
+		statStr := string(data)
+		// Format: pid (comm) state ... — find state char after the last ')' in comm
+		if i := strings.LastIndex(statStr, ")"); i >= 0 && i+2 < len(statStr) {
+			return statStr[i+2] != 'Z'
+		}
+	}
+	return true
 }
 
 func scanStatusField(contents []byte, field string) (fieldValue string, err error) {

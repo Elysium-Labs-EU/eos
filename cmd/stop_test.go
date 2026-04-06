@@ -37,18 +37,13 @@ func TestStopCommand(t *testing.T) {
 	}
 
 	testStartScript := `#!/bin/bash
-trap 'exit 0' SIGTERM SIGINT
-while true; do
-    sleep 1
-done`
+exec sleep 3600`
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
 	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)
 	if err != nil {
 		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
 	}
-
-	cmd.SetIn(strings.NewReader("n\n"))
 
 	cmd.SetArgs([]string{"add", fullPathYaml})
 
