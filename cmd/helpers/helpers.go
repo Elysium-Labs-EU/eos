@@ -34,7 +34,7 @@ func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.Servi
 	}
 }
 
-func DetermineUptime(mostRecentProcess *types.ProcessHistory) string {
+func DetermineUptimeHuman(mostRecentProcess *types.ProcessHistory) string {
 	if mostRecentProcess == nil {
 		return "-"
 	}
@@ -47,16 +47,37 @@ func DetermineUptime(mostRecentProcess *types.ProcessHistory) string {
 	if mostRecentProcess.State == types.ProcessStateUnknown {
 		return "-"
 	}
-
 	return humanize.Time(*mostRecentProcess.StartedAt)
 }
 
-func DetermineProcessMemoryInMb(rssMemoryKb int64) string {
+func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
+	if mostRecentProcess == nil {
+		return nil
+	}
+	if mostRecentProcess.State == types.ProcessStateStopped {
+		return nil
+	}
+	if mostRecentProcess.State == types.ProcessStateFailed {
+		return nil
+	}
+	if mostRecentProcess.State == types.ProcessStateUnknown {
+		return nil
+	}
+	return new(mostRecentProcess.StartedAt.String())
+}
+
+func DetermineProcessMemoryInMbHuman(rssMemoryKb int64) string {
 	if rssMemoryKb <= 0 {
 		return "-"
 	}
-
 	return fmt.Sprintf("%.1f MB", float64(rssMemoryKb)/1024)
+}
+
+func DetermineProcessMemoryInMbAPI(rssMemoryKb int64) *string {
+	if rssMemoryKb <= 0 {
+		return nil
+	}
+	return new(fmt.Sprintf("%.1f MB", float64(rssMemoryKb)/1024))
 }
 
 func DetermineError(errorStringPtr *string) string {

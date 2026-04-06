@@ -60,9 +60,10 @@ type DaemonRequest struct {
 }
 
 type DaemonResponse struct {
-	Error   string          `json:"error,omitempty"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Success bool            `json:"success"`
+	Error     string          `json:"error,omitempty"`
+	ErrorCode string          `json:"error_code,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Success   bool            `json:"success"`
 }
 
 func (r *DaemonRequest) Validate() error {

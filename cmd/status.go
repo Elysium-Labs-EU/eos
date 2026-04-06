@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -70,15 +69,13 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 				serviceInstance, err := mgr.GetServiceInstance(regServiceName)
 
-				// NOTE: We check here on both string and error type. String because of daemon serialization.
-				if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !strings.Contains(err.Error(), manager.ErrServiceNotRunning.Error()) {
+				if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
 					continue
 				}
 
-				// NOTE: We check here on both string and error type. String because of daemon serialization.
 				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
-				if err != nil && !errors.Is(err, manager.ErrNotFound) && !strings.Contains(err.Error(), manager.ErrNotFound.Error()) {
+				if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 					cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
 					continue
 				}
@@ -86,12 +83,12 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				entry := StatusServiceEntry{
 					Name:   regServiceName,
 					Status: helpers.DetermineServiceStatus(mostRecentProcess),
-					Uptime: helpers.DetermineUptime(mostRecentProcess),
+					Uptime: helpers.DetermineUptimeHuman(mostRecentProcess),
 				}
 				if mostRecentProcess != nil {
 					entry.PGID = mostRecentProcess.PGID
 					entry.Error = helpers.DetermineError(mostRecentProcess.Error)
-					entry.MemoryMb = helpers.DetermineProcessMemoryInMb(mostRecentProcess.RssMemoryKb)
+					entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb)
 				}
 				if serviceInstance != nil && serviceInstance.StartedAt != nil {
 					entry.Started = humanize.Time(*serviceInstance.StartedAt)
