@@ -660,6 +660,15 @@ OuterLoop:
 	return StopServiceResult{Errored: erroredProcesses, Stopped: stoppedAndAlreadyDeadProcesses, StaleData: staleDataErrors}, nil
 }
 
+// isProcessAlive reports whether any live process exists in the given process group.
+//
+// On Linux, kill(-pgid, 0) returns nil even when the only remaining process is
+// a zombie — a process that has exited but has not yet been reaped by its
+// parent's Wait call. A zombie is not running, so we read /proc/<pgid>/stat and
+// treat state 'Z' as dead.
+//
+// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught by the err != nil
+// check below), so the /proc path is not needed there.
 func isProcessAlive(pgid int) bool {
 	if pgid <= 1 {
 		return false
@@ -667,15 +676,10 @@ func isProcessAlive(pgid int) bool {
 	if err := syscall.Kill(-pgid, 0); err != nil {
 		return false
 	}
-	// On Linux, kill(-pgid, 0) returns nil even when the only remaining process
-	// is a zombie (exited but not yet reaped by its parent's Wait call). A zombie
-	// is not running, so we check /proc/<pgid>/stat for the 'Z' state.
-	// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught above), so no
-	// /proc check is needed there.
 	if runtime.GOOS == "linux" {
 		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
 		if err != nil {
-			return false // process entry gone or unreadable
+			return false
 		}
 		statStr := string(data)
 		// Format: pid (comm) state ... — find state char after the last ')' in comm
