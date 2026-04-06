@@ -39,7 +39,8 @@ func TestStopCommand(t *testing.T) {
 	testStartScript := `#!/bin/bash
 trap 'exit 0' SIGTERM SIGINT
 while true; do
-    sleep 1
+    sleep 1 &
+    wait $!
 done`
 
 	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
