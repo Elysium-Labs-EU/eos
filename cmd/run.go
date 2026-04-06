@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
@@ -47,8 +46,7 @@ func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration
 		return ServiceStartResult{Restarted: false, PGID: pgid}, nil
 	}
 
-	// NOTE: We check here on both string and error type. String because of daemon serialization.
-	if !errors.Is(err, manager.ErrAlreadyRunning) && !strings.Contains(err.Error(), manager.ErrAlreadyRunning.Error()) {
+	if !errors.Is(err, manager.ErrAlreadyRunning) {
 		return ServiceStartResult{}, fmt.Errorf("starting service: %w", err)
 	}
 
@@ -92,8 +90,7 @@ type ServiceFileRequestResult struct {
 func registerServiceIfNeeded(mgr manager.ServiceManager, serviceYamlFile string, serviceName string) (ServiceFileRequestResult, error) {
 	err := registerService(mgr, serviceYamlFile, serviceName)
 
-	// NOTE: We check here on both string and error type. String because of daemon serialization.
-	if errors.Is(err, manager.ErrServiceAlreadyRegistered) || (err != nil && strings.Contains(err.Error(), manager.ErrServiceAlreadyRegistered.Error())) {
+	if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 		return ServiceFileRequestResult{Name: serviceName, AlreadyExists: true}, nil
 	}
 	if err != nil {

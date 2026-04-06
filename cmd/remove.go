@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -39,8 +38,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
-			// NOTE: We check here on both string and error type. String because of daemon serialization.
-			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !strings.Contains(err.Error(), manager.ErrServiceNotRunning.Error()) {
+			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service instance: %v", err))
 				return
 			}

@@ -317,7 +317,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 	case types.MethodGetAllServiceInstances:
 		result, err := mgr.GetAllServiceInstances()
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		if result == nil {
 			result = []types.ServiceInstance{}
@@ -341,7 +341,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		result, err := mgr.GetServiceInstance(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		if result == nil {
 			return errorResponse("result returned nil")
@@ -364,7 +364,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		removed, err := mgr.RemoveServiceInstance(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(map[string]bool{"removed": removed})
 		if err != nil {
@@ -379,7 +379,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		pid, err := mgr.StartService(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(map[string]int{"pid": pid})
 		if err != nil {
@@ -405,7 +405,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		pid, err := mgr.RestartService(args.Name, gracePeriod, tickerPeriod)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(map[string]int{"pid": pid})
 		if err != nil {
@@ -431,7 +431,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		result, err := mgr.StopService(args.Name, gracePeriod, tickerPeriod)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(result)
 
@@ -450,7 +450,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		result, err := mgr.ForceStopService(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
@@ -468,14 +468,14 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		err := mgr.AddServiceCatalogEntry(args.Service)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		return types.DaemonResponse{Success: true}
 
 	case types.MethodGetAllServiceCatalogEntries:
 		result, err := mgr.GetAllServiceCatalogEntries()
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
@@ -493,7 +493,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		result, err := mgr.GetServiceCatalogEntry(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(result)
 		if err != nil {
@@ -511,7 +511,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		result, err := mgr.IsServiceRegistered(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(map[string]bool{"exists": result})
 		if err != nil {
@@ -529,7 +529,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		removed, err := mgr.RemoveServiceCatalogEntry(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		data, err := json.Marshal(map[string]bool{"removed": removed})
 		if err != nil {
@@ -545,7 +545,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		return types.DaemonResponse{Success: true}
 
@@ -556,7 +556,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		}
 		result, err := mgr.GetMostRecentProcessHistoryEntry(args.Name)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 		if result == nil {
 			return errorResponse("no process history entry found")
@@ -581,7 +581,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		logPath, errorLogPath, err := mgr.NewServiceLogFiles(args.ServiceName)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 
 		data, err := json.Marshal(map[string]string{"logPath": logPath, "errorLogPath": errorLogPath})
@@ -599,7 +599,7 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 
 		filepath, err := mgr.GetServiceLogFilePath(args.ServiceName, args.ErrorLog)
 		if err != nil {
-			return errorResponse(err.Error())
+			return sentinelErrorResponse(err)
 		}
 
 		data, err := json.Marshal(map[string]*string{"filepath": filepath})
@@ -618,6 +618,14 @@ func errorResponse(message string) types.DaemonResponse {
 	return types.DaemonResponse{
 		Success: false,
 		Error:   message,
+	}
+}
+
+func sentinelErrorResponse(err error) types.DaemonResponse {
+	return types.DaemonResponse{
+		Success:   false,
+		Error:     err.Error(),
+		ErrorCode: manager.ErrorCode(err),
 	}
 }
 

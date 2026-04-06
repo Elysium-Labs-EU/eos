@@ -30,8 +30,6 @@ func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logge
 	return &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger}
 }
 
-var ErrServiceAlreadyRegistered = errors.New("service already registered")
-
 func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.ServiceCatalogEntry) error {
 	isRegistered, err := m.db.IsServiceRegistered(m.ctx, newServiceCatalogEntry.Name)
 	if err != nil {
@@ -84,8 +82,6 @@ func isNotFound(err error) bool {
 		strings.Contains(err.Error(), database.ErrServiceNotFound.Error())
 }
 
-var ErrServiceNotRunning = errors.New("service not running")
-
 func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
 	_, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
@@ -111,8 +107,6 @@ func (m *LocalManager) GetAllServiceInstances() ([]types.ServiceInstance, error)
 	return serviceInstances, nil
 }
 
-var ErrServiceNotRegistered = errors.New("service not registered")
-
 func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error) {
 	_, err := m.db.IsServiceRegistered(m.ctx, name)
 	if err != nil {
@@ -137,8 +131,6 @@ func (m *LocalManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntr
 	return services, nil
 }
 
-var ErrNotFound = errors.New("not found")
-
 func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
 	if err != nil {
@@ -146,7 +138,7 @@ func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.Pro
 	}
 
 	if len(processHistory) == 0 {
-		return nil, ErrNotFound
+		return nil, ErrProcessNotFound
 	}
 
 	mostRecentIdx := 0
@@ -201,8 +193,6 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
 		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing write error file for %s: %v", name, err))
 	}
 }
-
-var ErrAlreadyRunning = errors.New("already running")
 
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)

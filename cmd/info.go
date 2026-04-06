@@ -41,34 +41,40 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
-			if err != nil {
+			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
 			}
+			// serviceInstance may be nil if service was never started
 
 			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil {
+			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 			}
+
+			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
-			if err != nil {
+			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log path: %v", err))
 			}
+			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
-			if err != nil {
+			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log path: %v", err))
 			}
 
+			helpers.PrintSection(cmd, "Process")
 			if processEntry != nil {
-				helpers.PrintSection(cmd, "Process")
 				helpers.PrintKV(cmd, "status", helpers.PrintStatus(helpers.DetermineServiceStatus(processEntry)))
 				helpers.PrintKV(cmd, "pgid", fmt.Sprintf("%d", processEntry.PGID))
-				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptime(processEntry))
-				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMb(processEntry.RssMemoryKb))
+				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptimeHuman(processEntry))
+				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMbHuman(processEntry.RssMemoryKb))
 				if processEntry.Error == nil {
 					helpers.PrintKV(cmd, "error", "N/A")
 				} else {
 					helpers.PrintKV(cmd, "error", fmt.Sprintf("%v", *processEntry.Error))
 				}
+			} else {
+				cmd.PrintErr(ui.TextMuted.Render("  no process found\n"))
 			}
 
 			helpers.PrintSection(cmd, "Service")

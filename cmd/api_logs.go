@@ -62,7 +62,7 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil && !errors.Is(err, manager.ErrNotFound) && !strings.Contains(err.Error(), manager.ErrNotFound.Error()) {
+			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting process history: %w", err))
 			}
 			if processHistoryEntry == nil {
