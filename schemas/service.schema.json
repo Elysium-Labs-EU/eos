@@ -35,6 +35,7 @@
     "env_file": {
       "type": "string",
       "description": "Path to a .env file to load into the service's environment. Relative to the service directory.",
+      "minLength": 1,
       "examples": [".env", ".env.production"]
     },
     "runtime": {

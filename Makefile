@@ -129,7 +129,8 @@ release: ## Update changelog, tag and push a release (requires TAG=v1.2.0)
 	@command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }
 	git cliff --tag $(TAG) --output CHANGELOG.md
 	git add CHANGELOG.md
-	git commit -m "chore: update changelog for $(TAG)"
+	git diff --cached --quiet CHANGELOG.md || git commit -m "chore: update changelog for $(TAG)"
+	git push origin HEAD
 	git tag -a $(TAG) -m "Release $(TAG)"
 	git push origin $(TAG)
 

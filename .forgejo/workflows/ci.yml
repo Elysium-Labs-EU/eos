@@ -30,6 +30,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install dependencies
         run: go mod download
@@ -43,7 +44,6 @@ jobs:
   verify-build:
     name: Verify Build
     runs-on: codeberg-small
-    needs: [test]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,6 +52,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Verify code compiles
         run: go build -v ./...

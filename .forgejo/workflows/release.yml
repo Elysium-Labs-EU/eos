@@ -48,10 +48,12 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
+        run: go test ./... -v -race
 
   build:
     needs: [lint, test]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     strategy:
       matrix:
         include:
@@ -139,19 +141,10 @@ jobs:
           sha256sum eos-linux-* > sha256sums.txt
           cat sha256sums.txt
 
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Determine if prerelease
         id: prerelease
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.build.outputs.version }}"
           if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
           else
@@ -162,7 +155,7 @@ jobs:
         env:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.build.outputs.version }}"
           IS_PRERELEASE="${{ steps.prerelease.outputs.is_prerelease }}"
           REPO="${{ github.repository }}"
 
@@ -209,7 +202,7 @@ jobs:
           )
 
           # Create the release
-          RELEASE_ID=$(curl -s -X POST \
+          RELEASE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "https://codeberg.org/api/v1/repos/${REPO}/releases" \
             -H "Authorization: token ${GITEA_TOKEN}" \
             -H "Content-Type: application/json" \
@@ -219,7 +212,15 @@ jobs:
               --arg body "${BODY}" \
               --argjson prerelease "${IS_PRERELEASE}" \
               '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: $prerelease}'
-            )" | jq -r '.id')
+            )")
+          RELEASE_HTTP_CODE=$(echo "${RELEASE_RESPONSE}" | tail -n1)
+          RELEASE_BODY=$(echo "${RELEASE_RESPONSE}" | sed '$d')
+          RELEASE_ID=$(echo "${RELEASE_BODY}" | jq -r '.id')
+
+          if [ "${RELEASE_HTTP_CODE}" != "201" ] || [ -z "${RELEASE_ID}" ] || [ "${RELEASE_ID}" = "null" ]; then
+            echo "Failed to create release. HTTP: ${RELEASE_HTTP_CODE}, Response: ${RELEASE_BODY}"
+            exit 1
+          fi
 
           echo "Created release ID: ${RELEASE_ID}"
 
@@ -227,8 +228,14 @@ jobs:
           for file in release/eos-linux-amd64 release/eos-linux-arm64 release/sha256sums.txt; do
             filename=$(basename "$file")
             echo "Uploading ${filename}..."
-            curl -s -X POST \
+            UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
               "https://codeberg.org/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" \
               -H "Authorization: token ${GITEA_TOKEN}" \
-              -F "attachment=@${file}"
+              -F "attachment=@${file}")
+            UPLOAD_HTTP_CODE=$(echo "${UPLOAD_RESPONSE}" | tail -n1)
+            if [ "${UPLOAD_HTTP_CODE}" != "201" ]; then
+              echo "Failed to upload ${filename}. HTTP: ${UPLOAD_HTTP_CODE}"
+              exit 1
+            fi
+            echo "Uploaded ${filename} (HTTP ${UPLOAD_HTTP_CODE})"
           done
