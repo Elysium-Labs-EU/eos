@@ -1,6 +1,6 @@
 # eos - Service Orchestration Tool
 
-[![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium-Labs-EU/eos)
+[![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium_Labs/eos)
 
 Run and manage background services on your VPS without the overhead. eos is a lightweight process manager written in Go: register services, start them, and keep track of what's running. No Node.js runtime required, no global daemon to maintain.
 
@@ -12,13 +12,13 @@ If you've used PM2 or similar tools and want something smaller and self-containe
 
 Using curl
 ```bash
-curl -sSL https://codeberg.org/Elysium-Labs-EU/eos/raw/branch/main/install.sh -o install.sh
+curl -sSL https://codeberg.org/Elysium_Labs/eos/raw/branch/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 Using wget
 ```bash
-wget https://codeberg.org/Elysium-Labs-EU/eos/raw/branch/main/install.sh
+wget https://codeberg.org/Elysium_Labs/eos/raw/branch/main/install.sh
 sudo bash install.sh
 ```
 
