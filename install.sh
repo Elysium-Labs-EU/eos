@@ -12,6 +12,7 @@ readonly NC='\033[0m' # No Color
 
 # Configuration
 readonly REPO="Elysium-Labs-EU/eos"
+readonly CODEBERG_URL="https://codeberg.org"
 readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
@@ -378,7 +379,7 @@ main() {
         version="${EOS_VERSION:-}"
         if [ -z "$version" ]; then
             step "Fetching latest version..."
-            version=$(fetch_json_field "https://api.github.com/repos/${REPO}/releases/latest" "tag_name" "$download_tool")
+            version=$(fetch_json_field "${CODEBERG_URL}/api/v1/repos/${REPO}/releases?limit=1" "tag_name" "$download_tool")
             
             if [ -z "$version" ]; then
                 error "Failed to fetch latest version"
@@ -421,7 +422,7 @@ main() {
         echo ""
         step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
         
-        local download_url="https://github.com/${REPO}/releases/download/${version}/eos-linux-${arch}"
+        local download_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/eos-linux-${arch}"
         tmp_binary="/tmp/${BINARY_NAME}"
         
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then

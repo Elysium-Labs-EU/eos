@@ -1,0 +1,236 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g., v1.0.0)"
+        required: false
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.26"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run tests
+        run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
+
+  build:
+    needs: [lint, test]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact: eos-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            artifact: eos-linux-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build \
+            -ldflags="-s -w \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/buildinfo.Version=${{ steps.version.outputs.version }}' \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/buildinfo.GitCommit=${{ github.sha }}' \
+              -X 'github.com/Elysium-Labs-EU/eos/internal/buildinfo.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+            -o ${{ matrix.artifact }} .
+
+      - name: Verify binary
+        run: |
+          ls -lh ${{ matrix.artifact }}
+          file ${{ matrix.artifact }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f -name "eos-linux-*" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum eos-linux-* > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine if prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release and upload assets
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          IS_PRERELEASE="${{ steps.prerelease.outputs.is_prerelease }}"
+          REPO="${{ github.repository }}"
+
+          BODY=$(cat <<EOF
+          ## eos ${VERSION}
+
+          Service Orchestration Tool - Manage and monitor your services with ease.
+
+          ### Quick Installation
+
+          Using curl
+          \`\`\`bash
+          curl -sSL https://codeberg.org/${REPO}/raw/branch/main/install.sh -o install.sh
+          sudo bash install.sh
+          \`\`\`
+
+          Using wget
+          \`\`\`bash
+          wget https://codeberg.org/${REPO}/raw/branch/main/install.sh
+          sudo bash install.sh
+          \`\`\`
+
+          ### Manual Installation
+
+          Download the appropriate binary for your architecture:
+          - **Linux AMD64**: \`eos-linux-amd64\`
+          - **Linux ARM64**: \`eos-linux-arm64\`
+
+          Then:
+          \`\`\`bash
+          chmod +x eos-linux-amd64  # or eos-linux-arm64
+          sudo cp eos-linux-amd64 /usr/local/bin/eos
+          \`\`\`
+
+          ### Verify Download
+
+          Check the \`sha256sums.txt\` file and verify:
+          \`\`\`bash
+          sha256sum -c sha256sums.txt
+          \`\`\`
+
+          See the [README](https://codeberg.org/${REPO}/src/branch/main/README.md) for full documentation.
+          EOF
+          )
+
+          # Create the release
+          RELEASE_ID=$(curl -s -X POST \
+            "https://codeberg.org/api/v1/repos/${REPO}/releases" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg tag "${VERSION}" \
+              --arg name "${VERSION}" \
+              --arg body "${BODY}" \
+              --argjson prerelease "${IS_PRERELEASE}" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: $prerelease}'
+            )" | jq -r '.id')
+
+          echo "Created release ID: ${RELEASE_ID}"
+
+          # Upload each asset
+          for file in release/eos-linux-amd64 release/eos-linux-arm64 release/sha256sums.txt; do
+            filename=$(basename "$file")
+            echo "Uploading ${filename}..."
+            curl -s -X POST \
+              "https://codeberg.org/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              -F "attachment=@${file}"
+          done
