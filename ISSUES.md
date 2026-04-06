@@ -1,7 +1,5 @@
 # Issue Backlog
 
-Ready-to-post issues for Codeberg. Copy title + body into the issue form, apply the listed labels.
-
 ---
 
 ## Bug Fixes
