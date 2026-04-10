@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/types"
-	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

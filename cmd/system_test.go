@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
 	"github.com/spf13/cobra"
 )
 

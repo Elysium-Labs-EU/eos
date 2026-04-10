@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
-	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/process"
-	"github.com/Elysium-Labs-EU/eos/internal/types"
-	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
+	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/process"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
 )
@@ -328,9 +328,9 @@ type Release struct {
 }
 
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
-	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
+	url := "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases/latest"
 	if includePre {
-		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
+		url = "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

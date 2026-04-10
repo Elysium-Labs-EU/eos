@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
 

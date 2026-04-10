@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/process"
 )
 
 func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {

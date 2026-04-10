@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/logutil"
-	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/logutil"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
 type LocalManager struct {

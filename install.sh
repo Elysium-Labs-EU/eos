@@ -48,7 +48,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --local <path>    Use a local binary instead of downloading from GitHub"
+    echo "  --local <path>    Use a local binary instead of downloading from Codeberg"
     echo "  --help            Show this help message"
     echo "  --yes, -y         Skip all confirmation prompts (non-interactive mode)"
     echo ""
@@ -401,7 +401,7 @@ main() {
     if [ -n "$local_binary" ]; then
         echo "  1. Use local binary: ${local_binary}"
     else
-        echo "  1. Download binary from GitHub"
+        echo "  1. Download binary from Codeberg"
     fi
     echo "  2. Install to ${INSTALL_DIR}/${BINARY_NAME}"
     echo "  3. Install SQLite3 (if needed)"

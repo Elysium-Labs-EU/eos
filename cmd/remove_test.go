@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"gopkg.in/yaml.v3"
 )
 
