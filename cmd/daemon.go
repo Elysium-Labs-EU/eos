@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/process"
-	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/process"
+	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 

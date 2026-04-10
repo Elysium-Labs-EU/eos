@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 

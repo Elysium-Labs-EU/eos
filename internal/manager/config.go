@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
 

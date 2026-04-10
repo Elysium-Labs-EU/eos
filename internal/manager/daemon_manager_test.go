@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/logutil"
-	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"codeberg.org/Elysium_Labs/eos/internal/logutil"
+	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
 func TestIsDaemonRunningNoPidFile(t *testing.T) {

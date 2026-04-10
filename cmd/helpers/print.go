@@ -3,8 +3,8 @@ package helpers
 import (
 	"strings"
 
-	"github.com/Elysium-Labs-EU/eos/internal/types"
-	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 

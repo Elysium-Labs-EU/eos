@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/testutil"
-	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/testutil"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
 func TestServiceCatalogCRUD(t *testing.T) {

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

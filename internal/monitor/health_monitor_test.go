@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
-	"github.com/Elysium-Labs-EU/eos/internal/testutil"
-	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/testutil"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
 
