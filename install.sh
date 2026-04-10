@@ -11,7 +11,7 @@ readonly DIM='\033[2m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly REPO="Elysium-Labs-EU/eos"
+readonly REPO="Elysium_Labs/eos"
 readonly CODEBERG_URL="https://codeberg.org"
 readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
