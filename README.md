@@ -1,4 +1,4 @@
-# eos - Service Orchestration Tool
+# eos - Service Supervisor
 
 [![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium_Labs/eos)
 

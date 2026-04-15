@@ -130,7 +130,7 @@ fetch_json_field() {
         response=$(wget -qO- "$url")
     fi
     
-    echo "$response" | grep "\"$field\"" | sed -E 's/.*"([^"]+)".*/\1/' | head -1
+    echo "$response" | grep -o "\"$field\":\"[^\"]*\"" | sed -E 's/"[^"]+":"([^"]+)"/\1/' | head -1
 }
 
 detect_arch() {
