@@ -288,7 +288,6 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, binaryErr
 	}
 
-	// commandWithPath := filepath.Join(service.DirectoryPath, config.Command)
 	startCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
