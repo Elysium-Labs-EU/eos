@@ -1,6 +1,7 @@
 package database_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -569,6 +570,41 @@ func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no fields provided")
 	}
+}
+
+func TestUpdateProcessHistoryEntry_ConcurrentWrites(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	err := db.RegisterServiceInstance(t.Context(), "web-api")
+	if err != nil {
+		t.Fatalf("registering test service, got: %v", err)
+	}
+
+	const goroutines = 20
+	for i := range goroutines {
+		pgid := 1000 + i
+		_, _ = db.RegisterProcessHistoryEntry(t.Context(), pgid, "web-api", types.ProcessStateStarting)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 20)
+
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = db.UpdateProcessHistoryEntry(t.Context(), 1000+idx, database.ProcessHistoryUpdate{State: new(types.ProcessStateStopped)})
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+
 }
 
 func TestRemoveProcessHistoryEntryViaPGID(t *testing.T) {
