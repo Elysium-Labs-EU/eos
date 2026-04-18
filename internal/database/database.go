@@ -93,7 +93,7 @@ func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, te
 }
 
 func openDB(ctx context.Context, dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("could not open database: %w", err)
 	}
