@@ -18,7 +18,7 @@ var (
 	LabelInfo    = lipgloss.NewStyle().Bold(true).Foreground(ColorInfo)
 	LabelStep    = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent) // → arrow
 
-	TableBorderColor = lipgloss.Color("240")
+	TableBorderColor = ColorMuted
 	TableHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(ColorAccent).
@@ -26,7 +26,7 @@ var (
 
 	TableCellStyle = lipgloss.NewStyle().Padding(0, 1)
 
-	TableEvenRowStyle = TableCellStyle.Foreground(lipgloss.Color("252"))
-	TableOddRowStyle  = TableCellStyle.Foreground(lipgloss.Color("245"))
-	TableMutedStyle   = TableCellStyle.Foreground(ColorMuted).Faint(true)
+	TableEvenRowStyle = TableCellStyle
+	TableOddRowStyle  = TableCellStyle.Faint(true)
+	TableMutedStyle   = TableCellStyle.Faint(true)
 )
