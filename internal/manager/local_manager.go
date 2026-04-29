@@ -291,10 +291,11 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	startCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// TODO: We are sourcing from a different object then the config here?
-	// TODO: Add dynamic PATH variable addition
 	startCommand.Dir = service.DirectoryPath
-	env := buildEnvironment(config)
+	env, err := buildEnvironment(config, service.DirectoryPath)
+	if err != nil {
+		return 0, fmt.Errorf("building environment for %s: %w", name, err)
+	}
 
 	startCommand.Env = env
 	startCommand.Stdout = writeLogFilePipe
@@ -451,9 +452,11 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	restartCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	restartCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// TODO: We are sourcing from a different object then the config here?
 	restartCommand.Dir = service.DirectoryPath
-	env := buildEnvironment(config)
+	env, err := buildEnvironment(config, service.DirectoryPath)
+	if err != nil {
+		return 0, fmt.Errorf("building environment for %s: %w", name, err)
+	}
 
 	restartCommand.Env = env
 	restartCommand.Stdout = writeLogFilePipe
@@ -885,25 +888,16 @@ func validateRuntimePath(runtime types.Runtime) error {
 	return nil
 }
 
-func buildEnvironment(config *types.ServiceConfig) []string {
+func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) ([]string, error) {
 	env := os.Environ()
 
 	if config.Runtime.Path != "" {
-		pathFound := false
+		index, after := doesEnvVarAlreadyExist("PATH=", env)
 
-		for i, envVar := range env {
-			if after, ok := strings.CutPrefix(envVar, "PATH="); ok {
-				currentPath := after
-
-				env[i] = fmt.Sprintf("PATH=%s:%s", config.Runtime.Path, currentPath)
-				pathFound = true
-				break
-			}
-		}
-
-		if !pathFound {
-			updatedPath := fmt.Sprintf("PATH=%s", config.Runtime.Path)
-			env = append(env, updatedPath)
+		if index > -1 {
+			env[index] = fmt.Sprintf("PATH=%s:%s", config.Runtime.Path, after)
+		} else {
+			env = append(env, "PATH="+config.Runtime.Path)
 		}
 	}
 
@@ -911,5 +905,48 @@ func buildEnvironment(config *types.ServiceConfig) []string {
 		env = append(env, fmt.Sprintf("PORT=%d", config.Port))
 	}
 
-	return env
+	if config.EnvFile != "" {
+		envFilePath := filepath.Clean(filepath.Join(serviceDirectoryPath, config.EnvFile))
+
+		// Prevents path traversal outside service directory
+		if !strings.HasPrefix(envFilePath, filepath.Clean(serviceDirectoryPath)+string(filepath.Separator)) && envFilePath != filepath.Clean(serviceDirectoryPath) {
+			return nil, fmt.Errorf("env file path %q escapes service directory", config.EnvFile)
+		}
+
+		envFileContents, readErr := os.ReadFile(filepath.Clean(filepath.Join(serviceDirectoryPath, config.EnvFile)))
+		if readErr != nil {
+			return nil, fmt.Errorf("reading env file: %w", readErr)
+		}
+		for envVar := range strings.SplitSeq(string(envFileContents), "\n") {
+			envVar = strings.TrimSpace(envVar)
+			if envVar == "" {
+				continue
+			}
+			if strings.HasPrefix(envVar, "#") {
+				continue
+			}
+			before, _, found := strings.Cut(envVar, "=")
+			if !found {
+				continue
+			}
+
+			index, _ := doesEnvVarAlreadyExist(before+"=", env)
+			if index > -1 {
+				env[index] = envVar
+			} else {
+				env = append(env, envVar)
+			}
+		}
+	}
+
+	return env, nil
+}
+
+func doesEnvVarAlreadyExist(envName string, env []string) (int, string) {
+	for i, envVar := range env {
+		if after, ok := strings.CutPrefix(envVar, envName); ok {
+			return i, after
+		}
+	}
+	return -1, ""
 }
