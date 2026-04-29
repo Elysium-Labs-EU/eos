@@ -121,14 +121,13 @@ func TestStartService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
 		Command: "./start-script.sh",
 		Port:    1337,
-		Runtime: runtime,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
 	}
 
 	yamlData, err := yaml.Marshal(testFile)
@@ -167,6 +166,106 @@ func TestStartService(t *testing.T) {
 	}
 	if pgid == 0 {
 		t.Fatalf("Starting service should have a failed PGID, got: %v\n", err)
+	}
+}
+
+func TestStartServiceWithValidEnvLocation(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+		EnvFile: ".env",
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	err = os.MkdirAll(fullDirPath, 0755)
+
+	if err != nil {
+		t.Fatalf("could not create test-files directory: %v\n", err)
+		return
+	}
+
+	err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+	}
+
+	err = os.WriteFile(filepath.Join(fullDirPath, ".env"), nil, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the env file, got: %v\n", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	if _, err := manager.StartService("test-service"); err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+}
+
+func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+		EnvFile: "../../test/../../dummy",
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	err = os.MkdirAll(fullDirPath, 0755)
+
+	if err != nil {
+		t.Fatalf("could not create test-files directory: %v\n", err)
+		return
+	}
+
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	err = os.WriteFile(fullPathYaml, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	if _, err := manager.StartService("test-service"); err == nil {
+		t.Fatal("Starting service should error")
 	}
 }
 
