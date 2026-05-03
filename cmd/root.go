@@ -151,6 +151,10 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
+func isUnderSystemd() bool {
+	return os.Getenv("INVOCATION_ID") != ""
+}
+
 // TODO: Centralize "ENV VAR NAMES" somewhere
 // TODO: Enable override for all exposed config variables
 func createSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
@@ -185,9 +189,10 @@ func createSystemConfig() (installDir string, baseDir string, systemConfig *conf
 	}
 
 	systemConfig = &config.SystemConfig{
-		Health:   healthConfig,
-		Daemon:   daemonConfig,
-		Shutdown: shutdownConfig,
+		Health:       healthConfig,
+		Daemon:       daemonConfig,
+		Shutdown:     shutdownConfig,
+		UnderSystemd: isUnderSystemd(),
 	}
 
 	return installDir, baseDir, systemConfig, nil

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,7 +28,7 @@ func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, so
 		return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
 	}
 
-	if err := startDaemonProcess(ctx); err != nil {
+	if err := startDaemonProcess(ctx, pidFile); err != nil {
 		return nil, fmt.Errorf("starting daemon: %w", err)
 	}
 
@@ -59,7 +60,7 @@ func isDaemonRunning(pidFile string) bool {
 }
 
 // Stay in sync with "forkDaemon"
-func startDaemonProcess(ctx context.Context) error {
+func startDaemonProcess(ctx context.Context, pidFile string) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
@@ -73,6 +74,16 @@ func startDaemonProcess(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting daemon process: %w", err)
+	}
+
+	// Wait for child to write PID file before parent exits.
+	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(pidFile); err == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	return nil
@@ -529,8 +540,8 @@ func handleRenameExistingLogs(logDir string, defaultFileName string) error {
 		}
 	}
 
-	for i := len(validatedDirEntries) - 1; i >= 0; i-- {
-		currentName := validatedDirEntries[i].Name()
+	for i, v := range slices.Backward(validatedDirEntries) {
+		currentName := v.Name()
 		currentLogPath := filepath.Join(logDir, currentName)
 
 		newName := fmt.Sprintf("%s.%s", defaultFileName, strconv.Itoa(i+1))

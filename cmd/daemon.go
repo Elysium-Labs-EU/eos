@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
@@ -45,8 +46,8 @@ func newDaemonCmd() *cobra.Command {
 				return
 			}
 
-			if detached {
-				if err := forkDaemon(context.Background()); err != nil {
+			if detached && !config.UnderSystemd {
+				if err := forkDaemon(context.Background(), config.Daemon.PIDFile); err != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 					cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 					return
@@ -164,7 +165,7 @@ func newDaemonCmd() *cobra.Command {
 }
 
 // Stay in sync with "startDaemonProcess"
-func forkDaemon(ctx context.Context) error {
+func forkDaemon(ctx context.Context, pidFile string) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
@@ -178,6 +179,16 @@ func forkDaemon(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon process: %w", err)
+	}
+
+	// Wait for child to write PID file before parent exits.
+	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(pidFile); err == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	return nil

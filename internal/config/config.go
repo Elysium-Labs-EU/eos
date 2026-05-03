@@ -51,9 +51,10 @@ type ShutdownConfig struct {
 }
 
 type SystemConfig struct {
-	Daemon   DaemonConfig   `json:"daemon" yaml:"daemon"`
-	Health   HealthConfig   `json:"health" yaml:"health"`
-	Shutdown ShutdownConfig `json:"shutdown" yaml:"shutdown"`
+	Daemon       DaemonConfig   `json:"daemon" yaml:"daemon"`
+	Health       HealthConfig   `json:"health" yaml:"health"`
+	Shutdown     ShutdownConfig `json:"shutdown" yaml:"shutdown"`
+	UnderSystemd bool           `json:"under_systemd" yaml:"underSystemd"`
 }
 
 func GetBaseDir() (string, error) {
