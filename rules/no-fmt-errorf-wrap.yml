@@ -1,0 +1,9 @@
+id: no-fmt-errorf-wrap
+language: go
+severity: warning
+message: "Use fmt.Errorf(\"%w\", err) to wrap errors, not \"%v\""
+rule:
+  pattern: fmt.Errorf("$MSG %v", $ERR)
+  has:
+    pattern: $ERR
+note: "%v discards error type; use %w to preserve unwrapping"
