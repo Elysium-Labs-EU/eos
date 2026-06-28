@@ -1,3 +1,4 @@
+// Package config loads and validates eos service configuration from YAML files.
 package config
 
 import (
@@ -24,16 +25,32 @@ const (
 	InstallDir             = "/usr/local/bin"
 	Name                   = "eos"
 	ShutdownGracePeriod    = "5s"
+	SystemdTargetDir       = "/etc/systemd/system/"
+	SystemdTargetFileName  = "eos.service"
 )
 
 type DaemonConfig struct {
-	PIDFile       string        `json:"pid_file" yaml:"pidFile"`
-	SocketPath    string        `json:"socket_path" yaml:"socketPath"`
-	LogDir        string        `json:"log_dir" yaml:"logDir"`
-	LogFileName   string        `json:"log_file_name" yaml:"logFileName"`
-	SocketTimeout time.Duration `json:"socket_timeout" yaml:"socketTimeout"`
-	MaxFiles      int           `json:"max_files" yaml:"maxFiles"`
-	FileSizeLimit int64         `json:"file_size_limit" yaml:"fileSizeLimit"`
+	Standalone *StandaloneDaemonConfig `json:"standalone" yaml:"standalone"`
+	Systemd    *SystemdConfig          `json:"systemd" yaml:"systemd"`
+}
+
+type StandaloneDaemonConfig struct {
+	PIDFile       string          `json:"pid_file" yaml:"pidFile"`
+	SocketPath    string          `json:"socket_path" yaml:"socketPath"`
+	Log           DaemonLogConfig `json:"log" yaml:"log"`
+	SocketTimeout time.Duration   `json:"socket_timeout" yaml:"socketTimeout"`
+}
+
+type DaemonLogConfig struct {
+	LogDir           string `json:"log_dir" yaml:"logDir"`
+	LogFileName      string `json:"log_file_name" yaml:"logFileName"`
+	LogMaxFiles      int    `json:"log_max_files" yaml:"logMaxFiles"`
+	LogFileSizeLimit int64  `json:"log_file_size_limit" yaml:"logFileSizeLimit"`
+}
+
+type SystemdConfig struct {
+	SystemdTargetDir      string `json:"systemd_target_dir" yaml:"systemdTargetDir"`
+	SystemdTargetFileName string `json:"systemd_target_file_name" yaml:"systemdTargetFileName"`
 }
 
 type TimeOutConfig struct {
@@ -98,6 +115,23 @@ func GetInstallDir() string {
 		return override
 	}
 	return InstallDir
+}
+
+func IsUnderSystemd() bool {
+	return os.Getenv("INVOCATION_ID") != ""
+}
+
+func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) bool {
+	systemdFullTargetName := systemdTargetDir + systemdTargetFileName
+	_, err := os.Stat(systemdFullTargetName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		return false
+		// return false, fmt.Errorf("getting stat info on pid of daemon: %w", err)
+	}
+	return true
 }
 
 // func CreateConfigFile(baseDir string) (*os.File, error) {

@@ -17,19 +17,182 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type DaemonController interface {
+	Start(ctx context.Context, detach bool, logToFileAndConsole bool) error
+	Stop(ctx context.Context) (bool, error)
+	Remove() error
+	Info(cmd *cobra.Command)
+	Logs(cmd *cobra.Command, lines int)
+	LogsHint() string
+}
+
+type standaloneDaemonController struct {
+	baseDir      string
+	cfg          config.StandaloneDaemonConfig
+	health       config.HealthConfig
+	shutdown     config.ShutdownConfig
+	underSystemd bool
+}
+
+func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool) error {
+	if detach && !c.underSystemd {
+		return forkDaemon(ctx, c.cfg.PIDFile)
+	}
+	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, c.baseDir, &c.cfg, c.health, c.shutdown, c.underSystemd)
+}
+
+func (c *standaloneDaemonController) Stop(_ context.Context) (bool, error) {
+	return process.StopStandaloneDaemon(&c.cfg)
+}
+
+func (c *standaloneDaemonController) Remove() error {
+	status, err := process.StatusStandaloneDaemon(&c.cfg)
+	if err != nil {
+		return fmt.Errorf("checking daemon status: %w", err)
+	}
+	if status.Running {
+		return errors.New("daemon is running — stop it first with 'eos daemon stop'")
+	}
+	_, err = process.RemoveStandaloneDaemon(&c.cfg)
+	return err
+}
+
+func (c *standaloneDaemonController) Info(cmd *cobra.Command) {
+	status, err := process.StatusStandaloneDaemon(&c.cfg)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon info: %v", err))
+		return
+	}
+	if !status.Running {
+		if status.Pid != nil {
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon found but not running"))
+			printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
+			return
+		}
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon not found"))
+		return
+	}
+	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
+	printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
+}
+
+func (c *standaloneDaemonController) LogsHint() string {
+	return "eos daemon logs"
+}
+
+func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int) {
+	logPath := filepath.Join(manager.CreateLogDirPath(c.baseDir), c.cfg.Log.LogFileName)
+
+	if _, err := os.Stat(logPath); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
+		return
+	}
+	if lines < 0 || lines > 10000 {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
+		return
+	}
+	// #nosec G204 - args are validated above
+	tailCmd := exec.CommandContext(cmd.Context(), "tail", "-n", fmt.Sprintf("%d", lines), "-f", logPath)
+	tailCmd.Stdout = cmd.OutOrStdout()
+	tailCmd.Stderr = cmd.ErrOrStderr()
+	if err := tailCmd.Start(); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
+		return
+	}
+	if err := tailCmd.Wait(); err != nil {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			if exitErr.ExitCode() != 130 { // 130 = Ctrl+C
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
+			}
+		}
+	}
+}
+
+type systemdDaemonController struct {
+	cfg config.SystemdConfig
+}
+
+func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool) error {
+	if os.Getuid() != 0 {
+		return errors.New("requires root — run with sudo")
+	}
+	out, err := exec.CommandContext(ctx, "systemctl", "start", "eos").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("starting systemd service: %s", out)
+	}
+	return nil
+}
+
+func (c systemdDaemonController) Stop(ctx context.Context) (bool, error) {
+	out, err := exec.CommandContext(ctx, "systemctl", "stop", "eos").CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("stopping systemd service: %s", out)
+	}
+	return true, nil
+}
+
+func (c systemdDaemonController) Remove() error {
+	return os.Remove(c.cfg.SystemdTargetDir + c.cfg.SystemdTargetFileName)
+}
+
+func (c systemdDaemonController) Info(cmd *cobra.Command) {
+	printSystemdDaemonDetails(cmd)
+}
+
+func (c systemdDaemonController) LogsHint() string {
+	return "journalctl -u eos -f"
+}
+
+func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int) {
+	// #nosec G204 - lines is validated by the caller
+	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", "-u", "eos", "-n", fmt.Sprintf("%d", lines), "-f")
+	journalCmd.Stdout = cmd.OutOrStdout()
+	journalCmd.Stderr = cmd.ErrOrStderr()
+	if err := journalCmd.Start(); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting journalctl: %v", err))
+		return
+	}
+	if err := journalCmd.Wait(); err != nil {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			if exitErr.ExitCode() != 130 {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("journalctl failed: %v", err))
+			}
+		}
+	}
+}
+
+func newDaemonController(cfg config.DaemonConfig, baseDir string, health config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool) (DaemonController, error) {
+	if cfg.Standalone != nil {
+		return &standaloneDaemonController{
+			cfg:          *cfg.Standalone,
+			baseDir:      baseDir,
+			health:       health,
+			shutdown:     shutdown,
+			underSystemd: underSystemd,
+		}, nil
+	}
+	if cfg.Systemd != nil {
+		return systemdDaemonController{cfg: *cfg.Systemd}, nil
+	}
+	return nil, errors.New("invalid daemon config: both standalone and systemd are nil")
+}
+
 func newDaemonCmd() *cobra.Command {
-	var baseDir string
-	var config *config.SystemConfig
+	var ctrl DaemonController // closed over by all subcommands below
 
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the deployment daemon",
-		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, info to inspect its current status, and logs to stream its output.",
+		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			var err error
-			_, baseDir, config, err = createSystemConfig()
+			_, baseDir, systemConfig, err := newSystemConfig()
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+				os.Exit(1)
+			}
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)
 			}
 		},
@@ -38,29 +201,33 @@ func newDaemonCmd() *cobra.Command {
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon process",
-		Long:  "Launch the deployment daemon. By default, runs in the foreground and prints output to the console. Use --detach (-d) to fork the daemon into the background as a detached process, returning control immediately.",
+		Long: `Launch the deployment daemon.
+
+If a systemd unit file is installed, delegates to "systemctl start eos" (requires root).
+
+Otherwise, starts the daemon directly. By default runs in the foreground and streams output to the console. Pass --detach (-d) to fork the process into a new session in the background; control returns once the PID file is written (timeout: 5s).`,
 		Run: func(cmd *cobra.Command, args []string) {
-			detached, err := cmd.Flags().GetBool("detach")
+			detach, err := cmd.Flags().GetBool("detach")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 				return
 			}
+			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
 
-			if detached && !config.UnderSystemd {
-				if err := forkDaemon(context.Background(), config.Daemon.PIDFile); err != nil {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-					cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
-					return
-				}
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
+			if detach {
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in background...")
+			} else {
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
+			}
+
+			if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole); err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 				return
 			}
 
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
-			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
-
-			if err := process.StartDaemon(logToFileAndConsole, baseDir, config.Daemon, config.Health, config.Shutdown); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+			if detach {
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("-> check daemon service status"))
 			}
 		},
 	}
@@ -74,10 +241,10 @@ func newDaemonCmd() *cobra.Command {
 	stopCmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the running daemon",
-		Long:  "Send a termination signal to the running daemon process. Exits cleanly if the daemon is not running. Reports an error if the process cannot be stopped.",
+		Long:  "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-			killed, err := process.StopDaemon(config.Daemon)
+			killed, err := ctrl.Stop(cmd.Context())
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
 				return
@@ -90,30 +257,27 @@ func newDaemonCmd() *cobra.Command {
 		},
 	}
 
+	removeCmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Remove a stopped daemon",
+		Long:  "Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.",
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "removing daemon...")
+			if err := ctrl.Remove(); err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing daemon: %v", err))
+				return
+			}
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon removed")
+			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("-> undo systemd startup"))
+		},
+	}
+
 	infoCmd := &cobra.Command{
 		Use:   "info",
 		Short: "Show daemon status and configuration",
-		Long:  "Display the current state of the daemon, including whether it is running, its PID, socket path, log directory, log file name, and maximum file count. Reports clearly if the daemon is stopped or not found.",
+		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.",
 		Run: func(cmd *cobra.Command, args []string) {
-			status, err := process.StatusDaemon(config.Daemon)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon info: %v", err))
-				return
-			}
-
-			if !status.Running {
-				if status.Pid != nil {
-					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"),
-						ui.TextMuted.Render("daemon found but not running"))
-					printDaemonDetails(cmd, *status.Pid, config.Daemon)
-					return
-				}
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon not found"))
-				return
-			}
-
-			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
-			printDaemonDetails(cmd, *status.Pid, config.Daemon)
+			ctrl.Info(cmd)
 		},
 	}
 
@@ -123,42 +287,15 @@ func newDaemonCmd() *cobra.Command {
 		Short: "Stream the daemon log output",
 		Long:  "Tail and follow the daemon's log file in real time. Defaults to the last 300 lines. Use --lines to control how many historical lines are shown before following. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
 		Run: func(cmd *cobra.Command, args []string) {
-			logPath := filepath.Join(manager.CreateLogDirPath(baseDir), config.Daemon.LogFileName)
-
-			_, err := os.Stat(logPath)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
-				return
-			}
-
-			if lines < 0 || lines > 10000 {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
-				return
-			}
-			// #nosec G204 - args are validated above
-			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", "-n", fmt.Sprintf("%d", lines), "-f", logPath)
-			tailLogCommand.Stdout = cmd.OutOrStdout()
-			tailLogCommand.Stderr = cmd.ErrOrStderr()
-			if err := tailLogCommand.Start(); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
-				return
-			}
-
-			if err := tailLogCommand.Wait(); err != nil {
-				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
-					if exitErr.ExitCode() != 130 { // 130 = Ctrl+C
-						cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
-					}
-				}
-			}
+			ctrl.Logs(cmd, lines)
 		},
 	}
 	logsCmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
 
-	daemonCmd.AddCommand(logsCmd)
-	daemonCmd.AddCommand(startCmd)
 	daemonCmd.AddCommand(infoCmd)
+	daemonCmd.AddCommand(logsCmd)
+	daemonCmd.AddCommand(removeCmd)
+	daemonCmd.AddCommand(startCmd)
 	daemonCmd.AddCommand(stopCmd)
 
 	return daemonCmd
@@ -191,13 +328,25 @@ func forkDaemon(ctx context.Context, pidFile string) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	return nil
+	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 }
 
-func printDaemonDetails(cmd *cobra.Command, pid int, cfg config.DaemonConfig) {
+func printSystemdDaemonDetails(cmd *cobra.Command) {
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("systemctl status eos.service") + ui.TextMuted.Render(" → check systemd service status") + "\n")
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("journalctl status eos.service") + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
+	cmd.Println()
+}
+
+func printStandaloneDaemonDetails(cmd *cobra.Command, pid int, cfg *config.StandaloneDaemonConfig) {
 	cmd.Printf("  %s %d\n", ui.TextMuted.Render("PID:"), pid)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket:"), cfg.SocketPath)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), cfg.LogDir)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), cfg.LogFileName)
-	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max files:"), cfg.MaxFiles)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("pid file:"), cfg.PIDFile)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket path:"), cfg.SocketPath)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket timeout:"), cfg.SocketTimeout)
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), cfg.Log.LogDir)
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), cfg.Log.LogFileName)
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("log max files:"), cfg.Log.LogMaxFiles)
+	cmd.Printf("  %s %d\n", ui.TextMuted.Render("log file size limit:"), cfg.Log.LogFileSizeLimit)
 }

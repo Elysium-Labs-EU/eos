@@ -1,3 +1,4 @@
+// Package helpers provides CLI utility functions for output formatting, JSON rendering, and shell completions.
 package helpers
 
 import (
@@ -66,7 +67,10 @@ func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
 	return new(mostRecentProcess.StartedAt.String())
 }
 
-func DetermineProcessMemoryInMbHuman(rssMemoryKb int64) string {
+func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStatus) string {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+		return "-"
+	}
 	if rssMemoryKb <= 0 {
 		return "-"
 	}
@@ -148,4 +152,13 @@ func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
 
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes"
+}
+
+func PrintSudoHint(cmd *cobra.Command) {
+	cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
+}
+
+func PrintRequiresSudo(cmd *cobra.Command, action string) {
+	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), action+" requires root")
+	PrintSudoHint(cmd)
 }

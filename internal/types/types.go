@@ -1,3 +1,4 @@
+// Package types defines shared data structures and interfaces used across eos packages.
 package types
 
 import (

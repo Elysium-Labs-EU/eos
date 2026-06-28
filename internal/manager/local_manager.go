@@ -284,7 +284,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		}
 	}()
 
-	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
 
@@ -437,7 +437,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		}
 	}()
 
-	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
 
@@ -759,11 +759,12 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 		switch processState {
 		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
 			err := syscall.Kill(-processPGID, signal)
-			if errors.Is(err, syscall.ESRCH) {
+			switch {
+			case errors.Is(err, syscall.ESRCH):
 				alreadyDead[processPGID] = true
-			} else if err != nil {
+			case err != nil:
 				errored[processPGID] = fmt.Sprintf("killing service: %v", err)
-			} else {
+			default:
 				pending[processPGID] = true
 			}
 		case types.ProcessStateFailed, types.ProcessStateStopped:
@@ -787,7 +788,7 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 // 	NodeJs SupportedRuntime = "nodejs"
 // )
 
-func (m LocalManager) validateRuntimeBinary(config types.ServiceConfig) error {
+func (m LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error {
 	if config.Runtime.Path != "" {
 		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
 			return fmt.Errorf("validating config runtime: %w", runtimePathErr)

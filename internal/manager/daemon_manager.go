@@ -1,3 +1,4 @@
+// Package manager orchestrates daemon lifecycle operations: start, stop, restart, and status queries.
 package manager
 
 import (
@@ -79,14 +80,20 @@ func startDaemonProcess(ctx context.Context, pidFile string) error {
 	// Wait for child to write PID file before parent exits.
 	// Required for Type=forking: systemd reads PID file immediately after parent exits.
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(pidFile); err == nil {
-			return nil
+	ticker := time.NewTicker(50 * time.Millisecond)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if _, err := os.Stat(pidFile); err == nil {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
+			}
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
-
-	return nil
 }
 
 func waitForSocket(ctx context.Context, socketPath string, timeout time.Duration) error {
