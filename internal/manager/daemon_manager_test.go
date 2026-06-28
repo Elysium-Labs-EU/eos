@@ -136,9 +136,9 @@ func TestWaitForSocketDelayedCreation(t *testing.T) {
 
 func TestNewDaemonLogger(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -155,23 +155,23 @@ func TestNewDaemonLogger(t *testing.T) {
 
 func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	_, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	_, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 
-	if _, err := os.Stat(daemonConfig.LogDir); os.IsNotExist(err) {
+	if _, err := os.Stat(daemonConfig.Standalone.Log.LogDir); os.IsNotExist(err) {
 		t.Error("Log directory should have been created")
 	}
 }
 
 func TestDaemonLoggerLog(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -197,9 +197,9 @@ func TestDaemonLoggerLog(t *testing.T) {
 
 func TestDaemonLoggerLogLevels(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
@@ -228,9 +228,9 @@ func TestDaemonLoggerLogLevels(t *testing.T) {
 
 func TestDaemonLoggerRotation(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -255,9 +255,9 @@ func TestDaemonLoggerRotation(t *testing.T) {
 
 func TestDaemonLoggerLogToConsole(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(true, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -269,9 +269,9 @@ func TestDaemonLoggerLogToConsole(t *testing.T) {
 
 func TestDaemonLoggerLogFormat(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -292,9 +292,9 @@ func TestDaemonLoggerLogFormat(t *testing.T) {
 
 func TestDaemonLoggerCurrentSizeTracking(t *testing.T) {
 	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, daemonConfig.FileSizeLimit)
+	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}

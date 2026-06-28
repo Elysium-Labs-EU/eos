@@ -19,9 +19,14 @@ func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {
 
 	cfg := config.SystemConfig{
 		Daemon: config.DaemonConfig{
-			PIDFile:     filepath.Join(tempDir, "eos.pid"),
-			SocketPath:  filepath.Join(tempDir, "eos.sock"),
-			LogFileName: "daemon.log",
+			Standalone: &config.StandaloneDaemonConfig{
+				PIDFile:    filepath.Join(tempDir, "eos.pid"),
+				SocketPath: filepath.Join(tempDir, "eos.sock"),
+				Log: config.DaemonLogConfig{
+					LogFileName: "daemon.log",
+				},
+			},
+			Systemd: nil,
 		},
 		Health: config.HealthConfig{
 			MaxRestart: 10,
@@ -38,7 +43,7 @@ func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {
 func TestDaemonStatusNoPidFile(t *testing.T) {
 	_, cfg := setupDaemonTestEnv(t)
 
-	status, err := process.StatusDaemon(cfg.Daemon)
+	status, err := process.StatusStandaloneDaemon(cfg.Daemon.Standalone)
 	if err != nil {
 		t.Fatalf("StatusDaemon should not error when pid file is absent, got: %v", err)
 	}
@@ -50,12 +55,12 @@ func TestDaemonStatusNoPidFile(t *testing.T) {
 func TestDaemonStatusWithStalePidFile(t *testing.T) {
 	_, cfg := setupDaemonTestEnv(t)
 
-	err := os.WriteFile(cfg.Daemon.PIDFile, []byte("9999999"), 0644)
+	err := os.WriteFile(cfg.Daemon.Standalone.PIDFile, []byte("9999999"), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write pid file: %v", err)
 	}
 
-	status, err := process.StatusDaemon(cfg.Daemon)
+	status, err := process.StatusStandaloneDaemon(cfg.Daemon.Standalone)
 	if err != nil {
 		t.Fatalf("StatusDaemon should not error for stale pid, got: %v", err)
 	}
@@ -69,12 +74,12 @@ func TestDaemonStatusWithLiveProcess(t *testing.T) {
 	_, cfg := setupDaemonTestEnv(t)
 
 	pid := os.Getpid()
-	err := os.WriteFile(cfg.Daemon.PIDFile, fmt.Appendf(nil, "%d", pid), 0644)
+	err := os.WriteFile(cfg.Daemon.Standalone.PIDFile, fmt.Appendf(nil, "%d", pid), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write pid file: %v", err)
 	}
 
-	status, err := process.StatusDaemon(cfg.Daemon)
+	status, err := process.StatusStandaloneDaemon(cfg.Daemon.Standalone)
 	if err != nil {
 		t.Fatalf("StatusDaemon should not error, got: %v", err)
 	}
@@ -89,7 +94,7 @@ func TestDaemonStatusWithLiveProcess(t *testing.T) {
 func TestDaemonStopNoPidFile(t *testing.T) {
 	_, cfg := setupDaemonTestEnv(t)
 
-	killed, err := process.StopDaemon(cfg.Daemon)
+	killed, err := process.StopStandaloneDaemon(cfg.Daemon.Standalone)
 	if err != nil {
 		t.Fatal("StopDaemon should not error when pid file doesn't exist")
 	}
@@ -107,7 +112,7 @@ func TestDaemonLogsFileExists(t *testing.T) {
 		t.Fatalf("Failed to create log dir: %v", err)
 	}
 
-	logPath := filepath.Join(logDir, cfg.Daemon.LogFileName)
+	logPath := filepath.Join(logDir, cfg.Daemon.Standalone.Log.LogFileName)
 	err = os.WriteFile(logPath, []byte("test log line\n"), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write log file: %v", err)
@@ -122,7 +127,7 @@ func TestDaemonLogsFileExists(t *testing.T) {
 func TestDaemonLogsFileMissing(t *testing.T) {
 	tempDir, cfg := setupDaemonTestEnv(t)
 
-	logPath := filepath.Join(manager.CreateLogDirPath(tempDir), cfg.Daemon.LogFileName)
+	logPath := filepath.Join(manager.CreateLogDirPath(tempDir), cfg.Daemon.Standalone.Log.LogFileName)
 	_, err := os.Stat(logPath)
 	if err == nil {
 		t.Error("Log file should not exist before daemon has run")
@@ -166,7 +171,6 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 
 	prodPidFile := "/var/run/eos.pid"
 
-	// Try to write the PID file exactly as the daemon would.
 	err := os.WriteFile(prodPidFile, []byte("12345"), 0644)
 
 	if err == nil {

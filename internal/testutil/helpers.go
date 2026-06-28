@@ -1,3 +1,4 @@
+// Package testutil provides shared test helpers for database setup and fixture loading.
 package testutil
 
 import (
@@ -6,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
@@ -22,6 +24,7 @@ func SetupTestDB(t *testing.T, migrationsFS embed.FS, migrationsPath string) (*d
 	if err != nil {
 		t.Fatalf("Unable to create test database 3: %v", err)
 	}
+	t.Cleanup(func() { _ = db.CloseDBConnection() })
 	return db, dbConn, tempDir
 }
 
@@ -150,61 +153,104 @@ func NewTestServiceScriptAtLocation(t *testing.T, testServiceScript ServiceScrip
 	}
 }
 
-type DaemonConfigOption func(*config.DaemonConfig)
+type StandaloneDaemonConfigOption func(*config.StandaloneDaemonConfig)
+type SystemdConfigOption func(*config.SystemdConfig)
 
-func WithPIDFile(pidFile string) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
+func WithPIDFile(pidFile string) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
 		dc.PIDFile = pidFile
 	}
 }
 
-func WithSocketPath(socketPath string) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
+func WithSocketPath(socketPath string) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
 		dc.SocketPath = socketPath
 	}
 }
 
-func WithLogDir(logDir string) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
-		dc.LogDir = logDir
+func WithLogDir(logDir string) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
+		dc.Log.LogDir = logDir
 	}
 }
 
-func WithLogFilename(logFilename string) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
-		dc.LogFileName = logFilename
+func WithLogFilename(logFilename string) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
+		dc.Log.LogFileName = logFilename
 	}
 }
 
-func WithMaxFiles(maxFiles int) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
-		dc.MaxFiles = maxFiles
+func WithLogMaxFiles(logMaxFiles int) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
+		dc.Log.LogMaxFiles = logMaxFiles
 	}
 }
 
-func WithFileSizeLimit(fileSizeLimit int64) DaemonConfigOption {
-	return func(dc *config.DaemonConfig) {
-		dc.FileSizeLimit = fileSizeLimit
+func WithLogFileSizeLimit(logFileSizeLimit int64) StandaloneDaemonConfigOption {
+	return func(dc *config.StandaloneDaemonConfig) {
+		dc.Log.LogFileSizeLimit = logFileSizeLimit
 	}
 }
 
-func NewTestDaemonConfig(t *testing.T, baseDir string, opts ...DaemonConfigOption) *config.DaemonConfig {
+func WithSystemdTargetDir(systemdTargetDir string) SystemdConfigOption {
+	return func(dc *config.SystemdConfig) {
+		dc.SystemdTargetDir = systemdTargetDir
+	}
+}
+
+func WithSystemdTargetFileName(systemdTargetFileName string) SystemdConfigOption {
+	return func(dc *config.SystemdConfig) {
+		dc.SystemdTargetFileName = systemdTargetFileName
+	}
+}
+
+func safeParseDuration(durationAsString string, fallback time.Duration) time.Duration {
+	limit, err := time.ParseDuration(durationAsString)
+	if err != nil {
+		return fallback
+	}
+	return limit
+}
+
+func IsSystemdManaged() bool {
+	return config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
+}
+
+func NewTestSystemdDaemonConfig(t *testing.T, opts ...SystemdConfigOption) config.DaemonConfig {
 	t.Helper()
 
-	daemonConfig := &config.DaemonConfig{
-		PIDFile:       filepath.Join(baseDir, config.DaemonPIDFile),
-		SocketPath:    filepath.Join(baseDir, config.DaemonSocketPath),
-		LogDir:        filepath.Join(baseDir, "logs"),
-		LogFileName:   config.DaemonLogFileName,
-		MaxFiles:      config.DaemonLogMaxFiles,
-		FileSizeLimit: config.DaemonLogFileSizeLimit,
+	systemdConfig := config.SystemdConfig{
+		SystemdTargetDir:      config.SystemdTargetDir,
+		SystemdTargetFileName: config.SystemdTargetFileName,
 	}
 
 	for _, opt := range opts {
-		opt(daemonConfig)
+		opt(&systemdConfig)
 	}
 
-	return daemonConfig
+	return config.DaemonConfig{Standalone: nil, Systemd: &systemdConfig}
+}
+
+func NewTestStandaloneDaemonConfig(t *testing.T, baseDir string, opts ...StandaloneDaemonConfigOption) config.DaemonConfig {
+	t.Helper()
+
+	standaloneDaemonConfig := config.StandaloneDaemonConfig{
+		PIDFile:       filepath.Join(baseDir, config.DaemonPIDFile),
+		SocketPath:    filepath.Join(baseDir, config.DaemonSocketPath),
+		SocketTimeout: safeParseDuration(config.DaemonSocketTimeout, time.Second*5),
+		Log: config.DaemonLogConfig{
+			LogDir:           filepath.Join(baseDir, "logs"),
+			LogFileName:      config.DaemonLogFileName,
+			LogMaxFiles:      config.DaemonLogMaxFiles,
+			LogFileSizeLimit: config.DaemonLogFileSizeLimit,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(&standaloneDaemonConfig)
+	}
+
+	return config.DaemonConfig{Standalone: &standaloneDaemonConfig, Systemd: nil}
 }
 
 type TestLogger struct {

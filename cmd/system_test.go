@@ -146,9 +146,14 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
 	}
 
-	installDir, _, systemConfig, err := createSystemConfig()
+	installDir, baseDir, systemConfig, err := newSystemConfig()
 	if err != nil {
-		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
+		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
+	}
+
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	if err != nil {
+		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}
 
 	fakeFetchRelease := func(_ context.Context, _ bool) (*Release, error) {
@@ -158,7 +163,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		}, nil
 	}
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary)
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary)
 
 	output := errBuf.String()
 
@@ -180,9 +185,14 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error: %v\n", err)
 	}
 
-	installDir, _, systemConfig, err := createSystemConfig()
+	installDir, baseDir, systemConfig, err := newSystemConfig()
 	if err != nil {
-		t.Fatalf("preparing update test - createSystemConfig should not return an error: %v\n", err)
+		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
+	}
+
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	if err != nil {
+		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}
 
 	binaryContent := []byte("fake binary")
@@ -196,7 +206,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 				{
 					Name:               "eos-linux-arm64",
 					Digest:             digest,
-					BrowserDownloadURL: "https://github.com/fake/download",
+					BrowserDownloadURL: "https://codeberg.org/fake/download",
 				},
 			},
 		}, nil
@@ -221,7 +231,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	cmd.SetIn(strings.NewReader("y\ny\n"))
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, systemConfig.Daemon, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary)
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary)
 
 	output := outBuf.String()
 

@@ -1,3 +1,4 @@
+// Package monitor implements health checking and automatic restart logic for managed daemons.
 package monitor
 
 import (
