@@ -1,4 +1,4 @@
-.PHONY: help dev build install test lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules
+.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -48,6 +48,11 @@ install: build ## Install to ~/.local/bin
 test: ## Run tests
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
+
+test-integration: ## Run integration tests (requires Linux + systemd + root; use OrbStack)
+	@echo "Running integration tests..."
+	@echo "  On OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v -count=1"
+	go test ./cmd/... -tags integration -v -count=1
 
 test-coverage: ## Get test coverage
 	@echo "Getting test coverage..."

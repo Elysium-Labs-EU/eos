@@ -92,7 +92,9 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "standalone daemon config not available")
 				return
 			}
-			startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone)
+			startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
+				config.SystemdTargetDir, config.SystemdTargetFileName,
+				detectActiveSystemRuntime, execRunCmd)
 		},
 	}
 
@@ -102,6 +104,10 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		Long:    `Remove the systemd unit file for eos and disable it from running on boot. Requires root. Only supported on systems running systemd.`,
 		Example: "  eos system unstartup  # stop systemd service, remove unit file from /etc/systemd/system/, disable on boot",
 		Run: func(cmd *cobra.Command, args []string) {
+			if os.Getuid() != 0 {
+				helpers.PrintRequiresSudo(cmd, "removing systemd startup")
+				return
+			}
 			_, _, systemConfig, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
@@ -111,7 +117,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "systemd daemon config not available")
 				return
 			}
-			unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd)
+			unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
 
@@ -282,8 +288,14 @@ WantedBy=multi-user.target`
 	return buf.String(), nil
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig) {
-	runtime, err := detectActiveSystemRuntime()
+type runCmdFn func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+func execRunCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput() // #nosec G204 -- name is always "systemctl"
+}
+
+func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, detectRuntime func() (string, error), run runCmdFn) { //nolint:unparam // systemdFile varies in integration tests (excluded by build tag)
+	runtime, err := detectRuntime()
 
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -295,20 +307,20 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		return
 	}
 
-	fullTargetName := config.SystemdTargetDir + config.SystemdTargetFileName
+	fullTargetName := systemdDir + systemdFile
 
-	fileInfo, err := os.Stat(config.SystemdTargetDir)
+	fileInfo, err := os.Stat(systemdDir)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", config.SystemdTargetDir))
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", systemdDir))
 		return
 	}
 
 	if !fileInfo.IsDir() {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", config.SystemdTargetDir))
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", systemdDir))
 		return
 	}
 
-	err = checkWritable(cmd, config.SystemdTargetDir)
+	err = checkWritable(cmd, systemdDir)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
@@ -345,13 +357,13 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	}
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("eos startup file created, at:"), fullTargetName)
 
-	out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
+	out, err := run(ctx, "systemctl", "daemon-reload")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload system service: %v", string(out)))
 		return
 	}
 
-	out, err = exec.CommandContext(ctx, "systemctl", "enable", "eos").CombinedOutput()
+	out, err = run(ctx, "systemctl", "enable", "eos")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling system service: %v", string(out)))
 		return
@@ -378,7 +390,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
 	}
 
-	out, err = exec.CommandContext(ctx, "systemctl", "start", "eos").CombinedOutput()
+	out, err = run(ctx, "systemctl", "start", "eos")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
 		return
@@ -386,13 +398,8 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 }
 
-func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig) {
-	if os.Getuid() != 0 {
-		helpers.PrintRequiresSudo(cmd, "removing systemd startup")
-		return
-	}
-
-	runtime, err := detectActiveSystemRuntime()
+func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, detectRuntime func() (string, error), run runCmdFn) {
+	runtime, err := detectRuntime()
 
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -411,14 +418,14 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		return
 	}
 
-	out, err := exec.CommandContext(ctx, "systemctl", "stop", "eos").CombinedOutput()
+	out, err := run(ctx, "systemctl", "stop", "eos")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping system service: %v", string(out)))
 		return
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service stopped")
 
-	out, err = exec.CommandContext(ctx, "systemctl", "disable", "eos").CombinedOutput()
+	out, err = run(ctx, "systemctl", "disable", "eos")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling system service: %v", string(out)))
 		return
@@ -432,7 +439,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "unit file removed")
 
-	out, err = exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
+	out, err = run(ctx, "systemctl", "daemon-reload")
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload system service: %v", string(out)))
 		return
