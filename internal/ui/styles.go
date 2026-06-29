@@ -1,3 +1,4 @@
+// Package ui defines terminal color palette and lipgloss styles for eos CLI output.
 package ui
 
 import "github.com/charmbracelet/lipgloss"

@@ -438,14 +438,15 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		processRemoved, err := db.RemoveProcessHistoryEntryViaPGID(context.Background(), pgid)
+		ctx := context.Background()
+		processRemoved, err := db.RemoveProcessHistoryEntryViaPGID(ctx, pgid)
 		if err != nil {
 			t.Fatalf("Failed to removed process history entry in cleanup, got: %v", err)
 		}
 		if !processRemoved {
 			t.Fatal("Failed to removed process history entry in cleanup")
 		}
-		instanceRemoved, err := db.RemoveServiceInstance(context.Background(), serviceName)
+		instanceRemoved, err := db.RemoveServiceInstance(ctx, serviceName)
 		if err != nil {
 			t.Fatalf("Failed to removed service instance in cleanup, got: %v", err)
 		}
@@ -500,8 +501,9 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
+		ctx := context.Background()
 		for _, pgid := range pgids {
-			removed, err := db.RemoveProcessHistoryEntryViaPGID(context.Background(), pgid)
+			removed, err := db.RemoveProcessHistoryEntryViaPGID(ctx, pgid)
 			if err != nil {
 				t.Logf("Failed to remove process history entry in cleanup, got: %v", err)
 				continue
@@ -511,7 +513,7 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 				continue
 			}
 		}
-		removed, err := db.RemoveServiceInstance(context.Background(), serviceName)
+		removed, err := db.RemoveServiceInstance(ctx, serviceName)
 		if err != nil {
 			t.Fatalf("Failed to remove service instance in cleanup, got: %v", err)
 		}

@@ -1,3 +1,4 @@
+// Package logutil provides log level types and a timestamped writer for structured daemon logging.
 package logutil
 
 import "fmt"

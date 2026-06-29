@@ -81,14 +81,15 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 
 				entry := StatusServiceEntry{
-					Name:   regServiceName,
-					Status: helpers.DetermineServiceStatus(mostRecentProcess),
-					Uptime: helpers.DetermineUptimeHuman(mostRecentProcess),
+					Name:     regServiceName,
+					Status:   helpers.DetermineServiceStatus(mostRecentProcess),
+					Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
+					MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
 				}
 				if mostRecentProcess != nil {
 					entry.PGID = mostRecentProcess.PGID
 					entry.Error = helpers.DetermineError(mostRecentProcess.Error)
-					entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb)
+					entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
 				}
 				if serviceInstance != nil && serviceInstance.StartedAt != nil {
 					entry.Started = humanize.Time(*serviceInstance.StartedAt)

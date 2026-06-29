@@ -1,3 +1,4 @@
+// Package helpers provides CLI utility functions for output formatting, JSON rendering, and shell completions.
 package helpers
 
 import (
@@ -5,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"codeberg.org/Elysium_Labs/eos/internal/types"
@@ -66,7 +69,10 @@ func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
 	return new(mostRecentProcess.StartedAt.String())
 }
 
-func DetermineProcessMemoryInMbHuman(rssMemoryKb int64) string {
+func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStatus) string {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+		return "-"
+	}
 	if rssMemoryKb <= 0 {
 		return "-"
 	}
@@ -148,4 +154,35 @@ func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
 
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes"
+}
+
+func PrintSudoHint(cmd *cobra.Command) {
+	cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
+}
+
+func PrintRequiresSudo(cmd *cobra.Command, action string) {
+	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), action+" requires root")
+	PrintSudoHint(cmd)
+}
+
+// EffectiveUser returns the non-root user who invoked sudo, falling back to the current user.
+// Use this when a process needs to run as the invoking user rather than root.
+func EffectiveUser() (*user.User, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		return user.Lookup(sudoUser)
+	}
+	return user.Current()
+}
+
+// UserCredentials returns the uid and gid for a user as uint32 values suitable for syscall.Credential.
+func UserCredentials(u *user.User) (uid uint32, gid uint32, err error) {
+	uidInt, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parsing uid: %w", err)
+	}
+	gidInt, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parsing gid: %w", err)
+	}
+	return uint32(uidInt), uint32(gidInt), nil
 }

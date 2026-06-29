@@ -40,3 +40,7 @@ logs/*
 .DS_Store
 NOTES.md
 TODO.MD
+AGENTS.md
+CLAUDE.md
+.claude
+.zed/settings.json

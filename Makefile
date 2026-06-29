@@ -1,7 +1,10 @@
-.PHONY: help dev build install test lint clean docker-*  test-docker-* release release-local fix
+.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff profile-orb
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+BENCHMARKS_DIR := __benchmarks__
+ORB_MACHINE ?= debian
+ORB_IP = $(shell orb ip -m $(ORB_MACHINE) 2>/dev/null)
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
 VERSION_PKG := codeberg.org/Elysium_Labs/eos/internal/buildinfo
 LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).GitCommit=$(COMMIT)' -X '$(VERSION_PKG).BuildDate=$(BUILD_DATE)' -w -s"
@@ -10,9 +13,58 @@ BINARY_NAME=eos
 GOBIN=./bin
 INSTALL_PATH=~/.local/bin
 
+PKG ?= ./internal/...
+
+bench-mem: ## Run memory benchmarks on OrbStack $(ORB_MACHINE), save snapshot (all packages)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -benchmem -count=5 ./... 2>&1 | tee $(PWD)/$(BENCHMARKS_DIR)/mem.$(COMMIT).txt"
+	@echo "Snapshot: $(BENCHMARKS_DIR)/mem.$(COMMIT).txt"
+
+bench-cpu: ## Run CPU benchmarks on OrbStack $(ORB_MACHINE), save snapshot (all packages)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -count=10 ./... 2>&1 | tee $(PWD)/$(BENCHMARKS_DIR)/cpu.$(COMMIT).txt"
+	@echo "Snapshot: $(BENCHMARKS_DIR)/cpu.$(COMMIT).txt"
+
+bench-pprof-mem: ## Profile memory for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -benchmem -count=5 -memprofile=$(PWD)/mem.out $(PKG)"
+	go tool pprof -http=":8082" mem.out
+
+bench-pprof-cpu: ## Profile CPU for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -count=10 -cpuprofile=$(PWD)/cpu.out $(PKG)"
+	go tool pprof -http=":8081" cpu.out
+
+bench-diff: ## Compare two latest memory snapshots with benchstat
+	@command -v benchstat >/dev/null 2>&1 || { echo "benchstat not found: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@files=$$(ls -t $(BENCHMARKS_DIR)/mem.*.txt 2>/dev/null | head -2); \
+	if [ $$(echo "$$files" | wc -w) -lt 2 ]; then echo "Need ≥2 snapshots — run bench-mem on two commits"; exit 1; fi; \
+	old=$$(echo "$$files" | awk 'NR==2'); new=$$(echo "$$files" | awk 'NR==1'); \
+	echo "comparing $$old → $$new"; benchstat $$old $$new
+
+profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF_ADDR=:6060 eos daemon start)
+	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap
+
+setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
+	@echo "Installing golangci-lint v2.11.0..."
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.11.0
+	@echo "Installing git-cliff..."
+	cargo install git-cliff 2>/dev/null || echo "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
+	@echo "Installing lefthook..."
+	go install github.com/evilmartians/lefthook@latest
+	@echo "Installing nilaway (nil pointer static analysis)..."
+	go install go.uber.org/nilaway/cmd/nilaway@latest
+	@echo "Installing benchstat (benchmark comparison)..."
+	go install golang.org/x/perf/cmd/benchstat@latest
+	@echo "Installing git hooks..."
+	lefthook install
+	@echo "Setup complete."
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-28s\033[0m %s\n", $$1, $$2}' | sort
+
+list: help ## List all available commands
 
 dev: ## Run eos locally
 	@echo "Running eos in development mode..."
@@ -34,6 +86,11 @@ test: ## Run tests
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
 
+test-integration: ## Run integration tests (requires Linux + systemd + root; use OrbStack)
+	@echo "Running integration tests..."
+	@echo "  On OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v -count=1"
+	go test ./cmd/... -tags integration -v -count=1
+
 test-coverage: ## Get test coverage
 	@echo "Getting test coverage..."
 	go test -coverprofile=coverage.out ./...
@@ -43,12 +100,33 @@ lint: ## Run all linters
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
 	golangci-lint run --timeout=5m
-	
+
+nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.org/nilaway/cmd/nilaway@latest)
+	@echo "Running nilaway nil pointer analysis..."
+	@command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: make setup"; exit 1; }
+	nilaway ./...
+
+leak-test: ## Run tests with goroutine leak detection (-count=1, no -race to keep goleak output clean)
+	@echo "Running tests with goroutine leak detection..."
+	@echo "Note: add 'defer goleak.VerifyNone(t)' or goleak.VerifyTestMain(m) to catch leaks."
+	go test ./cmd ./internal/... -count=1 -timeout=60s -v 2>&1 | grep -E "(PASS|FAIL|leak|goroutine)" || true
+
 fix: ## Fix go formatting
 	golangci-lint fmt
 	go tool fieldalignment -fix ./...
 
-ci: test lint ## Run all CI checks locally
+sg: ## Scan codebase with ast-grep rules
+	@command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }
+	ast-grep scan
+
+sg-test: ## Run ast-grep rule tests
+	@command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }
+	ast-grep test
+
+sg-rules: ## List all ast-grep rules
+	@find rules -name '*.yml' ! -path '*__tests__*' | sort
+
+ci: test lint sg nilcheck ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 docker-local: ## Test with local Docker setup

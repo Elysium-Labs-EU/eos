@@ -10,16 +10,22 @@ linters:
     - errcheck
     - errorlint
     - exhaustive
+    - forcetypeassert
     - govet
+    - makezero
     - nilerr
     - nilnil
     - noctx
+    - reassign
     - rowserrcheck
     - sqlclosecheck
+    - wastedassign
     # Tier 2: Valuable quality
+    - gocritic
     - ineffassign
     - misspell
     - nestif
+    - nolintlint
     - unparam
     - unused
     # Tier 3: Kept but tuned
@@ -31,6 +37,14 @@ linters:
       errorf: true
       asserts: true
       comparison: true
+    gocritic:
+      enabled-checks:
+        - nilValReturn
+        - deferInLoop
+        - hugeParam
+        - rangeValCopy
+        - sloppyReassign
+        - weakCond
     gosec:
       confidence: medium
     govet:
@@ -39,6 +53,9 @@ linters:
       locale: US
     nestif:
       min-complexity: 8
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     revive:
       rules:
         - name: unexported-return

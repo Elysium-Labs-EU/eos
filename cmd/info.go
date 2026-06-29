@@ -64,10 +64,11 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			helpers.PrintSection(cmd, "Process")
 			if processEntry != nil {
-				helpers.PrintKV(cmd, "status", helpers.PrintStatus(helpers.DetermineServiceStatus(processEntry)))
+				status := helpers.DetermineServiceStatus(processEntry)
+				helpers.PrintKV(cmd, "status", helpers.PrintStatus(status))
 				helpers.PrintKV(cmd, "pgid", fmt.Sprintf("%d", processEntry.PGID))
 				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptimeHuman(processEntry))
-				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMbHuman(processEntry.RssMemoryKb))
+				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMbHuman(processEntry.RssMemoryKb, status))
 				if processEntry.Error == nil {
 					helpers.PrintKV(cmd, "error", "N/A")
 				} else {

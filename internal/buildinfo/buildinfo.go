@@ -1,3 +1,4 @@
+// Package buildinfo exposes version, commit, and build date metadata injected at link time.
 package buildinfo
 
 import "fmt"

@@ -49,7 +49,7 @@ func TestAddService(t *testing.T) {
 		t.Fatalf("Getting all service catalog entries should not error: %v", err)
 	}
 	if len(services) != 1 {
-		t.Errorf("Expected 1 service catalog entry, got %d", len(services))
+		t.Fatalf("Expected 1 service catalog entry, got %d", len(services))
 	}
 	if services[0].Name != "test-service" {
 		t.Errorf("Expected service name 'test-service', got '%s'", services[0].Name)
@@ -73,7 +73,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 
 	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
 	if err == nil {
-		t.Errorf("Expected error on adding the same service catalog entry twice")
+		t.Fatalf("Expected error on adding the same service catalog entry twice")
 	}
 	if strings.Contains(err.Error(), "service name cannot be empty") {
 		t.Errorf("Test failed due to invalid test input, got: %v\n", err)

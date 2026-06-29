@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,8 +38,11 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	}
 
 	getConfig := func() *config.SystemConfig {
-		_, _, config, _ := createSystemConfig()
-		return config
+		_, _, cfg, err := newSystemConfig()
+		if err != nil {
+			return nil
+		}
+		return cfg
 	}
 
 	rootCmd.AddCommand(newAddCmd(getManager))
@@ -52,7 +56,23 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
-	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+		testBaseDir := os.TempDir()
+		return testBaseDir, &config.SystemConfig{
+			Daemon: config.DaemonConfig{
+				Standalone: &config.StandaloneDaemonConfig{
+					PIDFile:    filepath.Join(testBaseDir, "eos-test.pid"),
+					SocketPath: filepath.Join(testBaseDir, "eos-test.sock"),
+					Log:        config.DaemonLogConfig{LogFileName: "daemon.log"},
+				},
+				Systemd: nil,
+			},
+			Health: config.HealthConfig{
+				MaxRestart: 10,
+				Timeout:    config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
+			},
+		}, nil
+	}))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig))
 
@@ -71,7 +91,7 @@ func newRootCmd() *cobra.Command {
 			return true
 		}
 		for c := cmd; c != nil; c = c.Parent() {
-			if c.Use == "daemon" {
+			if c.Use == "daemon" || c.Use == "uninstall" {
 				return true
 			}
 		}
@@ -94,7 +114,7 @@ func newRootCmd() *cobra.Command {
 			if skipManagerInit(cmd) {
 				return
 			}
-			_, baseDir, config, err := createSystemConfig()
+			_, baseDir, config, err := newSystemConfig()
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
@@ -141,7 +161,10 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
-	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+		_, baseDir, c, err := newSystemConfig()
+		return baseDir, c, err
+	}))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 
 	rootCmd.InitDefaultCompletionCmd()
@@ -151,13 +174,35 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func isUnderSystemd() bool {
-	return os.Getenv("INVOCATION_ID") != ""
+func newDaemonConfig(baseDir string, isSystemdManaged bool) config.DaemonConfig {
+	if isSystemdManaged {
+		return config.DaemonConfig{
+			Standalone: nil,
+			Systemd: &config.SystemdConfig{
+				SystemdTargetDir:      config.SystemdTargetDir,
+				SystemdTargetFileName: config.SystemdTargetFileName,
+			},
+		}
+	}
+
+	return config.DaemonConfig{
+		Standalone: &config.StandaloneDaemonConfig{
+			PIDFile:       filepath.Clean(filepath.Join(baseDir, config.DaemonPIDFile)),
+			SocketPath:    filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
+			SocketTimeout: safeParseDuration(config.DaemonSocketTimeout, time.Second*5),
+			Log: config.DaemonLogConfig{
+				LogDir:           manager.CreateLogDirPath(baseDir),
+				LogFileName:      config.DaemonLogFileName,
+				LogMaxFiles:      config.DaemonLogMaxFiles,
+				LogFileSizeLimit: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", config.DaemonLogFileSizeLimit),
+			}},
+		Systemd: nil,
+	}
 }
 
 // TODO: Centralize "ENV VAR NAMES" somewhere
 // TODO: Enable override for all exposed config variables
-func createSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
+func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
 	baseDir, err = config.CreateBaseDir()
 
 	if err != nil {
@@ -166,15 +211,11 @@ func createSystemConfig() (installDir string, baseDir string, systemConfig *conf
 
 	installDir = config.GetInstallDir()
 
-	daemonConfig := config.DaemonConfig{
-		PIDFile:       filepath.Clean(filepath.Join(baseDir, config.DaemonPIDFile)),
-		SocketPath:    filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
-		SocketTimeout: safeParseDuration(config.DaemonSocketTimeout, time.Second*5),
-		LogDir:        manager.CreateLogDirPath(baseDir),
-		LogFileName:   config.DaemonLogFileName,
-		MaxFiles:      config.DaemonLogMaxFiles,
-		FileSizeLimit: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", config.DaemonLogFileSizeLimit),
+	isSystemdManaged, err := config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
 	}
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged)
 
 	healthConfig := config.HealthConfig{
 		MaxRestart: config.HealthMaxRestart,
@@ -192,7 +233,7 @@ func createSystemConfig() (installDir string, baseDir string, systemConfig *conf
 		Health:       healthConfig,
 		Daemon:       daemonConfig,
 		Shutdown:     shutdownConfig,
-		UnderSystemd: isUnderSystemd(),
+		UnderSystemd: config.IsUnderSystemd(),
 	}
 
 	return installDir, baseDir, systemConfig, nil
@@ -261,7 +302,11 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 		return mgr, cleanup, nil
 	}
 
-	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.SocketPath, daemonConfig.PIDFile, daemonConfig.SocketTimeout)
+	if daemonConfig.Standalone == nil {
+		return nil, nil, errors.New("daemon running in systemd mode, cannot connect via socket")
+	}
+
+	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout)
 	if err != nil {
 		return nil, nil, err
 	}

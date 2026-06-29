@@ -17,6 +17,7 @@ func TestMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to create test database 3: %v", err)
 	}
+	t.Cleanup(func() { _ = db.CloseDBConnection() })
 
 	t.Log("Running up migrations...")
 	if migrationsErr := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); migrationsErr != nil {
@@ -136,7 +137,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close() //nolint:errcheck
+		defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 		for rows.Next() {
 			var cid int
@@ -178,7 +179,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close() //nolint:errcheck
+		defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 		for rows.Next() {
 			var cid int
@@ -222,7 +223,7 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("Failed to get table info: %v", err)
 		}
-		defer rows.Close() //nolint:errcheck
+		defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 		for rows.Next() {
 			var cid int

@@ -109,11 +109,12 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 	countStopped := len(forceStopResult.Stopped)
 	countStaleData := len(forceStopResult.StaleData)
 
-	if countStopped == 1 {
+	switch {
+	case countStopped == 1:
 		cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "force stopped 1 process")
-	} else if countStopped > 1 {
+	case countStopped > 1:
 		cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), fmt.Sprintf("force stopped %d processes", countStopped))
-	} else {
+	default:
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "force stopped no processes")
 	}
 

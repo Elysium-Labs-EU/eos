@@ -1,0 +1,9 @@
+id: no-context-background-in-handler
+language: go
+severity: warning
+message: "Prefer propagating context from caller rather than context.Background()"
+rule:
+  pattern: context.Background()
+ignores:
+  - "**/*_test.go"
+note: "Pass ctx from caller so cancellation and tracing propagate"

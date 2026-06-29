@@ -1,3 +1,4 @@
+// Package process handles OS-level process spawning, signal delivery, and stdin/stdout piping for daemons.
 package process
 
 import (
@@ -6,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	_ "net/http/pprof" //nolint:gosec // intentional: pprof only exposed when EOS_PPROF_ADDR is set
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,17 +25,98 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
-func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.DaemonConfig, healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig) error {
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, daemonConfig.LogDir, daemonConfig.LogFileName, daemonConfig.MaxFiles, config.DaemonLogFileSizeLimit)
+type daemon struct {
+	listener   net.Listener
+	ctx        context.Context
+	logger     *manager.DaemonLogger
+	db         *database.DB
+	mgr        *manager.LocalManager
+	stop       context.CancelFunc
+	sigChan    chan os.Signal
+	pidFile    string
+	socketPath string
+}
+
+func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
+	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, baseDir, standaloneDaemonConfig)
 	if err != nil {
-		errorMessage := fmt.Errorf("failed to setup daemon logger: %w", err)
+		return err
+	}
+	defer d.shutdown()
+
+	if addr := os.Getenv("EOS_PPROF_ADDR"); addr != "" {
+		go func() { _ = http.ListenAndServe(addr, nil) }() //nolint:gosec // addr is operator-controlled via env var
+	}
+
+	if underSystemd {
+		err := d.recover()
+		if err != nil {
+			return err
+		}
+	}
+	d.serve(healthConfig, shutdownConfig)
+
+	d.logger.Log(logutil.LogLevelInfo, "daemon started successfully")
+
+	d.wait()
+	return nil
+}
+
+func bootPersistedServices(mgr *manager.LocalManager, logger *manager.DaemonLogger) error {
+	allRegisteredServices, err := mgr.GetAllServiceCatalogEntries()
+	if err != nil {
+		errorMessage := fmt.Errorf("getting all service catalog entries: %w", err)
 		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
 		return errorMessage
 	}
 
+	for _, service := range allRegisteredServices {
+		_, err := mgr.StartService(service.Name)
+		if err != nil {
+			errorMessage := fmt.Errorf("starting service: %w", err)
+			logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+			continue
+		}
+	}
+	return nil
+}
+
+func (d *daemon) shutdown() {
+	d.stop()
+	if err := d.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing listener: %v", err))
+	}
+	if err := os.Remove(d.pidFile); err != nil && !os.IsNotExist(err) {
+		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
+	}
+	if err := os.Remove(d.socketPath); err != nil && !os.IsNotExist(err) {
+		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("removing socket: %v", err))
+	}
+	if err := d.db.CloseDBConnection(); err != nil {
+		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
+	}
+}
+
+func (d *daemon) recover() error {
+	return bootPersistedServices(d.mgr, d.logger)
+}
+
+func (d *daemon) serve(healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig) {
+	go handleIncomingCommands(d.listener, d.mgr, d.logger)
+
+	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig)
+	go healthMonitor.Start(d.ctx)
+}
+
+func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
+	logger, err := manager.NewDaemonLogger(logToFileAndConsole, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup daemon logger: %w", err)
+	}
+
 	logger.Log(logutil.LogLevelInfo, "Started daemon logger")
-	pidFile := daemonConfig.PIDFile
-	socketPath := daemonConfig.SocketPath
+	pidFile := standaloneDaemonConfig.PIDFile
+	socketPath := standaloneDaemonConfig.SocketPath
 
 	if _, pidFileStatErr := os.Stat(pidFile); pidFileStatErr == nil {
 		data, _ := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
@@ -42,13 +126,13 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 			if process.Signal(syscall.Signal(0)) == nil {
 				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
 				logger.Log(logutil.LogLevelInfo, errorMessage.Error())
-				return errorMessage
+				return nil, errorMessage
 			}
 		}
 		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
 			logger.Log(logutil.LogLevelError, errorMessage.Error())
-			return errorMessage
+			return nil, errorMessage
 		}
 	}
 
@@ -57,11 +141,10 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
 		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
-		return errorMessage
+		return nil, errorMessage
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGCHLD)
@@ -70,7 +153,7 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
 			logger.Log(logutil.LogLevelError, errorMessage.Error())
-			return errorMessage
+			return nil, errorMessage
 		}
 	}
 
@@ -79,46 +162,40 @@ func StartDaemon(logToFileAndConsole bool, baseDir string, daemonConfig config.D
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
 		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
-		return errorMessage
+		return nil, errorMessage
 	}
 
 	db, err := database.NewDB(ctx, baseDir)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to connect to database: %w", err)
 		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
-		return errorMessage
+		return nil, errorMessage
 	}
-	defer func() {
-		if err := db.CloseDBConnection(); err != nil {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
-		}
-	}()
 
 	mgr := manager.NewLocalManager(db, baseDir, ctx, logger)
-	go handleIncomingCommands(listener, mgr, logger)
 
-	healthMonitor := monitor.NewHealthMonitor(mgr, db, logger, healthConfig, shutdownConfig)
-	go healthMonitor.Start(ctx)
+	return &daemon{
+		logger:     logger,
+		db:         db,
+		mgr:        mgr,
+		listener:   listener,
+		ctx:        ctx,
+		stop:       stop,
+		sigChan:    sigChan,
+		pidFile:    pidFile,
+		socketPath: socketPath,
+	}, nil
+}
 
-	logger.Log(logutil.LogLevelInfo, "daemon started successfully")
+func (d *daemon) wait() {
 	for {
-
 		select {
-		case sig := <-sigChan:
+		case sig := <-d.sigChan:
 			if sig == syscall.SIGCHLD {
-				handleSIGCHLDRequest(ctx, db, logger)
+				handleSIGCHLDRequest(d.ctx, d.db, d.logger)
 			}
-		case <-ctx.Done():
-			if err := listener.Close(); err != nil {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("closing listener: %v", err))
-			}
-			if err := os.Remove(pidFile); err != nil {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
-			}
-			if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("removing socket: %v", err))
-			}
-			return nil
+		case <-d.ctx.Done():
+			return
 		}
 	}
 }
@@ -178,7 +255,7 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.
 	}
 }
 
-func StopDaemon(daemonConfig config.DaemonConfig) (bool, error) {
+func StopStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, error) {
 	pidFile := daemonConfig.PIDFile
 	socketPath := daemonConfig.SocketPath
 
@@ -231,7 +308,7 @@ type DaemonStatus struct {
 	Running bool
 }
 
-func StatusDaemon(daemonConfig config.DaemonConfig) (*DaemonStatus, error) {
+func StatusStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (*DaemonStatus, error) {
 	pidFile := filepath.Clean(daemonConfig.PIDFile)
 
 	_, err := os.Stat(pidFile)
@@ -272,6 +349,28 @@ func StatusDaemon(daemonConfig config.DaemonConfig) (*DaemonStatus, error) {
 		Pid:     &activePid,
 		Process: process,
 	}, nil
+}
+
+func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, error) {
+	status, err := StatusStandaloneDaemon(daemonConfig)
+	if err != nil {
+		return false, err
+	}
+	if status.Running {
+		return false, fmt.Errorf("standalone daemon is running; stop it before removing daemon files")
+	}
+
+	pidFile := daemonConfig.PIDFile
+	socketPath := daemonConfig.SocketPath
+
+	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("removing pid file: %w", err)
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("removing socket file: %w", err)
+	}
+
+	return true, nil
 }
 
 func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *manager.DaemonLogger) {

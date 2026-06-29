@@ -1,3 +1,4 @@
+// Package database manages the SQLite connection, schema migrations, and query helpers for eos state persistence.
 package database
 
 import (
@@ -176,7 +177,7 @@ func (db *DB) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceC
 	if err != nil {
 		return nil, fmt.Errorf("could not query registered services: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 	var services []types.ServiceCatalogEntry
 	for rows.Next() {
@@ -228,7 +229,7 @@ func (db *DB) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstan
 	if err != nil {
 		return nil, fmt.Errorf("could not query service instances: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 	var serviceInstances []types.ServiceInstance
 	for rows.Next() {
@@ -309,7 +310,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 	if err != nil {
 		return nil, fmt.Errorf("could not query registered services: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable here
 
 	var processHistoryEntries []types.ProcessHistory
 	for rows.Next() {

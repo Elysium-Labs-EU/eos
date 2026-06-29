@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,6 +25,13 @@ type LocalManager struct {
 	ctx     context.Context
 	logger  logutil.ProcessLogger
 	baseDir string
+	pipeWg  sync.WaitGroup
+}
+
+// WaitPipes blocks until all pipe-forwarding goroutines have exited.
+// Call this in test cleanup after stopping services to avoid goroutine leaks.
+func (m *LocalManager) WaitPipes() {
+	m.pipeWg.Wait()
 }
 
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger logutil.ProcessLogger) *LocalManager {
@@ -169,11 +177,14 @@ func newPipeForStd() (r *os.File, w *os.File, err error) {
 }
 
 func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
+	defer m.pipeWg.Done()
+	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
+	defer stop()
 	tw := &logutil.TimestampWriter{W: w}
-	if _, copyErr := io.Copy(tw, r); copyErr != nil {
+	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
 		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read log pipe data to timestamp writer for %s: %v", name, copyErr))
 	}
-	if err := r.Close(); err != nil {
+	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read log file pipe for %s: %v", name, err))
 	}
 	if err := w.Close(); err != nil {
@@ -182,11 +193,14 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
 }
 
 func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
+	defer m.pipeWg.Done()
+	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
+	defer stop()
 	tw := &logutil.TimestampWriter{W: w}
-	if _, copyErr := io.Copy(tw, r); copyErr != nil {
+	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
 		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read error log pipe data to timestamp writer for %s: %v", name, copyErr))
 	}
-	if err := r.Close(); err != nil {
+	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read error log file pipe for %s: %v", name, err))
 	}
 	if err := w.Close(); err != nil {
@@ -284,7 +298,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		}
 	}()
 
-	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
 
@@ -314,6 +328,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
 	}
 
+	m.pipeWg.Add(2)
 	go m.pipeToLogFile(readLogFilePipe, logFile, name)
 	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
 
@@ -437,7 +452,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		}
 	}()
 
-	if binaryErr := m.validateRuntimeBinary(*config); binaryErr != nil {
+	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
 
@@ -475,6 +490,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
 	}
 
+	m.pipeWg.Add(2)
 	go m.pipeToLogFile(readLogFilePipe, logFile, name)
 	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
 
@@ -759,11 +775,12 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 		switch processState {
 		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
 			err := syscall.Kill(-processPGID, signal)
-			if errors.Is(err, syscall.ESRCH) {
+			switch {
+			case errors.Is(err, syscall.ESRCH):
 				alreadyDead[processPGID] = true
-			} else if err != nil {
+			case err != nil:
 				errored[processPGID] = fmt.Sprintf("killing service: %v", err)
-			} else {
+			default:
 				pending[processPGID] = true
 			}
 		case types.ProcessStateFailed, types.ProcessStateStopped:
@@ -787,7 +804,7 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 // 	NodeJs SupportedRuntime = "nodejs"
 // )
 
-func (m LocalManager) validateRuntimeBinary(config types.ServiceConfig) error {
+func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error {
 	if config.Runtime.Path != "" {
 		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
 			return fmt.Errorf("validating config runtime: %w", runtimePathErr)
