@@ -121,17 +121,15 @@ func IsUnderSystemd() bool {
 	return os.Getenv("INVOCATION_ID") != ""
 }
 
-func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) bool {
-	systemdFullTargetName := systemdTargetDir + systemdTargetFileName
-	_, err := os.Stat(systemdFullTargetName)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-		return false
-		// return false, fmt.Errorf("getting stat info on pid of daemon: %w", err)
+func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) (bool, error) {
+	_, err := os.Stat(filepath.Join(systemdTargetDir, systemdTargetFileName))
+	if err == nil {
+		return true, nil
 	}
-	return true
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking systemd unit file: %w", err)
 }
 
 // func CreateConfigFile(baseDir string) (*os.File, error) {

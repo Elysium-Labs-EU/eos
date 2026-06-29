@@ -52,11 +52,13 @@ jobs:
           cache: true
 
       - name: Run benchmarks
+        continue-on-error: true
         run: |
           mkdir -p __benchmarks__
-          go test -bench=. -benchmem -count=5 ./... > __benchmarks__/mem.$(git rev-parse --short HEAD).txt 2>&1 || true
+          go test -run=^$ -bench=. -benchmem -count=5 ./... > __benchmarks__/mem.$(git rev-parse --short HEAD).txt 2>&1
 
       - name: Upload snapshot
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: bench-mem-${{ github.sha }}

@@ -38,8 +38,11 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	}
 
 	getConfig := func() *config.SystemConfig {
-		_, _, config, _ := newSystemConfig()
-		return config
+		_, _, cfg, err := newSystemConfig()
+		if err != nil {
+			return nil
+		}
+		return cfg
 	}
 
 	rootCmd.AddCommand(newAddCmd(getManager))
@@ -208,7 +211,11 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 
 	installDir = config.GetInstallDir()
 
-	daemonConfig := newDaemonConfig(baseDir, config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName))
+	isSystemdManaged, err := config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
+	}
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged)
 
 	healthConfig := config.HealthConfig{
 		MaxRestart: config.HealthMaxRestart,

@@ -306,7 +306,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		return
 	}
 
-	fullTargetName := systemdDir + systemdFile
+	fullTargetName := filepath.Join(systemdDir, systemdFile)
 
 	fileInfo, err := os.Stat(systemdDir)
 	if err != nil {

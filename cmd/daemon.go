@@ -145,7 +145,11 @@ func (c systemdDaemonController) LogsHint() string {
 }
 
 func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int) {
-	// #nosec G204 - lines is validated by the caller
+	if lines < 0 || lines > 10000 {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
+		return
+	}
+	// #nosec G204 - lines is validated above
 	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", "-u", "eos", "-n", fmt.Sprintf("%d", lines), "-f")
 	journalCmd.Stdout = cmd.OutOrStdout()
 	journalCmd.Stderr = cmd.ErrOrStderr()
@@ -348,7 +352,7 @@ func printSystemdDaemonDetails(cmd *cobra.Command) {
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("systemctl status eos.service") + ui.TextMuted.Render(" → check systemd service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("journalctl status eos.service") + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("journalctl -u eos.service") + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
 	cmd.Println()
 }
 

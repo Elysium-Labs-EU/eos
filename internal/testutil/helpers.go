@@ -212,7 +212,7 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	return limit
 }
 
-func IsSystemdManaged() bool {
+func IsSystemdManaged() (bool, error) {
 	return config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
 }
 

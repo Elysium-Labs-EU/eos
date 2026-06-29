@@ -81,9 +81,10 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				}
 
 				entry := StatusServiceEntry{
-					Name:   regServiceName,
-					Status: helpers.DetermineServiceStatus(mostRecentProcess),
-					Uptime: helpers.DetermineUptimeHuman(mostRecentProcess),
+					Name:     regServiceName,
+					Status:   helpers.DetermineServiceStatus(mostRecentProcess),
+					Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
+					MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
 				}
 				if mostRecentProcess != nil {
 					entry.PGID = mostRecentProcess.PGID
