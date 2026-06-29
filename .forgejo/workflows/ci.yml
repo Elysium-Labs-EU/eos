@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload snapshot
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v3
         with:
           name: bench-mem-${{ github.sha }}
           path: __benchmarks__/
