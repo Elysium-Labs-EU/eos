@@ -38,11 +38,16 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	}
 
 	getConfig := func() *config.SystemConfig {
-		_, _, cfg, err := newSystemConfig()
-		if err != nil {
-			return nil
+		return &config.SystemConfig{
+			Shutdown: config.ShutdownConfig{
+				GracePeriod: 5 * time.Second,
+			},
+			Health: config.HealthConfig{
+				MaxRestart:                10,
+				RestartCounterResetWindow: 15 * time.Minute,
+				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
+			},
 		}
-		return cfg
 	}
 
 	rootCmd.AddCommand(newAddCmd(getManager))

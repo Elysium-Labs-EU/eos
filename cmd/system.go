@@ -25,6 +25,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/process"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
 )
@@ -326,7 +327,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		return
 	}
 
-	effectiveUser, effectiveUserErr := helpers.EffectiveUser()
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return

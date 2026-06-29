@@ -14,6 +14,7 @@ import (
 func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string) {
 	t.Helper()
 	db, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	t.Setenv("EOS_BASE_DIR", td)
 	mgr := manager.NewLocalManager(db, td, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 	c := newTestRootCmd(mgr)
@@ -60,6 +61,7 @@ func TestHelpCommand(t *testing.T) {
 }
 
 func TestNewSystemConfigHelper(t *testing.T) {
+	t.Setenv("EOS_BASE_DIR", t.TempDir())
 	_, baseDir, _, err := newSystemConfig()
 
 	if err != nil {
