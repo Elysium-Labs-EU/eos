@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,11 +20,12 @@ import (
 )
 
 type LocalManager struct {
-	db      database.Database
-	ctx     context.Context
-	logger  logutil.ProcessLogger
-	baseDir string
-	pipeWg  sync.WaitGroup
+	db       database.Database
+	ctx      context.Context
+	logger   logutil.ProcessLogger
+	executor Executor
+	baseDir  string
+	pipeWg   sync.WaitGroup
 }
 
 // WaitPipes blocks until all pipe-forwarding goroutines have exited.
@@ -34,8 +34,23 @@ func (m *LocalManager) WaitPipes() {
 	m.pipeWg.Wait()
 }
 
-func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger logutil.ProcessLogger) *LocalManager {
-	return &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger}
+type LocalManagerOption func(*LocalManager)
+
+func WithExecutor(e Executor) LocalManagerOption {
+	return func(m *LocalManager) {
+		if e == nil {
+			return
+		}
+		m.executor = e
+	}
+}
+
+func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger logutil.ProcessLogger, opts ...LocalManagerOption) *LocalManager {
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.ServiceCatalogEntry) error {
@@ -302,7 +317,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, binaryErr
 	}
 
-	startCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
+	startCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	startCommand.Dir = service.DirectoryPath
@@ -464,7 +479,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
 
-	restartCommand := exec.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
+	restartCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	restartCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	restartCommand.Dir = service.DirectoryPath
@@ -815,15 +830,15 @@ func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error 
 
 	switch config.Runtime.Type {
 	case "bun":
-		if _, lookPathErr := exec.LookPath("bun"); lookPathErr != nil {
+		if _, lookPathErr := m.executor.LookPath("bun"); lookPathErr != nil {
 			return fmt.Errorf("bun not found in system PATH: %w", lookPathErr)
 		}
 	case "deno":
-		if _, lookPathErr := exec.LookPath("deno"); lookPathErr != nil {
+		if _, lookPathErr := m.executor.LookPath("deno"); lookPathErr != nil {
 			return fmt.Errorf("deno not found in system PATH: %w", lookPathErr)
 		}
 	case "node", "nodejs":
-		if _, lookPathErr := exec.LookPath("node"); lookPathErr != nil {
+		if _, lookPathErr := m.executor.LookPath("node"); lookPathErr != nil {
 			return fmt.Errorf("node not found in system PATH: %w", lookPathErr)
 		}
 	default:
