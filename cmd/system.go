@@ -373,7 +373,11 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-	killed, killErr := process.StopStandaloneDaemon(daemonConfig)
+	if daemonConfig == nil {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		return
+	}
+	killed, killErr := process.StopStandaloneDaemon(daemonConfig.PIDFile, daemonConfig.SocketPath)
 
 	if killErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))

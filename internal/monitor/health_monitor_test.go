@@ -606,11 +606,11 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	}
 	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
-	instance, err := hm.mgr.GetServiceInstance(serviceName)
-	if err != nil || instance == nil {
-		t.Fatal("Failed to get service instance")
+	serviceInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || serviceInstance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
 	}
-	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -867,11 +867,11 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	instance, err := hm.mgr.GetServiceInstance(serviceName)
-	if err != nil || instance == nil {
-		t.Fatal("Failed to get service instance")
+	serviceInstance2, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || serviceInstance2 == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
 	}
-	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance2)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -891,6 +891,175 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 	if !strings.Contains(output, "is not running") {
 		t.Fatalf("Expected log about service not running, got: %s", output)
+	}
+}
+
+func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	// Use a tiny reset window so the test doesn't have to wait.
+	healthConfig := newTestHealthConfig(t, WithRestartCounterResetWindow(1*time.Millisecond))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up daemon logger, got: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+
+	serviceName := "test-reset-service"
+	fullDirPath := filepath.Join(tempDir, "test-reset-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal service config to YAML: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+
+	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	// Simulate a prior restart by setting RestartCount > 0.
+	restartCount := 3
+	if err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{RestartCount: &restartCount}); err != nil {
+		t.Fatalf("Failed to seed restart count: %v", err)
+	}
+
+	// Backdate StartedAt so uptime exceeds the reset window.
+	pastTime := time.Now().Add(-1 * time.Hour)
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+	if err = db.UpdateProcessHistoryEntry(t.Context(), processHistoryEntry.PGID, database.ProcessHistoryUpdate{
+		StartedAt: &pastTime,
+	}); err != nil {
+		t.Fatalf("Failed to backdate StartedAt: %v", err)
+	}
+	processHistoryEntry.StartedAt = &pastTime
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
+
+	updated, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updated == nil {
+		t.Fatalf("Failed to get updated service instance: %v", err)
+	}
+	if updated.RestartCount != 0 {
+		t.Fatalf("Expected RestartCount to be reset to 0, got: %d", updated.RestartCount)
+	}
+}
+
+func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindow(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	// Large window — uptime won't exceed it.
+	healthConfig := newTestHealthConfig(t, WithRestartCounterResetWindow(24*time.Hour))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up daemon logger, got: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+
+	serviceName := "test-no-reset-service"
+	fullDirPath := filepath.Join(tempDir, "test-no-reset-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create service directory: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal service config to YAML: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+
+	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	restartCount := 3
+	if err = db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{RestartCount: &restartCount}); err != nil {
+		t.Fatalf("Failed to seed restart count: %v", err)
+	}
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
+
+	updated, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updated == nil {
+		t.Fatalf("Failed to get updated service instance: %v", err)
+	}
+	if updated.RestartCount != 3 {
+		t.Fatalf("Expected RestartCount to remain 3, got: %d", updated.RestartCount)
 	}
 }
 
@@ -1514,6 +1683,12 @@ func WithTimeoutEnable(timeoutEnable bool) HealthConfigOption {
 func WithTimeoutLimit(timeoutLimit time.Duration) HealthConfigOption {
 	return func(hc *config.HealthConfig) {
 		hc.Timeout.Limit = timeoutLimit
+	}
+}
+
+func WithRestartCounterResetWindow(window time.Duration) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.RestartCounterResetWindow = window
 	}
 }
 

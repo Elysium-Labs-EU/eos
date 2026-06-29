@@ -68,8 +68,9 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 				Systemd: nil,
 			},
 			Health: config.HealthConfig{
-				MaxRestart: 10,
-				Timeout:    config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
+				MaxRestart:                10,
+				RestartCounterResetWindow: 15 * time.Minute,
+				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
 		}, nil
 	}))
@@ -217,8 +218,14 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	}
 	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged)
 
+	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
+	if restartCounterResetWindow <= 0 {
+		restartCounterResetWindow = 15 * time.Minute
+	}
+
 	healthConfig := config.HealthConfig{
-		MaxRestart: config.HealthMaxRestart,
+		MaxRestart:                config.HealthMaxRestart,
+		RestartCounterResetWindow: restartCounterResetWindow,
 		Timeout: config.TimeOutConfig{
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),
 			Limit:  safeParseDuration(config.HealthTimeOutLimit, time.Second*10),

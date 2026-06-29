@@ -255,10 +255,7 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.
 	}
 }
 
-func StopStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, error) {
-	pidFile := daemonConfig.PIDFile
-	socketPath := daemonConfig.SocketPath
-
+func StopStandaloneDaemon(pidFile, socketPath string) (bool, error) {
 	_, err := os.Stat(pidFile)
 	if err != nil {
 		if os.IsNotExist(err) {

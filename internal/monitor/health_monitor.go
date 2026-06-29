@@ -23,15 +23,16 @@ import (
 )
 
 type HealthMonitor struct {
-	mgr                 *manager.LocalManager
-	db                  *database.DB
-	logger              *manager.DaemonLogger
-	stopCh              chan struct{}
-	checkInterval       time.Duration
-	timeoutEnable       bool
-	timeoutLimit        time.Duration
-	maxRestartCount     int
-	shutdownGracePeriod time.Duration
+	mgr                       *manager.LocalManager
+	db                        *database.DB
+	logger                    *manager.DaemonLogger
+	stopCh                    chan struct{}
+	checkInterval             time.Duration
+	timeoutEnable             bool
+	timeoutLimit              time.Duration
+	maxRestartCount           int
+	restartCounterResetWindow time.Duration
+	shutdownGracePeriod       time.Duration
 }
 
 func NewHealthMonitor(
@@ -42,15 +43,16 @@ func NewHealthMonitor(
 	shutdownConfig config.ShutdownConfig,
 ) *HealthMonitor {
 	return &HealthMonitor{
-		mgr:                 mgr,
-		db:                  db,
-		logger:              logger,
-		stopCh:              make(chan struct{}),
-		checkInterval:       2 * time.Second,
-		timeoutEnable:       healthConfig.Timeout.Enable,
-		timeoutLimit:        healthConfig.Timeout.Limit,
-		maxRestartCount:     healthConfig.MaxRestart,
-		shutdownGracePeriod: shutdownConfig.GracePeriod,
+		mgr:                       mgr,
+		db:                        db,
+		logger:                    logger,
+		stopCh:                    make(chan struct{}),
+		checkInterval:             2 * time.Second,
+		timeoutEnable:             healthConfig.Timeout.Enable,
+		timeoutLimit:              healthConfig.Timeout.Limit,
+		maxRestartCount:           healthConfig.MaxRestart,
+		restartCounterResetWindow: healthConfig.RestartCounterResetWindow,
+		shutdownGracePeriod:       shutdownConfig.GracePeriod,
 	}
 }
 
@@ -98,7 +100,7 @@ func (hm *HealthMonitor) checkAllServices(ctx context.Context, services []types.
 		case types.ProcessStateStarting:
 			hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
 		case types.ProcessStateRunning:
-			hm.checkRunningProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
+			hm.checkRunningProcess(ctx, service, processHistoryEntry, instance)
 		case types.ProcessStateFailed:
 			hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
 		case types.ProcessStateUnknown:
@@ -168,13 +170,24 @@ func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, activ
 	}
 }
 
-func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
+func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance) {
 	serviceName := service.Name
 	pgid := process.PGID
 
 	if !hm.isProcessAlive(pgid) {
 		hm.markProcessFailed(ctx, pgid, serviceName, logutil.LogLevelError, fmt.Sprintf("[%s] is not running", serviceName))
 		return
+	}
+
+	if instance.RestartCount > 0 && hm.restartCounterResetWindow > 0 && process.StartedAt != nil {
+		if time.Since(*process.StartedAt) >= hm.restartCounterResetWindow {
+			zero := 0
+			if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &zero}); err != nil {
+				hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("[%s] failed to reset restart counter: %v", serviceName, err))
+			} else {
+				hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("[%s] restart counter reset after stable uptime", serviceName))
+			}
+		}
 	}
 
 	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid)
@@ -194,7 +207,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.logger.Log(logutil.LogLevelWarn, fmt.Sprintf("[%s] memory usage warning", serviceName))
 		hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
 	case ReasonSoftRestart:
-		if !canRestart(restartCount, maxRestartCount, process.StartedAt) {
+		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt) {
 			return
 		}
 
@@ -209,7 +222,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
 	case ReasonForceRestart:
-		if !canRestart(restartCount, maxRestartCount, process.StartedAt) {
+		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt) {
 			return
 		}
 		newPgid, err := hm.mgr.RestartService(service.Name, 1*time.Second, 10*time.Millisecond)
