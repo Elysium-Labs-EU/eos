@@ -1,8 +1,10 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,18 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
+
+// fakeExecutor satisfies Executor without requiring runtime binaries in PATH.
+// LookPath always succeeds; CommandContext delegates to the real os/exec.
+type fakeExecutor struct{}
+
+func (fakeExecutor) LookPath(file string) (string, error) {
+	return file, nil
+}
+
+func (fakeExecutor) CommandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, name, arg...)
+}
 
 func TestNewManager(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -119,7 +133,7 @@ func TestGetInvalidServiceInstance(t *testing.T) {
 
 func TestStartService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
 
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
@@ -171,7 +185,7 @@ func TestStartService(t *testing.T) {
 
 func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
 
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
@@ -223,7 +237,7 @@ func TestStartServiceWithValidEnvLocation(t *testing.T) {
 
 func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
 
 	testFile := &types.ServiceConfig{
 		Name:    "cms",
