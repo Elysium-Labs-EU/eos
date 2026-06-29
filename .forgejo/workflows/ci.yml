@@ -81,16 +81,3 @@ jobs:
       - name: Verify code compiles
         run: go build -v ./...
 
-  nilcheck:
-    name: Nil Check
-    runs-on: codeberg-small
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
