@@ -48,6 +48,9 @@ func DetermineUptimeHuman(mostRecentProcess *types.ProcessHistory) string {
 	if mostRecentProcess.State == types.ProcessStateUnknown {
 		return "-"
 	}
+	if mostRecentProcess.StartedAt == nil {
+		return "-"
+	}
 	return humanize.Time(*mostRecentProcess.StartedAt)
 }
 
@@ -62,6 +65,9 @@ func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
 		return nil
 	}
 	if mostRecentProcess.State == types.ProcessStateUnknown {
+		return nil
+	}
+	if mostRecentProcess.StartedAt == nil {
 		return nil
 	}
 	return new(mostRecentProcess.StartedAt.String())
