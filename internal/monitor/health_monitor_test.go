@@ -606,7 +606,11 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	}
 	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
-	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry)
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatal("Failed to get service instance")
+	}
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -863,7 +867,11 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry)
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatal("Failed to get service instance")
+	}
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -999,7 +1007,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			t.Fatalf("Iteration %d: Failed to get service instance", i)
 		}
 
-		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, maxRestartCount)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
 		time.Sleep(50 * time.Millisecond)
 
 		updatedInstance, _ := hm.mgr.GetServiceInstance(serviceName)
@@ -1461,7 +1469,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	restartCountBefore := instance.RestartCount
 
 	// Call checkFailedProcess - the process is alive, so it should recover
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance, healthConfig.MaxRestart)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, healthConfig.MaxRestart)
 
 	// Verify: state should be back to Running
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)

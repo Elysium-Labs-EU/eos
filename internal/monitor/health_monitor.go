@@ -98,9 +98,9 @@ func (hm *HealthMonitor) checkAllServices(ctx context.Context, services []types.
 		case types.ProcessStateStarting:
 			hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
 		case types.ProcessStateRunning:
-			hm.checkRunningProcess(ctx, service, processHistoryEntry)
+			hm.checkRunningProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
 		case types.ProcessStateFailed:
-			hm.checkFailedProcess(ctx, service, processHistoryEntry, instance, hm.maxRestartCount)
+			hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
 		case types.ProcessStateUnknown:
 			hm.checkUnknownProcess(ctx, service, processHistoryEntry)
 		case types.ProcessStateStopped:
@@ -168,7 +168,7 @@ func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, activ
 	}
 }
 
-func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
+func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
 	serviceName := service.Name
 	pgid := process.PGID
 
@@ -194,6 +194,10 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.logger.Log(logutil.LogLevelWarn, fmt.Sprintf("[%s] memory usage warning", serviceName))
 		hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
 	case ReasonSoftRestart:
+		if !canRestart(restartCount, maxRestartCount, process.StartedAt) {
+			return
+		}
+
 		newPgid, err := hm.mgr.RestartService(service.Name, 5*time.Second, 200*time.Millisecond)
 		if err != nil {
 			hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
@@ -205,6 +209,9 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
 	case ReasonForceRestart:
+		if !canRestart(restartCount, maxRestartCount, process.StartedAt) {
+			return
+		}
 		newPgid, err := hm.mgr.RestartService(service.Name, 1*time.Second, 10*time.Millisecond)
 		if err != nil {
 			hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
@@ -224,7 +231,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	}
 }
 
-func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, maxRestartCount int) {
+func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
 	serviceName := service.Name
 	pgid := process.PGID
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
@@ -238,13 +245,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 	if !hm.isProcessAlive(pgid) {
 		// TODO: Do we want to incorporate instance.last_health_check instead process?
-		elapsed := time.Since(*process.StoppedAt)
-		requiredDelay := calculateBackoffDelay(instance.RestartCount)
-
-		if instance.RestartCount >= maxRestartCount {
-			return
-		}
-		if elapsed < requiredDelay {
+		if !canRestart(restartCount, maxRestartCount, process.StoppedAt) {
 			return
 		}
 
@@ -326,6 +327,16 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 		hm.logger.Log(logutil.LogLevelError,
 			fmt.Sprintf("[%s] failed to update process history entry: %v", serviceName, err))
 	}
+}
+
+func canRestart(restartCount, maxRestartCount int, since *time.Time) bool {
+	if restartCount >= maxRestartCount {
+		return false
+	}
+	if since != nil && time.Since(*since) < calculateBackoffDelay(restartCount) {
+		return false
+	}
+	return true
 }
 
 func calculateBackoffDelay(restartCount int) time.Duration {
