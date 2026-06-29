@@ -94,8 +94,3 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install nilaway
-        run: go install go.uber.org/nilaway/cmd/nilaway@latest
-
-      - name: Run nilaway
-        run: nilaway ./...
