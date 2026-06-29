@@ -7,6 +7,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"time"
+
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 // NOTE: In the nearby future we want to enable this to be overwritten by the release process.
@@ -99,6 +101,10 @@ func GetBaseDir() (string, error) {
 }
 
 func CreateBaseDir() (string, error) {
+	if os.Getuid() == 0 && os.Getenv("SUDO_USER") == "" && os.Getenv("EOS_BASE_DIR") == "" {
+		return "", fmt.Errorf("do not run eos as root: invoke as the target user directly")
+	}
+
 	baseDir, err := GetBaseDir()
 	if err != nil {
 		return "", err
@@ -107,6 +113,20 @@ func CreateBaseDir() (string, error) {
 	err = os.MkdirAll(baseDir, 0750)
 	if err != nil {
 		return "", fmt.Errorf("could not create eos directory: %w", err)
+	}
+
+	if os.Getuid() == 0 {
+		u, err := userutil.EffectiveUser()
+		if err != nil {
+			return "", fmt.Errorf("resolving effective user for chown: %w", err)
+		}
+		uid, gid, err := userutil.UserCredentials(u)
+		if err != nil {
+			return "", fmt.Errorf("resolving credentials for chown: %w", err)
+		}
+		if err := os.Chown(baseDir, int(uid), int(gid)); err != nil {
+			return "", fmt.Errorf("chown %s to %s: %w", baseDir, u.Username, err)
+		}
 	}
 
 	return baseDir, nil

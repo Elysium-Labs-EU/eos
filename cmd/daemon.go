@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -320,11 +320,11 @@ func forkDaemon(ctx context.Context, pidFile string) error {
 	cmd.Stderr = nil
 
 	if os.Getuid() == 0 {
-		u, err := helpers.EffectiveUser()
+		u, err := userutil.EffectiveUser()
 		if err != nil {
 			return fmt.Errorf("resolving effective user: %w", err)
 		}
-		uid, gid, err := helpers.UserCredentials(u)
+		uid, gid, err := userutil.UserCredentials(u)
 		if err != nil {
 			return fmt.Errorf("resolving user credentials: %w", err)
 		}
