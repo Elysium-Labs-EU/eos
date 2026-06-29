@@ -55,6 +55,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newStatusCmd(getManager))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
+	rootCmd.AddCommand(newValidateCmd())
 
 	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
 		testBaseDir := os.TempDir()
@@ -92,7 +93,7 @@ func newRootCmd() *cobra.Command {
 			return true
 		}
 		for c := cmd; c != nil; c = c.Parent() {
-			if c.Use == "daemon" || c.Use == "uninstall" {
+			if c.Use == "daemon" || c.Use == "uninstall" || c.Use == "validate" {
 				return true
 			}
 		}
@@ -161,6 +162,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newStatusCmd(getManager))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
+	rootCmd.AddCommand(newValidateCmd())
 
 	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
 		_, baseDir, c, err := newSystemConfig()

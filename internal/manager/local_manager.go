@@ -801,7 +801,7 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 
 func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error {
 	if config.Runtime.Path != "" {
-		if runtimePathErr := validateRuntimePath(config.Runtime); runtimePathErr != nil {
+		if runtimePathErr := ValidateRuntimePath(config.Runtime); runtimePathErr != nil {
 			return fmt.Errorf("validating config runtime: %w", runtimePathErr)
 		}
 		// Custom path validated successfully; skip system PATH check
@@ -828,7 +828,7 @@ func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error 
 	return nil
 }
 
-func validateRuntimePath(runtime types.Runtime) error {
+func ValidateRuntimePath(runtime types.Runtime) error {
 	runtimePath := runtime.Path
 
 	if !filepath.IsAbs(runtime.Path) {

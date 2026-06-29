@@ -3,6 +3,7 @@ package manager
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -54,4 +55,36 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 	}
 
 	return &config, nil
+}
+
+func ValidateRuntimeBinary(runtime types.Runtime) error {
+	if runtime.Path != "" {
+		return ValidateRuntimePath(runtime)
+	}
+	switch runtime.Type {
+	case "bun":
+		if _, err := exec.LookPath("bun"); err != nil {
+			return fmt.Errorf("bun not found in system PATH: %w", err)
+		}
+	case "deno":
+		if _, err := exec.LookPath("deno"); err != nil {
+			return fmt.Errorf("deno not found in system PATH: %w", err)
+		}
+	case "node", "nodejs":
+		if _, err := exec.LookPath("node"); err != nil {
+			return fmt.Errorf("node not found in system PATH: %w", err)
+		}
+	}
+	return nil
+}
+
+func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
+	config, err := LoadServiceConfig(configFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
+		return nil, fmt.Errorf("runtime validation: %w", err)
+	}
+	return config, nil
 }
