@@ -21,10 +21,10 @@ jobs:
     runs-on: codeberg-small
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -38,15 +38,40 @@ jobs:
       - name: Run tests
         run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
+  bench:
+    name: Benchmarks
+    runs-on: codeberg-small
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run benchmarks
+        run: |
+          mkdir -p __benchmarks__
+          go test -bench=. -benchmem -count=5 ./... > __benchmarks__/mem.$(git rev-parse --short HEAD).txt 2>&1 || true
+
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-mem-${{ github.sha }}
+          path: __benchmarks__/
+          retention-days: 90
+
   verify-build:
     name: Verify Build
     runs-on: codeberg-small
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true

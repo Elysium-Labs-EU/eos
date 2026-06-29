@@ -352,13 +352,21 @@ func StatusStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (*Daemo
 }
 
 func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, error) {
+	status, err := StatusStandaloneDaemon(daemonConfig)
+	if err != nil {
+		return false, err
+	}
+	if status.Running {
+		return false, fmt.Errorf("standalone daemon is running; stop it before removing daemon files")
+	}
+
 	pidFile := daemonConfig.PIDFile
 	socketPath := daemonConfig.SocketPath
 
-	if err := os.Remove(pidFile); err != nil {
+	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("removing pid file: %w", err)
 	}
-	if err := os.Remove(socketPath); err != nil {
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("removing socket file: %w", err)
 	}
 

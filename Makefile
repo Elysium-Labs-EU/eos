@@ -1,7 +1,10 @@
-.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules
+.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff profile-orb
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+BENCHMARKS_DIR := __benchmarks__
+ORB_MACHINE ?= debian
+ORB_IP = $(shell orb ip -m $(ORB_MACHINE) 2>/dev/null)
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
 VERSION_PKG := codeberg.org/Elysium_Labs/eos/internal/buildinfo
 LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).GitCommit=$(COMMIT)' -X '$(VERSION_PKG).BuildDate=$(BUILD_DATE)' -w -s"
@@ -9,6 +12,38 @@ LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).G
 BINARY_NAME=eos
 GOBIN=./bin
 INSTALL_PATH=~/.local/bin
+
+PKG ?= ./internal/...
+
+bench-mem: ## Run memory benchmarks on OrbStack $(ORB_MACHINE), save snapshot (all packages)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -benchmem -count=5 ./... 2>&1 | tee $(PWD)/$(BENCHMARKS_DIR)/mem.$(COMMIT).txt"
+	@echo "Snapshot: $(BENCHMARKS_DIR)/mem.$(COMMIT).txt"
+
+bench-cpu: ## Run CPU benchmarks on OrbStack $(ORB_MACHINE), save snapshot (all packages)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -count=10 ./... 2>&1 | tee $(PWD)/$(BENCHMARKS_DIR)/cpu.$(COMMIT).txt"
+	@echo "Snapshot: $(BENCHMARKS_DIR)/cpu.$(COMMIT).txt"
+
+bench-pprof-mem: ## Profile memory for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -benchmem -count=5 -memprofile=$(PWD)/mem.out $(PKG)"
+	go tool pprof -http=":8082" mem.out
+
+bench-pprof-cpu: ## Profile CPU for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -count=10 -cpuprofile=$(PWD)/cpu.out $(PKG)"
+	go tool pprof -http=":8081" cpu.out
+
+bench-diff: ## Compare two latest memory snapshots with benchstat
+	@command -v benchstat >/dev/null 2>&1 || { echo "benchstat not found: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@files=$$(ls -t $(BENCHMARKS_DIR)/mem.*.txt 2>/dev/null | head -2); \
+	if [ $$(echo "$$files" | wc -w) -lt 2 ]; then echo "Need ≥2 snapshots — run bench-mem on two commits"; exit 1; fi; \
+	old=$$(echo "$$files" | awk 'NR==2'); new=$$(echo "$$files" | awk 'NR==1'); \
+	echo "comparing $$old → $$new"; benchstat $$old $$new
+
+profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF_ADDR=:6060 eos daemon start)
+	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap
 
 setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
 	@echo "Installing golangci-lint v2.11.0..."
@@ -19,6 +54,8 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 	go install github.com/evilmartians/lefthook@latest
 	@echo "Installing nilaway (nil pointer static analysis)..."
 	go install go.uber.org/nilaway/cmd/nilaway@latest
+	@echo "Installing benchstat (benchmark comparison)..."
+	go install golang.org/x/perf/cmd/benchstat@latest
 	@echo "Installing git hooks..."
 	lefthook install
 	@echo "Setup complete."

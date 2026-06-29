@@ -53,7 +53,23 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
-	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+		testBaseDir := os.TempDir()
+		return testBaseDir, &config.SystemConfig{
+			Daemon: config.DaemonConfig{
+				Standalone: &config.StandaloneDaemonConfig{
+					PIDFile:    filepath.Join(testBaseDir, "eos-test.pid"),
+					SocketPath: filepath.Join(testBaseDir, "eos-test.sock"),
+					Log:        config.DaemonLogConfig{LogFileName: "daemon.log"},
+				},
+				Systemd: nil,
+			},
+			Health: config.HealthConfig{
+				MaxRestart: 10,
+				Timeout:    config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
+			},
+		}, nil
+	}))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig))
 
@@ -142,7 +158,10 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 
-	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+		_, baseDir, c, err := newSystemConfig()
+		return baseDir, c, err
+	}))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 
 	rootCmd.InitDefaultCompletionCmd()

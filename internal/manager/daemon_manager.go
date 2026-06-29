@@ -62,6 +62,15 @@ func isDaemonRunning(pidFile string) bool {
 
 // Stay in sync with "forkDaemon"
 func startDaemonProcess(ctx context.Context, pidFile string) error {
+	if _, err := os.Stat(pidFile); err == nil {
+		if isDaemonRunning(pidFile) {
+			return fmt.Errorf("daemon already running (PID file: %s)", pidFile)
+		}
+		if err := os.Remove(pidFile); err != nil {
+			return fmt.Errorf("removing stale PID file: %w", err)
+		}
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
@@ -81,12 +90,13 @@ func startDaemonProcess(ctx context.Context, pidFile string) error {
 	// Required for Type=forking: systemd reads PID file immediately after parent exits.
 	deadline := time.Now().Add(5 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if _, err := os.Stat(pidFile); err == nil {
+			if isDaemonRunning(pidFile) {
 				return nil
 			}
 			if time.Now().After(deadline) {

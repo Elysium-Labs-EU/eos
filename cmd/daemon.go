@@ -177,7 +177,7 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health config.
 	return nil, errors.New("invalid daemon config: both standalone and systemd are nil")
 }
 
-func newDaemonCmd() *cobra.Command {
+func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
 	var ctrl DaemonController // closed over by all subcommands below
 
 	daemonCmd := &cobra.Command{
@@ -185,7 +185,7 @@ func newDaemonCmd() *cobra.Command {
 		Short: "Manage the deployment daemon",
 		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			_, baseDir, systemConfig, err := newSystemConfig()
+			baseDir, systemConfig, err := getConfig()
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
