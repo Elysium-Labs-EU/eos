@@ -32,6 +32,7 @@ func startServiceForLogsTest(t *testing.T, mgr manager.ServiceManager, tempDir s
 func TestAPILogsWithService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
 
 	serviceName := startServiceForLogsTest(t, mgr, tempDir)
 
@@ -81,6 +82,7 @@ func TestAPILogsWithNoService(t *testing.T) {
 func TestAPILogsErrorWithService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
 
 	serviceName := startServiceForLogsTest(t, mgr, tempDir)
 
@@ -127,6 +129,7 @@ func TestAPILogsErrorWithNoService(t *testing.T) {
 func TestAPILogsWithExceedingLineNumber(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
 
 	serviceName := startServiceForLogsTest(t, mgr, tempDir)
 

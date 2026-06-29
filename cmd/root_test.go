@@ -15,6 +15,7 @@ func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *b
 	t.Helper()
 	db, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, td, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
 	c := newTestRootCmd(mgr)
 
 	var ob, eb bytes.Buffer

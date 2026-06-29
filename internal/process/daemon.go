@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	_ "net/http/pprof" //nolint:gosec // intentional: pprof only exposed when EOS_PPROF_ADDR is set
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -41,6 +43,10 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDi
 		return err
 	}
 	defer d.shutdown()
+
+	if addr := os.Getenv("EOS_PPROF_ADDR"); addr != "" {
+		go func() { _ = http.ListenAndServe(addr, nil) }() //nolint:gosec // addr is operator-controlled via env var
+	}
 
 	if underSystemd {
 		err := d.recover()

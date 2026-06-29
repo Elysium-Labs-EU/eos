@@ -16,6 +16,7 @@ import (
 func TestRunWithServiceFileCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -69,6 +70,7 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 func TestRunWithServiceNameCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -242,6 +244,7 @@ func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
 func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -317,6 +320,7 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -480,6 +484,7 @@ func TestRunWithInvalidYamlFile(t *testing.T) {
 func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -570,6 +575,7 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -660,6 +666,7 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())

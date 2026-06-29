@@ -70,6 +70,7 @@ func TestStartCommand(t *testing.T) {
 func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
