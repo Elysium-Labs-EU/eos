@@ -149,9 +149,15 @@ func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.Pro
 		return nil, ErrProcessNotFound
 	}
 
+	startedAtOrZero := func(t *time.Time) time.Time {
+		if t == nil {
+			return time.Time{}
+		}
+		return *t
+	}
 	mostRecentIdx := 0
 	for i := 1; i < len(processHistory); i++ {
-		if processHistory[i].StartedAt.After(*processHistory[mostRecentIdx].StartedAt) {
+		if startedAtOrZero(processHistory[i].StartedAt).After(startedAtOrZero(processHistory[mostRecentIdx].StartedAt)) {
 			mostRecentIdx = i
 		}
 	}
@@ -361,7 +367,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateStarting)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
@@ -370,19 +376,6 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
 	}
 
-	updates := database.ProcessHistoryUpdate{
-		State:     new(types.ProcessStateStarting),
-		StartedAt: new(time.Now()),
-	}
-
-	// TODO: Consider adding process cleanup (kill) here for consistency
-	// with the rollback behavior of RegisterServiceInstance and
-	// RegisterProcessHistoryEntry failures above. Currently a failure
-	// here leaves a running process with inconsistent DB state.
-	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
-	if err != nil {
-		return pgid, fmt.Errorf("update process history entry: %w", err)
-	}
 	return pgid, nil
 }
 
@@ -516,7 +509,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateUnknown)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateStarting)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
@@ -525,19 +518,6 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
 	}
 
-	updates := database.ProcessHistoryUpdate{
-		State:     new(types.ProcessStateStarting),
-		StartedAt: new(time.Now()),
-	}
-
-	// TODO: Consider adding process cleanup (kill) here for consistency
-	// with the rollback behavior of RegisterServiceInstance and
-	// RegisterProcessHistoryEntry failures above. Currently a failure
-	// here leaves a running process with inconsistent DB state.
-	err = m.db.UpdateProcessHistoryEntry(m.ctx, pgid, updates)
-	if err != nil {
-		return pgid, fmt.Errorf("update process history entry: %w", err)
-	}
 	return pgid, nil
 }
 

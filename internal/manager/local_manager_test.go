@@ -272,6 +272,44 @@ func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
 // func TestLocalManager_RemoveServiceInstance(t *testing.T) {}
 // func TestLocalManager_RemoveServiceCatalogEntry(t *testing.T) {}
 // func TestLocalManager_IsServiceRegistered(t *testing.T) {}
+func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T) {
+	db, rawDB, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	serviceName := "nil-started-at-svc"
+	if err := db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+
+	// Register a first entry — started_at will be set by the INSERT.
+	_, err := db.RegisterProcessHistoryEntry(t.Context(), 1001, serviceName, types.ProcessStateFailed)
+	if err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry first: %v", err)
+	}
+
+	// Force started_at to NULL on the first entry to simulate pre-fix DB state.
+	if _, execErr := rawDB.ExecContext(t.Context(),
+		`UPDATE process_history SET started_at = NULL WHERE pgid = ?`, 1001,
+	); execErr != nil {
+		t.Fatalf("nullify started_at: %v", execErr)
+	}
+
+	// Register a second (newer) entry — this is the one we expect to get back.
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1002, serviceName, types.ProcessStateStarting)
+	if err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry second: %v", err)
+	}
+
+	// Must not panic, and must return the newer entry.
+	entry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil {
+		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
+	}
+	if entry.PGID != 1002 {
+		t.Errorf("expected PGID 1002 (newer), got %d", entry.PGID)
+	}
+}
+
 // func TestLocalManager_GetMostRecentProcessHistoryEntry(t *testing.T) {}
 // func TestLocalManager_UpdateServiceCatalogEntry(t *testing.T) {}
 // func TestLocalManager_RestartService(t *testing.T) {}

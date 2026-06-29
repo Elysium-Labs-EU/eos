@@ -147,13 +147,13 @@ func (db *DB) RegisterServiceInstance(ctx context.Context, name string) error {
 }
 
 func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error) {
-	instanceQuery := `
-	INSERT INTO process_history (pgid, service_name, state, created_at)
-	VALUES (?, ?, ?, ?)
-	`
 	createdAt := time.Now()
+	instanceQuery := `
+	INSERT INTO process_history (pgid, service_name, state, created_at, started_at)
+	VALUES (?, ?, ?, ?, ?)
+	`
 
-	_, err := db.conn.ExecContext(ctx, instanceQuery, pgid, serviceName, state, createdAt)
+	_, err := db.conn.ExecContext(ctx, instanceQuery, pgid, serviceName, state, createdAt, createdAt)
 	if err != nil {
 		return types.ProcessHistory{}, fmt.Errorf("could not create process history entry: %w", err)
 	}
@@ -161,8 +161,9 @@ func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, service
 	return types.ProcessHistory{
 		PGID:        pgid,
 		ServiceName: serviceName,
-		State:       types.ProcessStateUnknown,
+		State:       state,
 		CreatedAt:   createdAt,
+		StartedAt:   &createdAt,
 	}, nil
 }
 
