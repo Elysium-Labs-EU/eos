@@ -94,7 +94,7 @@ func TestDaemonStatusWithLiveProcess(t *testing.T) {
 func TestDaemonStopNoPidFile(t *testing.T) {
 	_, cfg := setupDaemonTestEnv(t)
 
-	killed, err := process.StopStandaloneDaemon(cfg.Daemon.Standalone)
+	killed, err := process.StopStandaloneDaemon(cfg.Daemon.Standalone.PIDFile, cfg.Daemon.Standalone.SocketPath)
 	if err != nil {
 		t.Fatal("StopDaemon should not error when pid file doesn't exist")
 	}

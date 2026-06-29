@@ -13,20 +13,21 @@ import (
 // var installDir string
 
 const (
-	DaemonLogFileName      = "daemon.log"
-	DaemonLogFileSizeLimit = int64(10 * 1024 * 1024)
-	DaemonLogMaxFiles      = 5
-	DaemonPIDFile          = "eos.pid"
-	DaemonSocketPath       = "eos.sock"
-	DaemonSocketTimeout    = "5s"
-	HealthMaxRestart       = 10
-	HealthTimeOutEnable    = true
-	HealthTimeOutLimit     = "10s"
-	InstallDir             = "/usr/local/bin"
-	Name                   = "eos"
-	ShutdownGracePeriod    = "5s"
-	SystemdTargetDir       = "/etc/systemd/system/"
-	SystemdTargetFileName  = "eos.service"
+	DaemonLogFileName               = "daemon.log"
+	DaemonLogFileSizeLimit          = int64(10 * 1024 * 1024)
+	DaemonLogMaxFiles               = 5
+	DaemonPIDFile                   = "eos.pid"
+	DaemonSocketPath                = "eos.sock"
+	DaemonSocketTimeout             = "5s"
+	HealthMaxRestart                = 10
+	HealthRestartCounterResetWindow = "15m"
+	HealthTimeOutEnable             = true
+	HealthTimeOutLimit              = "10s"
+	InstallDir                      = "/usr/local/bin"
+	Name                            = "eos"
+	ShutdownGracePeriod             = "5s"
+	SystemdTargetDir                = "/etc/systemd/system/"
+	SystemdTargetFileName           = "eos.service"
 )
 
 type DaemonConfig struct {
@@ -59,8 +60,9 @@ type TimeOutConfig struct {
 }
 
 type HealthConfig struct {
-	MaxRestart int           `json:"max_restart" yaml:"maxRestart"`
-	Timeout    TimeOutConfig `json:"timeout" yaml:"timeout"`
+	MaxRestart                int           `json:"max_restart" yaml:"maxRestart"`
+	RestartCounterResetWindow time.Duration `json:"restart_counter_reset_window" yaml:"restartCounterResetWindow"`
+	Timeout                   TimeOutConfig `json:"timeout" yaml:"timeout"`
 }
 
 type ShutdownConfig struct {

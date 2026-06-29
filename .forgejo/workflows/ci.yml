@@ -80,3 +80,4 @@ jobs:
 
       - name: Verify code compiles
         run: go build -v ./...
+

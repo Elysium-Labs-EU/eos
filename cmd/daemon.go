@@ -43,7 +43,7 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context) (bool, error) {
-	return process.StopStandaloneDaemon(&c.cfg)
+	return process.StopStandaloneDaemon(c.cfg.PIDFile, c.cfg.SocketPath)
 }
 
 func (c *standaloneDaemonController) Remove() error {
