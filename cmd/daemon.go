@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
@@ -313,6 +314,18 @@ func forkDaemon(ctx context.Context, pidFile string) error {
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+
+	if os.Getuid() == 0 {
+		u, err := helpers.EffectiveUser()
+		if err != nil {
+			return fmt.Errorf("resolving effective user: %w", err)
+		}
+		uid, gid, err := helpers.UserCredentials(u)
+		if err != nil {
+			return fmt.Errorf("resolving user credentials: %w", err)
+		}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon process: %w", err)

@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -327,17 +326,13 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		return
 	}
 
-	username := os.Getenv("SUDO_USER")
-	if username == "" {
-		currentUser, currentUserErr := user.Current()
-		if currentUserErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", currentUserErr))
-			return
-		}
-		username = currentUser.Username
+	effectiveUser, effectiveUserErr := helpers.EffectiveUser()
+	if effectiveUserErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		return
 	}
 
-	unitFile, err := renderUnitFile(installDir, username)
+	unitFile, err := renderUnitFile(installDir, effectiveUser.Username)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering unit file: %v", err))
 		return
@@ -694,7 +689,7 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 
 func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, tempDir string, err error) {
 	parsedURL, err := url.Parse(latestAsset.BrowserDownloadURL)
-	if err != nil || parsedURL.Host != "codeberg.org" {
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
 		return nil, "", fmt.Errorf("invalid URL")
 	}
 
@@ -919,9 +914,9 @@ func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, 
 	_, err = ctrl.Stop(cmd.Context())
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
-	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+		return
 	}
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
 
 	binaryRemoveErr := os.Remove(filepath.Join(installDir, "eos"))
 	if binaryRemoveErr != nil && !os.IsNotExist(binaryRemoveErr) {

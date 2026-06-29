@@ -88,7 +88,7 @@ func newRootCmd() *cobra.Command {
 			return true
 		}
 		for c := cmd; c != nil; c = c.Parent() {
-			if c.Use == "daemon" {
+			if c.Use == "daemon" || c.Use == "uninstall" {
 				return true
 			}
 		}

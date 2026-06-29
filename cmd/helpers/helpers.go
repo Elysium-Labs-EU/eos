@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"codeberg.org/Elysium_Labs/eos/internal/types"
@@ -161,4 +163,26 @@ func PrintSudoHint(cmd *cobra.Command) {
 func PrintRequiresSudo(cmd *cobra.Command, action string) {
 	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), action+" requires root")
 	PrintSudoHint(cmd)
+}
+
+// EffectiveUser returns the non-root user who invoked sudo, falling back to the current user.
+// Use this when a process needs to run as the invoking user rather than root.
+func EffectiveUser() (*user.User, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		return user.Lookup(sudoUser)
+	}
+	return user.Current()
+}
+
+// UserCredentials returns the uid and gid for a user as uint32 values suitable for syscall.Credential.
+func UserCredentials(u *user.User) (uid uint32, gid uint32, err error) {
+	uidInt, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parsing uid: %w", err)
+	}
+	gidInt, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parsing gid: %w", err)
+	}
+	return uint32(uidInt), uint32(gidInt), nil
 }
