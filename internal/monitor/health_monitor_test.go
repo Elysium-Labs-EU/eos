@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bytes"
+	"context"
 	"math/rand"
 	"net"
 	"os"
@@ -37,19 +38,21 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 
 	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
 
+	ctx, cancel := context.WithCancel(t.Context())
+
 	var started sync.WaitGroup
 	started.Add(1)
 
 	go func() {
 		started.Done()
-		hm.Start(t.Context())
+		hm.Start(ctx)
 	}()
 
 	started.Wait()
 
 	time.Sleep(100 * time.Millisecond)
 
-	hm.Stop()
+	cancel()
 }
 
 func TestHealthMonitor_CheckStartProcess(t *testing.T) {

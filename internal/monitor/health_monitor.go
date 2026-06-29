@@ -26,7 +26,6 @@ type HealthMonitor struct {
 	mgr                       *manager.LocalManager
 	db                        *database.DB
 	logger                    *manager.DaemonLogger
-	stopCh                    chan struct{}
 	checkInterval             time.Duration
 	timeoutEnable             bool
 	timeoutLimit              time.Duration
@@ -46,7 +45,6 @@ func NewHealthMonitor(
 		mgr:                       mgr,
 		db:                        db,
 		logger:                    logger,
-		stopCh:                    make(chan struct{}),
 		checkInterval:             2 * time.Second,
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
@@ -71,14 +69,10 @@ func (hm *HealthMonitor) Start(ctx context.Context) {
 			}
 
 			hm.checkAllServices(ctx, services)
-		case <-hm.stopCh:
+		case <-ctx.Done():
 			return
 		}
 	}
-}
-
-func (hm *HealthMonitor) Stop() {
-	close(hm.stopCh)
 }
 
 // TODO: Do we want this to only do state? Or become a check for all relevant health properties, just divided per state arm?
