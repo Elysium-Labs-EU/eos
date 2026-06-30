@@ -3,6 +3,7 @@ package manager
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codeberg.org/Elysium_Labs/eos/internal/types"
@@ -85,6 +86,39 @@ func TestLoadServiceConfigFileNotFound(t *testing.T) {
 	_, err := LoadServiceConfig("non-existent-file.yaml")
 	if err == nil {
 		t.Error("Expected error when loading non-existent config file")
+	}
+}
+
+func TestValidateRuntimeBinaryPython(t *testing.T) {
+	for _, runtimeType := range []string{"python", "python3"} {
+		t.Run(runtimeType, func(t *testing.T) {
+			rt := types.Runtime{Type: runtimeType}
+			err := ValidateRuntimeBinary(rt)
+			// python/python3 may not be present in all CI envs; accept both outcomes.
+			// What matters: no panic and the error message is meaningful if present.
+			if err != nil && !strings.Contains(err.Error(), "python") {
+				t.Errorf("expected python-related error message, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRuntimeBinaryPythonNotFound(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+
+	for _, runtimeType := range []string{"python", "python3"} {
+		t.Run(runtimeType, func(t *testing.T) {
+			rt := types.Runtime{Type: runtimeType}
+			err := ValidateRuntimeBinary(rt)
+			if err == nil {
+				t.Errorf("expected error when python not in PATH, got nil")
+			}
+			if !strings.Contains(err.Error(), "python") {
+				t.Errorf("expected python-related error message, got: %v", err)
+			}
+		})
 	}
 }
 
