@@ -74,6 +74,12 @@ func ValidateRuntimeBinary(runtime types.Runtime) error {
 		if _, err := exec.LookPath("node"); err != nil {
 			return fmt.Errorf("node not found in system PATH: %w", err)
 		}
+	case "python", "python3":
+		if _, err := exec.LookPath("python3"); err != nil {
+			if _, err := exec.LookPath("python"); err != nil {
+				return fmt.Errorf("python/python3 not found in system PATH: %w", err)
+			}
+		}
 	}
 	return nil
 }
