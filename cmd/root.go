@@ -202,14 +202,12 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool, logCfg config.EosLog
 				LogDir:           manager.CreateLogDirPath(baseDir),
 				LogFileName:      config.DaemonLogFileName,
 				LogMaxFiles:      logCfg.MaxFiles,
-				LogFileSizeLimit: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", logCfg.FileSizeLimitBytes),
+				LogFileSizeLimit: logCfg.FileSizeLimitBytes,
 			}},
 		Systemd: nil,
 	}
 }
 
-// TODO: Centralize "ENV VAR NAMES" somewhere
-// TODO: Enable override for all exposed config variables
 func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
 	baseDir, err = config.CreateBaseDir()
 	if err != nil {
@@ -223,11 +221,17 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		return "", "", nil, fmt.Errorf("loading eos config: %w", err)
 	}
 
+	// Env vars win over config.yaml values.
+	logCfg := config.EosLogConfig{
+		MaxFiles:           overrideIntConfigValue("DAEMON_LOG_MAX_FILES", eosCfg.Log.MaxFiles),
+		FileSizeLimitBytes: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", eosCfg.Log.FileSizeLimitBytes),
+	}
+
 	isSystemdManaged, err := config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
 	}
-	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, eosCfg.Log)
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, logCfg)
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
 	if restartCounterResetWindow <= 0 {
@@ -241,15 +245,15 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),
 			Limit:  safeParseDuration(config.HealthTimeOutLimit, time.Second*10),
 		},
-		CheckInterval: time.Duration(eosCfg.Health.CheckIntervalMs) * time.Millisecond,
+		CheckInterval: time.Duration(overrideIntConfigValue("HEALTH_CHECK_INTERVAL_MS", eosCfg.Health.CheckIntervalMs)) * time.Millisecond,
 		Backoff: config.BackoffConfig{
-			BaseMs: eosCfg.Health.Backoff.BaseMs,
-			MaxMs:  eosCfg.Health.Backoff.MaxMs,
+			BaseMs: overrideIntConfigValue("HEALTH_BACKOFF_BASE_MS", eosCfg.Health.Backoff.BaseMs),
+			MaxMs:  overrideIntConfigValue("HEALTH_BACKOFF_MAX_MS", eosCfg.Health.Backoff.MaxMs),
 		},
 		Memory: config.MemoryThresholdConfig{
-			WarningThreshold:      eosCfg.Health.Memory.WarningThreshold,
-			SoftRestartThreshold:  eosCfg.Health.Memory.SoftRestartThreshold,
-			ForceRestartThreshold: eosCfg.Health.Memory.ForceRestartThreshold,
+			WarningThreshold:      overrideFloat64ConfigValue("HEALTH_MEMORY_WARNING_THRESHOLD", eosCfg.Health.Memory.WarningThreshold),
+			SoftRestartThreshold:  overrideFloat64ConfigValue("HEALTH_MEMORY_SOFT_RESTART_THRESHOLD", eosCfg.Health.Memory.SoftRestartThreshold),
+			ForceRestartThreshold: overrideFloat64ConfigValue("HEALTH_MEMORY_FORCE_RESTART_THRESHOLD", eosCfg.Health.Memory.ForceRestartThreshold),
 		},
 	}
 
@@ -291,6 +295,30 @@ func overrideBoolConfigValue(envKey string, defaultValue bool) bool {
 		val, err := strconv.ParseBool(override)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s %s: %s\n", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding bool config value: %v", err))
+			os.Exit(1)
+		}
+		return val
+	}
+	return defaultValue
+}
+
+func overrideIntConfigValue(envKey string, defaultValue int) int {
+	if override := os.Getenv(envKey); override != "" {
+		val, err := strconv.Atoi(override)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s %s: %s\n", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding int config value: %v", err))
+			os.Exit(1)
+		}
+		return val
+	}
+	return defaultValue
+}
+
+func overrideFloat64ConfigValue(envKey string, defaultValue float64) float64 {
+	if override := os.Getenv(envKey); override != "" {
+		val, err := strconv.ParseFloat(override, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s %s: %s\n", ui.LabelError.Render("error"), ui.TextBold.Render(envKey), fmt.Sprintf("overriding float64 config value: %v", err))
 			os.Exit(1)
 		}
 		return val
