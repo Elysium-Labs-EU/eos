@@ -3,6 +3,7 @@ package manager
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -53,5 +54,56 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 		return nil, fmt.Errorf("service command is required in %s", cleanedConfigFilePath)
 	}
 
+	return &config, nil
+}
+
+func ValidateRuntimeBinary(runtime types.Runtime) error {
+	if runtime.Path != "" {
+		return ValidateRuntimePath(runtime)
+	}
+	switch runtime.Type {
+	case "bun":
+		if _, err := exec.LookPath("bun"); err != nil {
+			return fmt.Errorf("bun not found in system PATH: %w", err)
+		}
+	case "deno":
+		if _, err := exec.LookPath("deno"); err != nil {
+			return fmt.Errorf("deno not found in system PATH: %w", err)
+		}
+	case "node", "nodejs":
+		if _, err := exec.LookPath("node"); err != nil {
+			return fmt.Errorf("node not found in system PATH: %w", err)
+		}
+	}
+	return nil
+}
+
+func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error) {
+	if len(configFilePath) == 0 {
+		return nil, []error{fmt.Errorf("configFilePath is empty")}
+	}
+	cleanedConfigFilePath := filepath.Clean(configFilePath)
+	data, err := os.ReadFile(cleanedConfigFilePath)
+	if err != nil {
+		return nil, []error{fmt.Errorf("reading file: %w", err)}
+	}
+	var config types.ServiceConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, []error{fmt.Errorf("yaml parsing: %w", err)}
+	}
+
+	var errs []error
+	if config.Name == "" {
+		errs = append(errs, fmt.Errorf("service name is required"))
+	}
+	if config.Command == "" {
+		errs = append(errs, fmt.Errorf("service command is required"))
+	}
+	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
+		errs = append(errs, fmt.Errorf("runtime: %w", err))
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
 	return &config, nil
 }
