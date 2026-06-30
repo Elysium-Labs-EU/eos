@@ -39,7 +39,7 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 	if detach && !c.underSystemd {
 		return forkDaemon(ctx, c.cfg.PIDFile)
 	}
-	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, c.baseDir, &c.cfg, c.health, c.shutdown, c.underSystemd)
+	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context) (bool, error) {
@@ -166,12 +166,12 @@ func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int) {
 	}
 }
 
-func newDaemonController(cfg config.DaemonConfig, baseDir string, health config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool) (DaemonController, error) {
+func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool) (DaemonController, error) {
 	if cfg.Standalone != nil {
 		return &standaloneDaemonController{
 			cfg:          *cfg.Standalone,
 			baseDir:      baseDir,
-			health:       health,
+			health:       *health,
 			shutdown:     shutdown,
 			underSystemd: underSystemd,
 		}, nil
@@ -195,7 +195,7 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)

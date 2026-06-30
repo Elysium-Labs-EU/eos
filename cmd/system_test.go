@@ -360,7 +360,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
 	}
 
-	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
 	if err != nil {
 		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}
@@ -399,7 +399,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
 	}
 
-	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
 	if err != nil {
 		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}

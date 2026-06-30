@@ -182,7 +182,7 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func newDaemonConfig(baseDir string, isSystemdManaged bool) config.DaemonConfig {
+func newDaemonConfig(baseDir string, isSystemdManaged bool, logCfg config.EosLogConfig) config.DaemonConfig {
 	if isSystemdManaged {
 		return config.DaemonConfig{
 			Standalone: nil,
@@ -201,8 +201,8 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool) config.DaemonConfig 
 			Log: config.DaemonLogConfig{
 				LogDir:           manager.CreateLogDirPath(baseDir),
 				LogFileName:      config.DaemonLogFileName,
-				LogMaxFiles:      config.DaemonLogMaxFiles,
-				LogFileSizeLimit: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", config.DaemonLogFileSizeLimit),
+				LogMaxFiles:      logCfg.MaxFiles,
+				LogFileSizeLimit: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", logCfg.FileSizeLimitBytes),
 			}},
 		Systemd: nil,
 	}
@@ -212,18 +212,22 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool) config.DaemonConfig 
 // TODO: Enable override for all exposed config variables
 func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
 	baseDir, err = config.CreateBaseDir()
-
 	if err != nil {
 		return "", "", nil, err
 	}
 
 	installDir = config.GetInstallDir()
 
+	eosCfg, err := config.LoadEosConfig(baseDir)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("loading eos config: %w", err)
+	}
+
 	isSystemdManaged, err := config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
 	}
-	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged)
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, eosCfg.Log)
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
 	if restartCounterResetWindow <= 0 {
@@ -236,6 +240,16 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		Timeout: config.TimeOutConfig{
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),
 			Limit:  safeParseDuration(config.HealthTimeOutLimit, time.Second*10),
+		},
+		CheckInterval: time.Duration(eosCfg.Health.CheckIntervalMs) * time.Millisecond,
+		Backoff: config.BackoffConfig{
+			BaseMs: eosCfg.Health.Backoff.BaseMs,
+			MaxMs:  eosCfg.Health.Backoff.MaxMs,
+		},
+		Memory: config.MemoryThresholdConfig{
+			WarningThreshold:      eosCfg.Health.Memory.WarningThreshold,
+			SoftRestartThreshold:  eosCfg.Health.Memory.SoftRestartThreshold,
+			ForceRestartThreshold: eosCfg.Health.Memory.ForceRestartThreshold,
 		},
 	}
 

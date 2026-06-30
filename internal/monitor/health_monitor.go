@@ -32,25 +32,53 @@ type HealthMonitor struct {
 	maxRestartCount           int
 	restartCounterResetWindow time.Duration
 	shutdownGracePeriod       time.Duration
+	backoff                   config.BackoffConfig
+	memory                    config.MemoryThresholdConfig
 }
 
 func NewHealthMonitor(
 	mgr *manager.LocalManager,
 	db *database.DB,
 	logger *manager.DaemonLogger,
-	healthConfig config.HealthConfig,
+	healthConfig *config.HealthConfig,
 	shutdownConfig config.ShutdownConfig,
 ) *HealthMonitor {
+	checkInterval := healthConfig.CheckInterval
+	if checkInterval <= 0 {
+		checkInterval = 2 * time.Second
+	}
+
+	backoff := healthConfig.Backoff
+	if backoff.BaseMs <= 0 {
+		backoff.BaseMs = config.HealthBackoffBaseMs
+	}
+	if backoff.MaxMs <= 0 {
+		backoff.MaxMs = config.HealthBackoffMaxMs
+	}
+
+	memory := healthConfig.Memory
+	if memory.WarningThreshold <= 0 {
+		memory.WarningThreshold = config.HealthMemoryWarningThreshold
+	}
+	if memory.SoftRestartThreshold <= 0 {
+		memory.SoftRestartThreshold = config.HealthMemorySoftRestartThreshold
+	}
+	if memory.ForceRestartThreshold <= 0 {
+		memory.ForceRestartThreshold = config.HealthMemoryForceRestartThreshold
+	}
+
 	return &HealthMonitor{
 		mgr:                       mgr,
 		db:                        db,
 		logger:                    logger,
-		checkInterval:             2 * time.Second,
+		checkInterval:             checkInterval,
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
 		maxRestartCount:           healthConfig.MaxRestart,
 		restartCounterResetWindow: healthConfig.RestartCounterResetWindow,
 		shutdownGracePeriod:       shutdownConfig.GracePeriod,
+		backoff:                   backoff,
+		memory:                    memory,
 	}
 }
 
@@ -201,7 +229,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.logger.Log(logutil.LogLevelWarn, fmt.Sprintf("[%s] memory usage warning", serviceName))
 		hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
 	case ReasonSoftRestart:
-		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt) {
+		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
 			return
 		}
 
@@ -216,7 +244,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
 	case ReasonForceRestart:
-		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt) {
+		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
 			return
 		}
 		newPgid, err := hm.mgr.RestartService(service.Name, 1*time.Second, 10*time.Millisecond)
@@ -252,7 +280,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 	if !hm.isProcessAlive(pgid) {
 		// TODO: Do we want to incorporate instance.last_health_check instead process?
-		if !canRestart(restartCount, maxRestartCount, process.StoppedAt) {
+		if !canRestart(restartCount, maxRestartCount, process.StoppedAt, hm.backoff) {
 			return
 		}
 
@@ -336,24 +364,22 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 	}
 }
 
-func canRestart(restartCount, maxRestartCount int, since *time.Time) bool {
+func canRestart(restartCount, maxRestartCount int, since *time.Time, backoff config.BackoffConfig) bool {
 	if restartCount >= maxRestartCount {
 		return false
 	}
-	if since != nil && time.Since(*since) < calculateBackoffDelay(restartCount) {
+	if since != nil && time.Since(*since) < calculateBackoffDelay(restartCount, backoff.BaseMs, backoff.MaxMs) {
 		return false
 	}
 	return true
 }
 
-func calculateBackoffDelay(restartCount int) time.Duration {
-	baseBackOff := 300
-	maxDelay := 60000
-	calculatedDelay := float64(baseBackOff) * math.Pow(float64(2), float64(restartCount))
+func calculateBackoffDelay(restartCount, baseMs, maxMs int) time.Duration {
+	calculatedDelay := float64(baseMs) * math.Pow(float64(2), float64(restartCount))
 	calculatedDelayAsInt := int(calculatedDelay)
 
-	if calculatedDelayAsInt > maxDelay {
-		return time.Duration(maxDelay) * time.Millisecond
+	if calculatedDelayAsInt > maxMs {
+		return time.Duration(maxMs) * time.Millisecond
 	}
 	return time.Duration(calculatedDelayAsInt) * time.Millisecond
 }
@@ -495,9 +521,9 @@ func (hm *HealthMonitor) evaluateMemoryThresholds(configMemoryLimitMb int, activ
 	}
 	memoryLimitKb := float64(configMemoryLimitMb) * 1024.0
 
-	warningThreshold := memoryLimitKb * 0.75
-	softRestartThreshold := memoryLimitKb * 0.85
-	forceRestartThreshold := memoryLimitKb * 0.95
+	warningThreshold := memoryLimitKb * hm.memory.WarningThreshold
+	softRestartThreshold := memoryLimitKb * hm.memory.SoftRestartThreshold
+	forceRestartThreshold := memoryLimitKb * hm.memory.ForceRestartThreshold
 
 	activeRss := float64(activeRssMemoryKb)
 
