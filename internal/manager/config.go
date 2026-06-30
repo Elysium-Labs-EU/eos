@@ -78,13 +78,32 @@ func ValidateRuntimeBinary(runtime types.Runtime) error {
 	return nil
 }
 
-func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
-	config, err := LoadServiceConfig(configFilePath)
+func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error) {
+	if len(configFilePath) == 0 {
+		return nil, []error{fmt.Errorf("configFilePath is empty")}
+	}
+	cleanedConfigFilePath := filepath.Clean(configFilePath)
+	data, err := os.ReadFile(cleanedConfigFilePath)
 	if err != nil {
-		return nil, err
+		return nil, []error{fmt.Errorf("reading file: %w", err)}
+	}
+	var config types.ServiceConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, []error{fmt.Errorf("yaml parsing: %w", err)}
+	}
+
+	var errs []error
+	if config.Name == "" {
+		errs = append(errs, fmt.Errorf("service name is required"))
+	}
+	if config.Command == "" {
+		errs = append(errs, fmt.Errorf("service command is required"))
 	}
 	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
-		return nil, fmt.Errorf("runtime validation: %w", err)
+		errs = append(errs, fmt.Errorf("runtime: %w", err))
 	}
-	return config, nil
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return &config, nil
 }

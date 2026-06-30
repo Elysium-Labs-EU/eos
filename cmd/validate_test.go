@@ -58,7 +58,7 @@ func TestValidateCommandMissingFile(t *testing.T) {
 	cmd.SetArgs([]string{"validate", "nonexistent-path"})
 
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate command should not return cobra error, got: %v", err)
+		t.Fatalf("validate should not return cobra error, got: %v", err)
 	}
 
 	output := buf.String()
@@ -67,12 +67,16 @@ func TestValidateCommandMissingFile(t *testing.T) {
 	}
 }
 
-func TestValidateCommandMissingName(t *testing.T) {
+func TestValidateCommandCollectsAllErrors(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(mgr)
 
-	cfg := testutil.NewTestServiceConfigFile(t, testutil.WithName(""), testutil.WithoutRuntime())
+	cfg := testutil.NewTestServiceConfigFile(t,
+		testutil.WithName(""),
+		testutil.WithCommand(""),
+		testutil.WithRuntime("nodejs", "/nonexistent/bin"),
+	)
 	yamlData, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
@@ -89,12 +93,18 @@ func TestValidateCommandMissingName(t *testing.T) {
 	cmd.SetArgs([]string{"validate", fullPath})
 
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate command should not return cobra error, got: %v", err)
+		t.Fatalf("validate should not return cobra error, got: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "error") {
-		t.Errorf("expected 'error' in output, got: %s", output)
+	if !strings.Contains(output, "service name is required") {
+		t.Errorf("expected 'service name is required' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "service command is required") {
+		t.Errorf("expected 'service command is required' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "runtime") {
+		t.Errorf("expected 'runtime' error in output, got: %s", output)
 	}
 }
 
@@ -136,11 +146,11 @@ func TestValidateCommandInvalidRuntimePath(t *testing.T) {
 	cmd.SetArgs([]string{"validate", fullPath})
 
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate command should not return cobra error, got: %v", err)
+		t.Fatalf("validate should not return cobra error, got: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "error") {
-		t.Errorf("expected 'error' in output, got: %s", output)
+	if !strings.Contains(output, "runtime") {
+		t.Errorf("expected 'runtime' in output, got: %s", output)
 	}
 }

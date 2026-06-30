@@ -26,9 +26,13 @@ func newValidateCmd() *cobra.Command {
 				return
 			}
 
-			config, err := manager.ValidateServiceConfig(yamlFile)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), err)
+			config, errs := manager.ValidateServiceConfig(yamlFile)
+			if len(errs) > 0 {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("invalid"), yamlFile)
+				for _, e := range errs {
+					cmd.PrintErrf("  %s %s\n", ui.TextMuted.Render("·"), e)
+				}
+				cmd.PrintErrf("\n")
 				return
 			}
 
