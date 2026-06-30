@@ -54,7 +54,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)
@@ -73,7 +73,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return
 			}
-			infoCmd(cmd, installDir, baseDir, *config)
+			infoCmd(cmd, installDir, baseDir, config)
 		},
 	}
 
@@ -207,7 +207,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 	return systemCmd
 }
 
-func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config config.SystemConfig) {
+func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *config.SystemConfig) {
 	cmd.Println()
 	cmd.Printf("%s\n\n", ui.TextBold.Render("System Config"))
 	cmd.Printf("  %s %s\n", ui.TextMuted.Render("install dir:"), installDir)

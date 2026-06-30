@@ -37,7 +37,7 @@ type daemon struct {
 	socketPath string
 }
 
-func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
+func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
 	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, baseDir, standaloneDaemonConfig)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (d *daemon) recover() error {
 	return bootPersistedServices(d.mgr, d.logger)
 }
 
-func (d *daemon) serve(healthConfig config.HealthConfig, shutdownConfig config.ShutdownConfig) {
+func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig) {
 	go handleIncomingCommands(d.listener, d.mgr, d.logger)
 
 	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig)
@@ -109,7 +109,7 @@ func (d *daemon) serve(healthConfig config.HealthConfig, shutdownConfig config.S
 }
 
 func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(logToFileAndConsole, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, standaloneDaemonConfig.Log.LogFileSizeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup daemon logger: %w", err)
 	}

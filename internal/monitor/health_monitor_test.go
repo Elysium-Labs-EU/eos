@@ -36,7 +36,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	ctx, cancel := context.WithCancel(t.Context())
 
@@ -70,7 +70,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 
@@ -183,7 +183,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "startup-crash-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -405,7 +405,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 	serviceName := "timeout-test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -528,7 +528,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -792,7 +792,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -912,7 +912,7 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "test-reset-service"
 	fullDirPath := filepath.Join(tempDir, "test-reset-project")
@@ -1001,7 +1001,7 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "test-no-reset-service"
 	fullDirPath := filepath.Join(tempDir, "test-no-reset-project")
@@ -1082,7 +1082,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 	serviceName := "max-restart-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -1332,7 +1332,7 @@ func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := calculateBackoffDelay(tc.restartCount)
+			actual := calculateBackoffDelay(tc.restartCount, config.HealthBackoffBaseMs, config.HealthBackoffMaxMs)
 			if actual != tc.expectedDelay {
 				t.Errorf("Expected %v, got %v", tc.expectedDelay, actual)
 			}
@@ -1354,7 +1354,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	// --- Helper to register a service ---
 	setupService := func(name string, port int) *types.ServiceCatalogEntry {
@@ -1557,7 +1557,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, *healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
 
 	serviceName := "recovery-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -1702,6 +1702,15 @@ func newTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.Healt
 		Timeout: config.TimeOutConfig{
 			Enable: config.HealthTimeOutEnable,
 			Limit:  30 * time.Second,
+		},
+		Backoff: config.BackoffConfig{
+			BaseMs: config.HealthBackoffBaseMs,
+			MaxMs:  config.HealthBackoffMaxMs,
+		},
+		Memory: config.MemoryThresholdConfig{
+			WarningThreshold:      config.HealthMemoryWarningThreshold,
+			SoftRestartThreshold:  config.HealthMemorySoftRestartThreshold,
+			ForceRestartThreshold: config.HealthMemoryForceRestartThreshold,
 		},
 	}
 
