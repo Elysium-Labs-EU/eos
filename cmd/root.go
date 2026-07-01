@@ -245,7 +245,8 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),
 			Limit:  safeParseDuration(config.HealthTimeOutLimit, time.Second*10),
 		},
-		CheckInterval: time.Duration(overrideIntConfigValue("HEALTH_CHECK_INTERVAL_MS", eosCfg.Health.CheckIntervalMs)) * time.Millisecond,
+		CheckInterval:     time.Duration(overrideIntConfigValue("HEALTH_CHECK_INTERVAL_MS", eosCfg.Health.CheckIntervalMs)) * time.Millisecond,
+		MemSampleInterval: time.Duration(overrideIntConfigValue("HEALTH_MEM_SAMPLE_INTERVAL_MS", eosCfg.Health.MemSampleIntervalMs)) * time.Millisecond,
 		Backoff: config.BackoffConfig{
 			BaseMs: overrideIntConfigValue("HEALTH_BACKOFF_BASE_MS", eosCfg.Health.Backoff.BaseMs),
 			MaxMs:  overrideIntConfigValue("HEALTH_BACKOFF_MAX_MS", eosCfg.Health.Backoff.MaxMs),

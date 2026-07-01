@@ -2,7 +2,6 @@
 package monitor
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -26,14 +25,17 @@ type HealthMonitor struct {
 	mgr                       *manager.LocalManager
 	db                        *database.DB
 	logger                    *manager.DaemonLogger
+	lastMemSample             map[string]time.Time
 	checkInterval             time.Duration
-	timeoutEnable             bool
+	memSampleInterval         time.Duration
 	timeoutLimit              time.Duration
-	maxRestartCount           int
 	restartCounterResetWindow time.Duration
 	shutdownGracePeriod       time.Duration
 	backoff                   config.BackoffConfig
 	memory                    config.MemoryThresholdConfig
+	procBuf                   [4096]byte
+	maxRestartCount           int
+	timeoutEnable             bool
 }
 
 func NewHealthMonitor(
@@ -46,6 +48,11 @@ func NewHealthMonitor(
 	checkInterval := healthConfig.CheckInterval
 	if checkInterval <= 0 {
 		checkInterval = 2 * time.Second
+	}
+
+	memSampleInterval := healthConfig.MemSampleInterval
+	if memSampleInterval <= 0 {
+		memSampleInterval = 30 * time.Second
 	}
 
 	backoff := healthConfig.Backoff
@@ -72,6 +79,8 @@ func NewHealthMonitor(
 		db:                        db,
 		logger:                    logger,
 		checkInterval:             checkInterval,
+		memSampleInterval:         memSampleInterval,
+		lastMemSample:             make(map[string]time.Time),
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
 		maxRestartCount:           healthConfig.MaxRestart,
@@ -169,7 +178,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("[%s] now running", serviceName))
 	}
 
-	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid)
+	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State:       new(types.ProcessStateRunning),
@@ -212,7 +221,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		}
 	}
 
-	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid)
+	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 
@@ -240,7 +249,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 			return
 		}
 		hm.logger.Log(logutil.LogLevelWarn, fmt.Sprintf("[%s] auto soft restarted due to memory limits", serviceName))
-		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid)
+		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
 	case ReasonForceRestart:
@@ -255,7 +264,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		}
 
 		hm.logger.Log(logutil.LogLevelWarn, fmt.Sprintf("[%s] auto force restarted due to memory limits", serviceName))
-		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid)
+		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
 	case ReasonNone:
@@ -331,7 +340,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 			fmt.Sprintf("[%s] failed to log service output: %v", serviceName, err))
 	}
 
-	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid)
+	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State:       new(types.ProcessStateRunning),
@@ -414,94 +423,88 @@ func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 	return true
 }
 
-func scanStatusField(contents []byte, field string) (fieldValue string, err error) {
-	scanner := bufio.NewScanner(bytes.NewReader(contents))
-	fieldPrefix := field + ":"
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, fieldPrefix) {
+// scanStatusFieldBytes finds a field in /proc/N/status without allocating.
+// Returns the tab-delimited value after "field:\t", or "" if not found.
+func scanStatusFieldBytes(contents []byte, field string) string {
+	prefix := field + ":\t"
+	remaining := contents
+	for len(remaining) > 0 {
+		newline := bytes.IndexByte(remaining, '\n')
+		var line []byte
+		if newline < 0 {
+			line = remaining
+			remaining = nil
+		} else {
+			line = remaining[:newline]
+			remaining = remaining[newline+1:]
+		}
+		if !bytes.HasPrefix(line, []byte(prefix)) {
 			continue
 		}
-
-		fieldValues := strings.Split(line, "\t")
-		if len(fieldValues) != 2 {
-			//TODO: Handle this better
-			continue
-		}
-		fieldValue = fieldValues[len(fieldValues)-1]
-		break
+		val := bytes.TrimSpace(line[len(prefix):])
+		return string(val)
 	}
-	err = scanner.Err()
-	if err != nil {
-		return "", err
-	}
-	return fieldValue, nil
+	return ""
 }
 
-func (hm *HealthMonitor) determineActiveRSSMemoryUsage(pgid int) int64 {
-	userOS := runtime.GOOS
+func (hm *HealthMonitor) determineActiveRSSMemoryUsage(pgid int, serviceName string) int64 {
+	if time.Since(hm.lastMemSample[serviceName]) < hm.memSampleInterval {
+		return 0
+	}
+	hm.lastMemSample[serviceName] = time.Now()
 
-	if userOS == "linux" {
+	if runtime.GOOS == "linux" {
 		return hm.checkMemoryLinux(pgid)
 	}
-
 	return 0
 }
 
 func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
 	totalRssMemory := int64(0)
+	pgidStr := strconv.Itoa(pgid)
 
 	dirEntries, err := os.ReadDir("/proc")
 	if err != nil {
 		hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("error reading dir %v", err))
 		return 0
-
 	}
+
 	for _, dirEntry := range dirEntries {
 		folderNameNumerical, err := strconv.Atoi(dirEntry.Name())
 		if err != nil {
 			continue
 		}
 
-		contents, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", folderNameNumerical))
+		f, err := os.Open(fmt.Sprintf("/proc/%d/status", folderNameNumerical))
 		if err != nil {
-			hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("err %v", err))
 			continue
 		}
-		pgidValue, err := scanStatusField(contents, "NSpgid")
-		if err != nil {
-			hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("scanning NSpgid status field: %v", err))
+		n, err := f.Read(hm.procBuf[:])
+		_ = f.Close()
+		if err != nil && n == 0 {
 			continue
 		}
-		if pgidValue == "" {
-			// TODO: Handle error
+		contents := hm.procBuf[:n]
+
+		pgidValue := scanStatusFieldBytes(contents, "NSpgid")
+		if pgidValue != pgidStr {
 			continue
 		}
 
-		if pgidValue != strconv.Itoa(pgid) {
-			continue
-		}
-
-		vmRSSValue, err := scanStatusField(contents, "VmRSS")
-		if err != nil {
-			hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("scanning vmrss status field: %v", err))
-			continue
-		}
+		vmRSSValue := scanStatusFieldBytes(contents, "VmRSS")
 		if vmRSSValue == "" {
-			hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("no match on vmRSSValue: %v", contents))
 			continue
 		}
-		vmRSSValueFields := strings.Fields(vmRSSValue)
-		if len(vmRSSValueFields) != 2 {
-			hm.logger.Log(logutil.LogLevelInfo, "vmRSSValueFields invalid content")
+		// vmRSSValue is "1234 kB" — parse the numeric prefix only
+		spaceIdx := strings.IndexByte(vmRSSValue, ' ')
+		if spaceIdx <= 0 {
 			continue
 		}
-		vmRssValueStrippedNumerical, err := strconv.Atoi(vmRSSValueFields[0])
+		kb, err := strconv.Atoi(vmRSSValue[:spaceIdx])
 		if err != nil {
-			hm.logger.Log(logutil.LogLevelInfo, fmt.Sprintf("vmRssValueStrippedNumerical ERROR: %v", err))
 			continue
 		}
-		totalRssMemory += int64(vmRssValueStrippedNumerical)
+		totalRssMemory += int64(kb)
 	}
 	return totalRssMemory
 }
