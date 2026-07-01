@@ -410,14 +410,20 @@ func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 		return false
 	}
 	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
+		var pathBuf [32]byte
+		path := fmt.Appendf(pathBuf[:0], "/proc/%d/stat", pgid)
+		f, err := os.Open(string(path))
 		if err != nil {
 			return false
 		}
-		statStr := string(data)
-		// Format: pid (comm) state ... — find state char after the last ')' in comm
-		if i := strings.LastIndex(statStr, ")"); i >= 0 && i+2 < len(statStr) {
-			return statStr[i+2] != 'Z'
+		n, err := f.Read(hm.procBuf[:])
+		_ = f.Close()
+		if err != nil && n == 0 {
+			return false
+		}
+		contents := hm.procBuf[:n]
+		if i := bytes.LastIndexByte(contents, ')'); i >= 0 && i+2 < len(contents) {
+			return contents[i+2] != 'Z'
 		}
 	}
 	return true
