@@ -4,8 +4,10 @@ package testutil
 import (
 	"database/sql"
 	"embed"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,27 +255,23 @@ func NewTestStandaloneDaemonConfig(t *testing.T, baseDir string, opts ...Standal
 	return config.DaemonConfig{Standalone: &standaloneDaemonConfig, Systemd: nil}
 }
 
-type TestLogger struct {
+type testWriter struct {
 	t    *testing.T
 	done chan struct{}
 }
 
-func NewTestLogger(t *testing.T) *TestLogger {
-	l := &TestLogger{
-		t:    t,
-		done: make(chan struct{}),
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	select {
+	case <-w.done:
+	default:
+		w.t.Log(strings.TrimRight(string(p), "\n"))
 	}
-	t.Cleanup(func() {
-		close(l.done)
-	})
-	return l
+	return len(p), nil
 }
 
-func (l *TestLogger) Log(level logutil.LogLevel, message string) {
-	select {
-	case <-l.done:
-		// test is done, drop the message
-	default:
-		l.t.Logf("[%s] %s", level, message)
-	}
+// NewTestLogger returns a verbose *slog.Logger that writes to t.Log.
+func NewTestLogger(t *testing.T) *slog.Logger {
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	return logutil.NewTextLogger(&testWriter{t: t, done: done}, true)
 }

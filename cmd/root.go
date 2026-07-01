@@ -148,6 +148,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().Bool("no-daemon", false, "run in local mode without daemon")
+	rootCmd.PersistentFlags().Bool("verbose", false, "enable verbose debug logging")
 
 	getManager := func() manager.ServiceManager {
 		return mgr
@@ -230,7 +231,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		FileSizeLimitBytes: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", eosCfg.Log.FileSizeLimitBytes),
 	}
 
-	systemdDir := config.SystemdTargetDir
+	systemdDir := overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir)
 	if os.Getuid() != 0 {
 		userDir, userDirErr := config.UserSystemdDir()
 		if userDirErr != nil {
@@ -279,6 +280,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		Daemon:       daemonConfig,
 		Shutdown:     shutdownConfig,
 		UnderSystemd: config.IsUnderSystemd(),
+		Verbose:      overrideBoolConfigValue("EOS_VERBOSE", false),
 	}
 
 	return installDir, baseDir, systemConfig, nil
@@ -353,6 +355,7 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 	if err != nil {
 		return nil, nil, err
 	}
+	verbose, _ := rootCmd.Flags().GetBool("verbose")
 
 	if noDaemon {
 		db, dbErr := database.NewDB(ctx, baseDir)
@@ -360,7 +363,7 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
 		}
 
-		mgr := manager.NewLocalManager(db, baseDir, ctx, &logutil.StderrLogger{})
+		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose))
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {
@@ -375,7 +378,7 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 		return nil, nil, errors.New("daemon running in systemd mode, cannot connect via socket")
 	}
 
-	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout)
+	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout, verbose)
 	if err != nil {
 		return nil, nil, err
 	}

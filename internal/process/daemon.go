@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	_ "net/http/pprof" //nolint:gosec // intentional: pprof only exposed when EOS_PPROF_ADDR is set
@@ -19,7 +20,6 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/monitor"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
@@ -28,7 +28,7 @@ import (
 type daemon struct {
 	listener   net.Listener
 	ctx        context.Context
-	logger     *manager.DaemonLogger
+	logger     *slog.Logger
 	db         *database.DB
 	mgr        *manager.LocalManager
 	stop       context.CancelFunc
@@ -37,8 +37,8 @@ type daemon struct {
 	socketPath string
 }
 
-func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
-	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, baseDir, standaloneDaemonConfig)
+func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
+	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig)
 	if err != nil {
 		return err
 	}
@@ -58,35 +58,36 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDi
 	}
 	d.serve(healthConfig, shutdownConfig)
 
-	d.logger.Log(logutil.LogLevelInfo, "daemon started successfully")
+	d.logger.Info("daemon started successfully")
 
 	d.wait()
 	return nil
 }
 
-func bootPersistedServices(mgr *manager.LocalManager, logger *manager.DaemonLogger) error {
+func bootPersistedServices(mgr *manager.LocalManager, logger *slog.Logger) error {
 	allRegisteredServices, err := mgr.GetAllServiceCatalogEntries()
 	if err != nil {
 		errorMessage := fmt.Errorf("getting all service catalog entries: %w", err)
-		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+		logger.Info(errorMessage.Error())
 		return errorMessage
 	}
 
 	for _, service := range allRegisteredServices {
+		logger.Debug("booting persisted service", "service", service.Name)
 		_, err := mgr.StartService(service.Name)
 		if err != nil {
 			errorMessage := fmt.Errorf("starting service: %w", err)
-			logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+			logger.Info(errorMessage.Error())
 			continue
 		}
 	}
 	return nil
 }
 
-func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.ProcessLogger) {
+func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger) {
 	entries, err := db.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
-		logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans: listing catalog: %v", err))
+		logger.Error("reconcile orphans: listing catalog", "error", err)
 		return
 	}
 
@@ -94,7 +95,7 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.Proce
 		hist, err := db.GetMostRecentProcessHistoryEntryByName(ctx, entry.Name)
 		if err != nil {
 			if !errors.Is(err, database.ErrProcessHistoryNotFound) {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans [%s]: fetching history: %v", entry.Name, err))
+				logger.Error("reconcile orphans: fetching history", "service", entry.Name, "error", err)
 			}
 			continue
 		}
@@ -108,7 +109,7 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.Proce
 
 		if hist.PGID > 0 {
 			if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
-				logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reconcile orphans [%s]: kill PGID %d: %v", entry.Name, hist.PGID, killErr))
+				logger.Info("reconcile orphans: kill PGID", "service", entry.Name, "pgid", hist.PGID, "error", killErr)
 			}
 		}
 
@@ -117,9 +118,9 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.Proce
 			State:     new(types.ProcessStateStopped),
 			StoppedAt: &now,
 		}); updateErr != nil {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans [%s]: updating state: %v", entry.Name, updateErr))
+			logger.Error("reconcile orphans: updating state", "service", entry.Name, "error", updateErr)
 		} else {
-			logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reconcile orphans: orphan PGID %d (%s) stopped", hist.PGID, entry.Name))
+			logger.Info("reconcile orphans: orphan stopped", "pgid", hist.PGID, "service", entry.Name)
 		}
 	}
 }
@@ -127,16 +128,16 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.Proce
 func (d *daemon) shutdown() {
 	d.stop()
 	if err := d.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing listener: %v", err))
+		d.logger.Error("closing listener", "error", err)
 	}
 	if err := os.Remove(d.pidFile); err != nil && !os.IsNotExist(err) {
-		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("removing pid file: %v", err))
+		d.logger.Error("removing pid file", "error", err)
 	}
 	if err := os.Remove(d.socketPath); err != nil && !os.IsNotExist(err) {
-		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("removing socket: %v", err))
+		d.logger.Error("removing socket", "error", err)
 	}
 	if err := d.db.CloseDBConnection(); err != nil {
-		d.logger.Log(logutil.LogLevelError, fmt.Sprintf("failed to close database: %v", err))
+		d.logger.Error("failed to close database", "error", err)
 	}
 }
 
@@ -151,13 +152,13 @@ func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.
 	go healthMonitor.Start(d.ctx)
 }
 
-func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, standaloneDaemonConfig.Log.LogFileSizeLimit)
+func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
+	logger, err := manager.NewDaemonLogger(logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup daemon logger: %w", err)
 	}
 
-	logger.Log(logutil.LogLevelInfo, "Started daemon logger")
+	logger.Info("daemon logger started")
 	pidFile := standaloneDaemonConfig.PIDFile
 	socketPath := standaloneDaemonConfig.SocketPath
 
@@ -168,13 +169,13 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir 
 		if process, findProcessErr := os.FindProcess(oldPid); findProcessErr == nil {
 			if process.Signal(syscall.Signal(0)) == nil {
 				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
-				logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+				logger.Info(errorMessage.Error())
 				return nil, errorMessage
 			}
 		}
 		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
-			logger.Log(logutil.LogLevelError, errorMessage.Error())
+			logger.Error(errorMessage.Error())
 			return nil, errorMessage
 		}
 	}
@@ -183,9 +184,10 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir 
 	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0600)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
-		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}
+	logger.Debug("PID written", "path", pidFile, "pid", myPID)
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 
@@ -195,7 +197,7 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir 
 	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
 		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
 			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
-			logger.Log(logutil.LogLevelError, errorMessage.Error())
+			logger.Error(errorMessage.Error())
 			return nil, errorMessage
 		}
 	}
@@ -204,16 +206,18 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDir 
 	listener, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
-		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}
+	logger.Debug("socket listening", "path", socketPath)
 
 	db, err := database.NewDB(ctx, baseDir)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to connect to database: %w", err)
-		logger.Log(logutil.LogLevelInfo, errorMessage.Error())
+		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}
+	logger.Debug("database connected")
 
 	mgr := manager.NewLocalManager(db, baseDir, ctx, logger)
 
@@ -243,23 +247,23 @@ func (d *daemon) wait() {
 	}
 }
 
-func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.DaemonLogger) {
+func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *slog.Logger) {
 	for {
 		var status syscall.WaitStatus
 		pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
 		if err != nil {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'\n: %v", pid, err))
+			logger.Error("cleaning up child process", "pid", pid, "error", err)
 			break
 		}
 		if pid == 0 {
 			break
 		}
 		if pid < 0 {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("cleaning up child process with PID '%d'", pid))
+			logger.Error("cleaning up child process", "pid", pid)
 			continue
 		}
 
-		logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reaped zombie process: %d\n", pid))
+		logger.Info(fmt.Sprintf("reaped zombie process: %d\n", pid))
 
 		// Check if the process group is still alive (children still running).
 		// The reaped PID may be the PGID leader (shell), but actual service
@@ -267,7 +271,7 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.
 		// If the group is alive, skip the state update. The health monitor
 		// will handle ongoing liveness tracking.
 		if pid > 1 && syscall.Kill(-pid, 0) == nil {
-			logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reaped process %d but process group still alive, skipping state update\n", pid))
+			logger.Info(fmt.Sprintf("reaped process %d but process group still alive, skipping state update\n", pid))
 			continue
 		}
 
@@ -278,7 +282,7 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.
 			}
 			updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
 			if updateErr != nil {
-				logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", updateErr))
+				logger.Error("updating reaped process in database", "error", updateErr)
 			}
 			continue
 		}
@@ -291,7 +295,7 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *manager.
 
 		err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
 		if err != nil {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("updating the reaped process in the database: %v", err))
+			logger.Error("updating reaped process in database", "error", err)
 		}
 
 		continue
@@ -413,15 +417,15 @@ func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, 
 	return true, nil
 }
 
-func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *manager.DaemonLogger) {
+func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *slog.Logger) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				logger.Log(logutil.LogLevelInfo, "listener closed, shutting down gracefully")
+				logger.Info("listener closed, shutting down gracefully")
 				return
 			}
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("accepting the connection: %v", err))
+			logger.Error("accepting the connection", "error", err)
 			return
 		}
 
@@ -429,10 +433,10 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 	}
 }
 
-func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager.DaemonLogger) {
+func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Log(logutil.LogLevelError, fmt.Sprintf("closing daemon socket: %v", err))
+			logger.Error("closing daemon socket", "error", err)
 		}
 	}()
 
@@ -447,7 +451,7 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *manager
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(response); err != nil {
-		logger.Log(logutil.LogLevelError, fmt.Sprintf("sending response: %v\n", err))
+		logger.Error("sending response", "error", err)
 	}
 }
 
@@ -768,11 +772,11 @@ func sentinelErrorResponse(err error) types.DaemonResponse {
 	}
 }
 
-func sendErrorResponse(conn net.Conn, message string, logger *manager.DaemonLogger) {
+func sendErrorResponse(conn net.Conn, message string, logger *slog.Logger) {
 	response := errorResponse(message)
 	encoder := json.NewEncoder(conn)
 	err := encoder.Encode(response)
 	if err != nil {
-		logger.Log(logutil.LogLevelError, fmt.Sprintf("sending error response: %v\n", err))
+		logger.Error("sending error response", "error", err)
 	}
 }

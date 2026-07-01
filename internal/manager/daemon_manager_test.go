@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
@@ -138,18 +137,12 @@ func TestNewDaemonLogger(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 	if logger == nil {
 		t.Fatal("Logger should not be nil")
-	}
-	if logger.LogPath == "" {
-		t.Error("LogPath should not be empty")
-	}
-	if logger.file == nil {
-		t.Error("Log file should not be nil")
 	}
 }
 
@@ -157,7 +150,7 @@ func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	_, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	_, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -167,79 +160,71 @@ func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 	}
 }
 
-func TestDaemonLoggerLog(t *testing.T) {
+func TestRotatingFileWriterWrite(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
-		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
+		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
 
-	logger.Log(logutil.LogLevelInfo, "test message")
+	if rw.file == nil {
+		t.Error("Log file should not be nil")
+	}
+	if rw.LogPath == "" {
+		t.Error("LogPath should not be empty")
+	}
 
-	content, err := os.ReadFile(logger.LogPath)
+	msg := []byte("test message\n")
+	n, err := rw.Write(msg)
+	if err != nil {
+		t.Fatalf("Write should not error, got: %v", err)
+	}
+	if n != len(msg) {
+		t.Errorf("Write should return len(msg)=%d, got %d", len(msg), n)
+	}
+
+	content, err := os.ReadFile(rw.LogPath)
 	if err != nil {
 		t.Fatalf("Failed to read log file: %v", err)
 	}
-
-	logContent := string(content)
-	if len(logContent) == 0 {
-		t.Error("Log file should not be empty after logging")
-	}
-	if !strings.Contains(logContent, "INFO") {
-		t.Error("Log should contain INFO level")
-	}
-	if !strings.Contains(logContent, "test message") {
-		t.Error("Log should contain the message")
+	if !strings.Contains(string(content), "test message") {
+		t.Error("Log file should contain the written message")
 	}
 }
 
-func TestDaemonLoggerLogLevels(t *testing.T) {
+func TestRotatingFileWriterSizeTracking(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
-
+	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
-		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
+		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
 
-	logger.Log(logutil.LogLevelInfo, "info message")
-	logger.Log(logutil.LogLevelWarn, "warn message")
-	logger.Log(logutil.LogLevelError, "error message")
+	initialSize := rw.currentSize
+	_, _ = rw.Write([]byte("some message\n"))
 
-	content, err := os.ReadFile(logger.LogPath)
-	if err != nil {
-		t.Fatalf("Failed to read log file: %v", err)
-	}
-
-	logContent := string(content)
-	if !strings.Contains(logContent, "INFO") {
-		t.Error("Log should contain INFO level")
-	}
-	if !strings.Contains(logContent, "WARN") {
-		t.Error("Log should contain WARN level")
-	}
-	if !strings.Contains(logContent, "ERROR") {
-		t.Error("Log should contain ERROR level")
+	if rw.currentSize <= initialSize {
+		t.Error("currentSize should increase after writing")
 	}
 }
 
-func TestDaemonLoggerRotation(t *testing.T) {
+func TestRotatingFileWriterRotation(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
-		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
+		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
 
 	// Force a small max size to trigger rotation
-	logger.maxSize = 100
+	rw.maxSize = 100
 
 	for range 20 {
-		logger.Log(logutil.LogLevelInfo, "This is a log message that should eventually trigger rotation")
+		_, _ = rw.Write([]byte("This is a log message that should eventually trigger rotation\n"))
 	}
 
 	logDir := CreateLogDirPath(tempDir)
@@ -253,57 +238,29 @@ func TestDaemonLoggerRotation(t *testing.T) {
 	}
 }
 
-func TestDaemonLoggerLogToConsole(t *testing.T) {
+func TestDaemonLoggerWritesJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
 
-	if !logger.logToConsole {
-		t.Error("logToConsole should be true when logToFileAndConsole is true")
-	}
-}
+	logger.Info("formatted message")
 
-func TestDaemonLoggerLogFormat(t *testing.T) {
-	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
-
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
-	if err != nil {
-		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
-	}
-
-	logger.Log(logutil.LogLevelInfo, "formatted message")
-
-	content, err := os.ReadFile(logger.LogPath)
+	logPath := filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName)
+	content, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("Failed to read log file: %v", err)
 	}
 
 	logContent := string(content)
-	// Log format should be: [timestamp] LEVEL: message
-	if !strings.Contains(logContent, "] INFO: formatted message") {
-		t.Errorf("Log format unexpected, got: %s", logContent)
+	if !strings.Contains(logContent, `"level":"INFO"`) {
+		t.Errorf("Log should contain JSON level field, got: %s", logContent)
 	}
-}
-
-func TestDaemonLoggerCurrentSizeTracking(t *testing.T) {
-	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
-
-	logger, err := NewDaemonLogger(false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
-	if err != nil {
-		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
-	}
-
-	initialSize := logger.currentSize
-	logger.Log(logutil.LogLevelInfo, "some message")
-
-	if logger.currentSize <= initialSize {
-		t.Error("currentSize should increase after logging")
+	if !strings.Contains(logContent, "formatted message") {
+		t.Error("Log should contain the message")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 type LocalManager struct {
 	db       database.Database
 	ctx      context.Context
-	logger   logutil.ProcessLogger
+	logger   *slog.Logger
 	executor Executor
 	baseDir  string
 	pipeWg   sync.WaitGroup
@@ -45,7 +46,7 @@ func WithExecutor(e Executor) LocalManagerOption {
 	}
 }
 
-func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger logutil.ProcessLogger, opts ...LocalManagerOption) *LocalManager {
+func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
 	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}}
 	for _, opt := range opts {
 		opt(m)
@@ -188,13 +189,13 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
 	defer stop()
 	tw := &logutil.TimestampWriter{W: w}
 	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read log pipe data to timestamp writer for %s: %v", name, copyErr))
+		m.logger.Error("copying read log pipe data to timestamp writer", "service", name, "error", copyErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read log file pipe for %s: %v", name, err))
+		m.logger.Error("closing read log file pipe", "service", name, "error", err)
 	}
 	if err := w.Close(); err != nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing write file for %s: %v", name, err))
+		m.logger.Error("closing write log file", "service", name, "error", err)
 	}
 }
 
@@ -204,13 +205,13 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
 	defer stop()
 	tw := &logutil.TimestampWriter{W: w}
 	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("copying read error log pipe data to timestamp writer for %s: %v", name, copyErr))
+		m.logger.Error("copying read error log pipe data to timestamp writer", "service", name, "error", copyErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing read error log file pipe for %s: %v", name, err))
+		m.logger.Error("closing read error log file pipe", "service", name, "error", err)
 	}
 	if err := w.Close(); err != nil {
-		m.logger.Log(logutil.LogLevelError, fmt.Sprintf("closing write error file for %s: %v", name, err))
+		m.logger.Error("closing write error log file", "service", name, "error", err)
 	}
 }
 
@@ -321,6 +322,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	startCommand.Stdout = writeLogFilePipe
 	startCommand.Stderr = writeErrorLogFilePipe
 
+	m.logger.Debug("launching service", "service", name, "cmd", config.Command)
 	if startErr := startCommand.Start(); startErr != nil {
 		return 0, fmt.Errorf("start command: %w", startErr)
 	}
@@ -346,6 +348,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("getting pgid: %w", err)
 	}
+	m.logger.Debug("process started", "service", name, "pgid", pgid)
 
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
@@ -375,6 +378,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		}
 		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
 	}
+	m.logger.Debug("state=Starting recorded", "service", name, "pgid", pgid)
 
 	return pgid, nil
 }
@@ -470,6 +474,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	restartCommand.Stdout = writeLogFilePipe
 	restartCommand.Stderr = writeErrorLogFilePipe
 
+	m.logger.Debug("stop complete, launching restart", "service", name)
 	if restartErr := restartCommand.Start(); restartErr != nil {
 		return 0, fmt.Errorf("restart command: %w", restartErr)
 	}
@@ -495,6 +500,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	if err != nil {
 		return 0, fmt.Errorf("getting pgid: %w", err)
 	}
+	m.logger.Debug("restarted process", "service", name, "pgid", pgid)
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    new(time.Now()),
@@ -553,6 +559,7 @@ type StopServiceResult struct {
 
 func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
 	requestStartTime := time.Now()
+	m.logger.Debug("sending SIGTERM", "service", name)
 	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGTERM)
 
 	if err != nil {
@@ -622,6 +629,7 @@ OuterLoop:
 			}
 
 			if len(stoppedProcesses) == countPending {
+				m.logger.Debug("all processes exited", "service", name, "elapsed", time.Since(requestStartTime))
 				break OuterLoop
 			}
 

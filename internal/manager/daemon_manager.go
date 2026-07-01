@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -24,12 +26,12 @@ type DaemonManager struct {
 	socketPath string
 }
 
-func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, socketTimeout time.Duration) (*DaemonManager, error) {
+func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, socketTimeout time.Duration, verbose bool) (*DaemonManager, error) {
 	if isDaemonRunning(pidFile) {
 		return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
 	}
 
-	if err := startDaemonProcess(ctx, pidFile); err != nil {
+	if err := startDaemonProcess(ctx, pidFile, verbose); err != nil {
 		return nil, fmt.Errorf("starting daemon: %w", err)
 	}
 
@@ -61,7 +63,7 @@ func isDaemonRunning(pidFile string) bool {
 }
 
 // Stay in sync with "forkDaemon"
-func startDaemonProcess(ctx context.Context, pidFile string) error {
+func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error {
 	if _, err := os.Stat(pidFile); err == nil {
 		if isDaemonRunning(pidFile) {
 			return fmt.Errorf("daemon already running (PID file: %s)", pidFile)
@@ -76,7 +78,11 @@ func startDaemonProcess(ctx context.Context, pidFile string) error {
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, exePath, "daemon", "start", "--log-to-file-and-console") // #nosec G204 -- exePath is from os.Executable(), not user input
+	args := []string{"daemon", "start", "--log-to-file-and-console"}
+	if verbose {
+		args = append(args, "--verbose")
+	}
+	cmd := exec.CommandContext(ctx, exePath, args...) // #nosec G204 -- exePath is from os.Executable(), not user input
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
@@ -460,18 +466,19 @@ func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool
 	return result["filepath"], nil
 }
 
-type DaemonLogger struct {
-	file         *os.File
-	LogPath      string
-	logDir       string
-	fileName     string
-	currentSize  int64
-	maxSize      int64
-	maxFiles     int
-	logToConsole bool
+// RotatingFileWriter is an io.Writer that rotates the underlying log file once it
+// exceeds maxSize bytes. It is used as the sink for the daemon's slog.Logger.
+type RotatingFileWriter struct {
+	file        *os.File
+	LogPath     string
+	logDir      string
+	fileName    string
+	currentSize int64
+	maxSize     int64
+	maxFiles    int
 }
 
-func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*DaemonLogger, error) {
+func newRotatingFileWriter(logDir, fileName string, maxFiles int, fileSizeLimit int64) (*RotatingFileWriter, error) {
 	logPath := filepath.Clean(filepath.Join(logDir, fileName))
 
 	err := os.MkdirAll(logDir, 0750)
@@ -489,58 +496,63 @@ func NewDaemonLogger(logToFileAndConsole bool, logDir string, fileName string, m
 		return nil, fmt.Errorf("file state info %q: %w", logPath, err)
 	}
 
-	return &DaemonLogger{
-		file:         f,
-		LogPath:      logPath,
-		logDir:       logDir,
-		fileName:     fileName,
-		currentSize:  fileInfo.Size(),
-		maxSize:      fileSizeLimit,
-		maxFiles:     maxFiles,
-		logToConsole: logToFileAndConsole,
+	return &RotatingFileWriter{
+		file:        f,
+		LogPath:     logPath,
+		logDir:      logDir,
+		fileName:    fileName,
+		currentSize: fileInfo.Size(),
+		maxSize:     fileSizeLimit,
+		maxFiles:    maxFiles,
 	}, nil
 }
 
-func (l *DaemonLogger) Log(level logutil.LogLevel, message string) {
-	timestamp := time.Now().UTC().Format(logutil.TimestampFormat)
-	logMessage := fmt.Sprintf("[%s] %s: %s\n", timestamp, level, message)
-
-	if l.logToConsole {
-		fmt.Print(logMessage)
-	}
-
-	if l.currentSize+int64(len(logMessage)) >= l.maxSize {
-		err := l.rotate()
-		if err != nil {
-			fmt.Printf("Errored during rotating logs: %v", err)
+func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
+	if w.currentSize+int64(len(p)) >= w.maxSize {
+		if rotateErr := w.rotate(); rotateErr != nil {
+			fmt.Printf("error rotating logs: %v\n", rotateErr)
 		}
-		l.currentSize = 0
+		w.currentSize = 0
 	}
-
-	n, _ := l.file.WriteString(logMessage)
-	l.currentSize += int64(n)
+	n, err = w.file.Write(p)
+	w.currentSize += int64(n)
+	return n, err
 }
 
-func (l *DaemonLogger) rotate() error {
-	err := l.file.Close()
-	if err != nil {
+func (w *RotatingFileWriter) rotate() error {
+	if err := w.file.Close(); err != nil {
 		return fmt.Errorf("closing file: %w", err)
 	}
 
-	err = handleRenameExistingLogs(l.logDir, l.fileName)
-	if err != nil {
+	if err := handleRenameExistingLogs(w.logDir, w.fileName); err != nil {
 		return fmt.Errorf("renaming log files: %w", err)
 	}
 
-	newF, err := os.OpenFile(l.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
+	newF, err := os.OpenFile(w.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
 	if err != nil {
 		return fmt.Errorf("creating new log file: %w", err)
 	}
 
-	l.file = newF
-	l.currentSize = 0
-
+	w.file = newF
+	w.currentSize = 0
 	return nil
+}
+
+// NewDaemonLogger creates a *slog.Logger backed by a rotating JSON file.
+// When logToFileAndConsole is true, output goes to both file and stdout.
+// JSON format is Loki/Promtail-compatible.
+func NewDaemonLogger(logToFileAndConsole bool, verbose bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*slog.Logger, error) {
+	rw, err := newRotatingFileWriter(logDir, fileName, maxFiles, fileSizeLimit)
+	if err != nil {
+		return nil, fmt.Errorf("creating rotating file writer: %w", err)
+	}
+
+	var w io.Writer = rw
+	if logToFileAndConsole {
+		w = io.MultiWriter(os.Stdout, rw)
+	}
+
+	return logutil.NewJSONLogger(w, verbose), nil
 }
 
 // TODO: Add max file rotation in here.
