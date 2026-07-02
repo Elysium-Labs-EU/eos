@@ -29,6 +29,19 @@ func TestStatusCommand(t *testing.T) {
 // TODO: func TestStatusCommandGetProcessHistoryError (requires mock manager)
 // TODO: func TestStatusCommandWithRunningService (service instance present, check memory/uptime/restarts columns)
 
+func TestStatusWatchFlags(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
+	cmd.SetArgs([]string{"status", "--help"})
+	_ = cmd.ExecuteContext(t.Context())
+	out := outBuf.String()
+	if !strings.Contains(out, "--watch") {
+		t.Errorf("expected --watch flag in help, got: %s", out)
+	}
+	if !strings.Contains(out, "--interval") {
+		t.Errorf("expected --interval flag in help, got: %s", out)
+	}
+}
+
 func TestStatusCommandWithServices(t *testing.T) {
 	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"status", "--help"})
