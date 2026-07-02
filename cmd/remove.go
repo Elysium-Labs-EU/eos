@@ -6,11 +6,11 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 
-// TODO: Add interactive check for running process, giving user option to continue or not.
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
 		Use:               "remove <service-name>",
@@ -23,8 +23,6 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "this does not stop the service if it's running")
-
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
@@ -36,6 +34,23 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return
 			}
+
+			history, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !errors.Is(err, manager.ErrProcessNotFound) {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service state: %v", err))
+				return
+			}
+
+			if history != nil && history.State != types.ProcessStateStopped && history.State != types.ProcessStateUnknown {
+				cmd.Printf("%s %s %s %s\n\n", ui.LabelWarning.Render("warning"), ui.TextBold.Render(serviceName), "is currently", string(history.State))
+				cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf("eos stop %s", serviceName)), ui.TextMuted.Render("→ stop it first"))
+				if !helpers.PromptConfirm(cmd, "remove anyway? (y/n):") {
+					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "remove aborted")
+					return
+				}
+			}
+
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "this does not stop the service if it's running")
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
