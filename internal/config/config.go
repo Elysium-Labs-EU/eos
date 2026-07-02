@@ -26,6 +26,7 @@ const (
 	HealthBackoffBaseMs               = 300
 	HealthBackoffMaxMs                = 60000
 	HealthCheckIntervalMs             = 2000
+	HealthMemSampleIntervalMs         = 30000
 	HealthMaxRestart                  = 10
 	HealthMemoryForceRestartThreshold = 0.95
 	HealthMemorySoftRestartThreshold  = 0.85
@@ -82,6 +83,7 @@ type MemoryThresholdConfig struct {
 
 type HealthConfig struct {
 	CheckInterval             time.Duration         `json:"check_interval" yaml:"checkInterval"`
+	MemSampleInterval         time.Duration         `json:"mem_sample_interval" yaml:"memSampleInterval"`
 	MaxRestart                int                   `json:"max_restart" yaml:"maxRestart"`
 	RestartCounterResetWindow time.Duration         `json:"restart_counter_reset_window" yaml:"restartCounterResetWindow"`
 	Timeout                   TimeOutConfig         `json:"timeout" yaml:"timeout"`
@@ -183,9 +185,10 @@ type EosConfig struct {
 }
 
 type EosHealthConfig struct {
-	CheckIntervalMs int              `yaml:"checkIntervalMs"`
-	Backoff         EosBackoffConfig `yaml:"backoff"`
-	Memory          EosMemoryConfig  `yaml:"memory"`
+	CheckIntervalMs     int              `yaml:"checkIntervalMs"`
+	MemSampleIntervalMs int              `yaml:"memSampleIntervalMs"`
+	Backoff             EosBackoffConfig `yaml:"backoff"`
+	Memory              EosMemoryConfig  `yaml:"memory"`
 }
 
 type EosBackoffConfig struct {
@@ -207,7 +210,8 @@ type EosLogConfig struct {
 func DefaultEosConfig() EosConfig {
 	return EosConfig{
 		Health: EosHealthConfig{
-			CheckIntervalMs: HealthCheckIntervalMs,
+			CheckIntervalMs:     HealthCheckIntervalMs,
+			MemSampleIntervalMs: HealthMemSampleIntervalMs,
 			Backoff: EosBackoffConfig{
 				BaseMs: HealthBackoffBaseMs,
 				MaxMs:  HealthBackoffMaxMs,

@@ -33,6 +33,7 @@ type Database interface {
 	UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error
 
 	GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error)
+	GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error)
 	GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error)
 	RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
 	RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error)
@@ -338,6 +339,35 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 	return processHistoryEntries, nil
 }
 
+func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error) {
+	query := `
+	SELECT pgid, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
+	FROM process_history
+	WHERE service_name = ?
+	ORDER BY started_at DESC NULLS LAST
+	LIMIT 1
+	`
+	var entry types.ProcessHistory
+	err := db.conn.QueryRowContext(ctx, query, serviceName).Scan(
+		&entry.PGID,
+		&entry.ServiceName,
+		&entry.State,
+		&entry.RssMemoryKb,
+		&entry.Error,
+		&entry.CreatedAt,
+		&entry.StartedAt,
+		&entry.StoppedAt,
+		&entry.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return types.ProcessHistory{}, fmt.Errorf("%w: %v", ErrProcessHistoryNotFound, serviceName)
+	}
+	if err != nil {
+		return types.ProcessHistory{}, fmt.Errorf("get most recent process history for %s: %w", serviceName, err)
+	}
+	return entry, nil
+}
+
 func (db *DB) IsServiceRegistered(ctx context.Context, name string) (bool, error) {
 	query := `
 	SELECT COUNT(*) 
@@ -416,11 +446,15 @@ type ProcessHistoryUpdate struct {
 	StoppedAt   *time.Time
 }
 
+var processHistoryValidColumns = map[string]bool{
+	"error": true, "started_at": true, "state": true,
+	"rss_memory_kb": true, "stopped_at": true, "updated_at": true,
+}
+
 func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error {
-	setParts := []string{}
-	args := []any{}
-	requestedColumns := []string{}
-	validColumns := map[string]bool{"error": true, "started_at": true, "state": true, "rss_memory_kb": true, "stopped_at": true, "updated_at": true}
+	setParts := make([]string, 0, 7)
+	args := make([]any, 0, 7)
+	requestedColumns := make([]string, 0, 7)
 
 	if updates.Error != nil {
 		requestedColumns = append(requestedColumns, "error")
@@ -461,7 +495,7 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 	args = append(args, time.Now())
 
 	for _, col := range requestedColumns {
-		if !validColumns[col] {
+		if !processHistoryValidColumns[col] {
 			return fmt.Errorf("invalid column: %s", col)
 		}
 	}
@@ -514,11 +548,15 @@ type ServiceInstanceUpdate struct {
 	StartedAt       *time.Time
 }
 
+var serviceInstanceValidColumns = map[string]bool{
+	"restart_count": true, "last_health_check": true,
+	"started_at": true, "updated_at": true,
+}
+
 func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates ServiceInstanceUpdate) error {
-	setParts := []string{}
-	args := []any{}
-	requestedColumns := []string{}
-	validColumns := map[string]bool{"restart_count": true, "last_health_check": true, "started_at": true, "updated_at": true}
+	setParts := make([]string, 0, 5)
+	args := make([]any, 0, 5)
+	requestedColumns := make([]string, 0, 5)
 
 	if updates.RestartCount != nil {
 		requestedColumns = append(requestedColumns, "restart_count")
@@ -547,12 +585,12 @@ func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates Se
 	args = append(args, time.Now())
 
 	for _, col := range requestedColumns {
-		if !validColumns[col] {
+		if !serviceInstanceValidColumns[col] {
 			return fmt.Errorf("invalid column: %s", col)
 		}
 	}
 
-	// #nosec G201 - column names are from a validated allowlis
+	// #nosec G201 - column names are from a validated allowlist
 	query := fmt.Sprintf("UPDATE service_instances SET %s WHERE name = ?",
 		strings.Join(setParts, ", "))
 	args = append(args, name)

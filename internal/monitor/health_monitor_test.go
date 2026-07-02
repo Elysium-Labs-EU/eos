@@ -870,6 +870,18 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
+
+	// SIGKILL is asynchronous — poll until the process group is confirmed dead
+	// before calling checkRunningProcess, otherwise isProcessAlive may still
+	// return true and the "is not running" log never gets written.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if killErr := syscall.Kill(-processHistoryEntry.PGID, 0); killErr != nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	serviceInstance2, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || serviceInstance2 == nil {
 		t.Fatalf("Failed to get service instance: %v", err)
@@ -883,12 +895,9 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	tailLogCommand.Stdout = &buf
 	tailLogCommand.Stderr = &errorBuf
 
-	err = tailLogCommand.Run()
-
-	if err != nil {
+	if err = tailLogCommand.Run(); err != nil {
 		t.Fatalf("The log command failed, got:\n%v\nOutput: %s", err, errorBuf.String())
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	output := buf.String()
 

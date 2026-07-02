@@ -155,29 +155,14 @@ func (m *LocalManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntr
 }
 
 func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
-	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
+	entry, err := m.db.GetMostRecentProcessHistoryEntryByName(m.ctx, name)
+	if errors.Is(err, database.ErrProcessHistoryNotFound) {
+		return nil, ErrProcessNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get process history for %s: %w", name, err)
 	}
-
-	if len(processHistory) == 0 {
-		return nil, ErrProcessNotFound
-	}
-
-	startedAtOrZero := func(t *time.Time) time.Time {
-		if t == nil {
-			return time.Time{}
-		}
-		return *t
-	}
-	mostRecentIdx := 0
-	for i := 1; i < len(processHistory); i++ {
-		if startedAtOrZero(processHistory[i].StartedAt).After(startedAtOrZero(processHistory[mostRecentIdx].StartedAt)) {
-			mostRecentIdx = i
-		}
-	}
-
-	return &processHistory[mostRecentIdx], nil
+	return &entry, nil
 }
 
 func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error {

@@ -182,8 +182,11 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func newDaemonConfig(baseDir string, isSystemdManaged bool, logCfg config.EosLogConfig) config.DaemonConfig {
-	if isSystemdManaged {
+func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, logCfg config.EosLogConfig) config.DaemonConfig {
+	// When invoked BY systemd (INVOCATION_ID set) we ARE the daemon process —
+	// run standalone in the foreground. Only delegate to systemctl when a human
+	// calls "eos daemon start" from outside systemd.
+	if isSystemdManaged && !underSystemd {
 		return config.DaemonConfig{
 			Standalone: nil,
 			Systemd: &config.SystemdConfig{
@@ -231,7 +234,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	if err != nil {
 		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
 	}
-	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, logCfg)
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), logCfg)
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
 	if restartCounterResetWindow <= 0 {
@@ -245,7 +248,8 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),
 			Limit:  safeParseDuration(config.HealthTimeOutLimit, time.Second*10),
 		},
-		CheckInterval: time.Duration(overrideIntConfigValue("HEALTH_CHECK_INTERVAL_MS", eosCfg.Health.CheckIntervalMs)) * time.Millisecond,
+		CheckInterval:     time.Duration(overrideIntConfigValue("HEALTH_CHECK_INTERVAL_MS", eosCfg.Health.CheckIntervalMs)) * time.Millisecond,
+		MemSampleInterval: time.Duration(overrideIntConfigValue("HEALTH_MEM_SAMPLE_INTERVAL_MS", eosCfg.Health.MemSampleIntervalMs)) * time.Millisecond,
 		Backoff: config.BackoffConfig{
 			BaseMs: overrideIntConfigValue("HEALTH_BACKOFF_BASE_MS", eosCfg.Health.Backoff.BaseMs),
 			MaxMs:  overrideIntConfigValue("HEALTH_BACKOFF_MAX_MS", eosCfg.Health.Backoff.MaxMs),
