@@ -330,7 +330,8 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 }
 
 func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, serviceName string) {
-	updateString := fmt.Sprintf("[%s] is running", serviceName)
+	var msgBuf [128]byte
+	updateString := string(fmt.Appendf(msgBuf[:0], "[%s] is running", serviceName))
 
 	hm.logger.Log(logutil.LogLevelInfo, updateString)
 	err := hm.mgr.LogToServiceStdout(serviceName, updateString)
