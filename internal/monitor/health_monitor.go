@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -412,13 +411,13 @@ func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 	if runtime.GOOS == "linux" {
 		var pathBuf [32]byte
 		path := fmt.Appendf(pathBuf[:0], "/proc/%d/stat", pgid)
-		f, err := os.Open(string(path))
+		fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
 		if err != nil {
 			return false
 		}
-		n, err := f.Read(hm.procBuf[:])
-		_ = f.Close()
-		if err != nil && n == 0 {
+		n, _ := syscall.Read(fd, hm.procBuf[:])
+		_ = syscall.Close(fd)
+		if n <= 0 {
 			return false
 		}
 		contents := hm.procBuf[:n]
@@ -430,9 +429,8 @@ func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 }
 
 // scanStatusFieldBytes finds a field in /proc/N/status without allocating.
-// Returns the tab-delimited value after "field:\t", or "" if not found.
-func scanStatusFieldBytes(contents []byte, field string) string {
-	prefix := field + ":\t"
+// Returns a slice into contents for the value after "field:\t", or nil if not found.
+func scanStatusFieldBytes(contents []byte, field []byte) []byte {
 	remaining := contents
 	for len(remaining) > 0 {
 		newline := bytes.IndexByte(remaining, '\n')
@@ -444,13 +442,12 @@ func scanStatusFieldBytes(contents []byte, field string) string {
 			line = remaining[:newline]
 			remaining = remaining[newline+1:]
 		}
-		if !bytes.HasPrefix(line, []byte(prefix)) {
+		if !bytes.HasPrefix(line, field) {
 			continue
 		}
-		val := bytes.TrimSpace(line[len(prefix):])
-		return string(val)
+		return bytes.TrimSpace(line[len(field):])
 	}
-	return ""
+	return nil
 }
 
 func (hm *HealthMonitor) determineActiveRSSMemoryUsage(pgid int, serviceName string) int64 {
@@ -465,48 +462,61 @@ func (hm *HealthMonitor) determineActiveRSSMemoryUsage(pgid int, serviceName str
 	return 0
 }
 
+var (
+	procStatusNSpgid = []byte("NSpgid:\t")
+	procStatusVMRSS  = []byte("VmRSS:\t")
+)
+
 func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
 	totalRssMemory := int64(0)
-	pgidStr := strconv.Itoa(pgid)
 
-	dirEntries, err := os.ReadDir("/proc")
+	procDir, err := os.Open("/proc")
 	if err != nil {
 		hm.logger.Log(logutil.LogLevelError, fmt.Sprintf("error reading dir %v", err))
 		return 0
 	}
+	names, err := procDir.Readdirnames(-1)
+	_ = procDir.Close()
+	if err != nil {
+		return 0
+	}
 
-	for _, dirEntry := range dirEntries {
-		folderNameNumerical, err := strconv.Atoi(dirEntry.Name())
+	var pgidBuf [16]byte
+	pgidBytes := strconv.AppendInt(pgidBuf[:0], int64(pgid), 10)
+
+	var pathBuf [32]byte
+	for _, name := range names {
+		pid, err := strconv.Atoi(name)
 		if err != nil {
 			continue
 		}
 
-		f, err := os.Open(fmt.Sprintf("/proc/%d/status", folderNameNumerical))
+		path := fmt.Appendf(pathBuf[:0], "/proc/%d/status", pid)
+		fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
 		if err != nil {
 			continue
 		}
-		n, err := f.Read(hm.procBuf[:])
-		_ = f.Close()
-		if err != nil && n == 0 {
+		n, _ := syscall.Read(fd, hm.procBuf[:])
+		_ = syscall.Close(fd)
+		if n <= 0 {
 			continue
 		}
 		contents := hm.procBuf[:n]
 
-		pgidValue := scanStatusFieldBytes(contents, "NSpgid")
-		if pgidValue != pgidStr {
+		if !bytes.Equal(scanStatusFieldBytes(contents, procStatusNSpgid), pgidBytes) {
 			continue
 		}
 
-		vmRSSValue := scanStatusFieldBytes(contents, "VmRSS")
-		if vmRSSValue == "" {
+		vmRSSValue := scanStatusFieldBytes(contents, procStatusVMRSS)
+		if vmRSSValue == nil {
 			continue
 		}
 		// vmRSSValue is "1234 kB" — parse the numeric prefix only
-		spaceIdx := strings.IndexByte(vmRSSValue, ' ')
+		spaceIdx := bytes.IndexByte(vmRSSValue, ' ')
 		if spaceIdx <= 0 {
 			continue
 		}
-		kb, err := strconv.Atoi(vmRSSValue[:spaceIdx])
+		kb, err := strconv.Atoi(string(vmRSSValue[:spaceIdx]))
 		if err != nil {
 			continue
 		}
