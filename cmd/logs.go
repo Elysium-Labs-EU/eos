@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
+	"strings"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
@@ -78,12 +83,20 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
-			tailLogCommand.Stdout = cmd.OutOrStdout()
 			tailLogCommand.Stderr = cmd.ErrOrStderr()
-			err = tailLogCommand.Run()
 
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", err))
+			stdout, pipeErr := tailLogCommand.StdoutPipe()
+			if pipeErr != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
+				return
+			}
+			if startErr := tailLogCommand.Start(); startErr != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", startErr))
+				return
+			}
+			renderServiceLogs(cmd.OutOrStdout(), stdout)
+			if waitErr := tailLogCommand.Wait(); waitErr != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", waitErr))
 			}
 		},
 	}
@@ -93,4 +106,41 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	cmd.Flags().BoolVar(&follow, "follow", false, "follow log output")
 
 	return cmd
+}
+
+type serviceLogEntry struct {
+	Time   string `json:"time"`
+	Level  string `json:"level"`
+	Msg    string `json:"msg"`
+	Source string `json:"source"`
+}
+
+func renderServiceLogs(w io.Writer, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		_, _ = fmt.Fprintln(w, renderServiceLogLine(scanner.Text()))
+	}
+	_ = scanner.Err()
+}
+
+func renderServiceLogLine(line string) string {
+	var entry serviceLogEntry
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return line
+	}
+
+	timeStr := entry.Time
+	if t, err := time.Parse(time.RFC3339Nano, entry.Time); err == nil {
+		timeStr = t.Format("15:04:05.000")
+	}
+
+	source := entry.Source
+	if source == "" {
+		source = strings.ToLower(entry.Level)
+	}
+
+	if entry.Level == "WARN" || entry.Level == "ERROR" {
+		return fmt.Sprintf("%s %-6s [%s] %s", timeStr, source, entry.Level, entry.Msg)
+	}
+	return fmt.Sprintf("%s %-6s %s", timeStr, source, entry.Msg)
 }

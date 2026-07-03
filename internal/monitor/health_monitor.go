@@ -174,10 +174,15 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	configPort := config.Port
 
+	var runningMsg string
 	if configPort != 0 {
-		hm.logger.Info(fmt.Sprintf("[%s] now running on port %d", serviceName, configPort))
+		runningMsg = fmt.Sprintf("[%s] now running on port %d", serviceName, configPort)
 	} else {
-		hm.logger.Info(fmt.Sprintf("[%s] now running", serviceName))
+		runningMsg = fmt.Sprintf("[%s] now running", serviceName)
+	}
+	hm.logger.Info(runningMsg)
+	if logErr := hm.mgr.LogToServiceStdout(serviceName, runningMsg); logErr != nil {
+		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 	}
 
 	activeRssMemoryKb := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
@@ -236,8 +241,12 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 
 	switch memoryResult {
 	case ReasonWarning:
-		hm.logger.Warn(fmt.Sprintf("[%s] memory usage warning", serviceName))
+		warnMsg := fmt.Sprintf("[%s] memory usage warning", serviceName)
+		hm.logger.Warn(warnMsg)
 		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", activeRssMemoryKb)
+		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
+			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
+		}
 		hm.updateProcessEntry(ctx, pgid, activeRssMemoryKb, serviceName)
 	case ReasonSoftRestart:
 		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
@@ -251,7 +260,11 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 			hm.logger.Error("restarting on soft restart threshold", "service", serviceName, "error", err)
 			return
 		}
-		hm.logger.Warn(fmt.Sprintf("[%s] auto soft restarted due to memory limits", serviceName))
+		softRestartMsg := fmt.Sprintf("[%s] auto soft restarted due to memory limits", serviceName)
+		hm.logger.Warn(softRestartMsg)
+		if logErr := hm.mgr.LogToServiceStderr(serviceName, softRestartMsg); logErr != nil {
+			hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
+		}
 		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 
@@ -267,8 +280,11 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 			hm.logger.Error("restarting on force restart threshold", "service", serviceName, "error", err)
 			return
 		}
-
-		hm.logger.Warn(fmt.Sprintf("[%s] auto force restarted due to memory limits", serviceName))
+		forceRestartMsg := fmt.Sprintf("[%s] auto force restarted due to memory limits", serviceName)
+		hm.logger.Warn(forceRestartMsg)
+		if logErr := hm.mgr.LogToServiceStderr(serviceName, forceRestartMsg); logErr != nil {
+			hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
+		}
 		newRssMemoryKb := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
 		hm.updateProcessEntry(ctx, newPgid, newRssMemoryKb, serviceName)
 

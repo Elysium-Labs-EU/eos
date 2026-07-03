@@ -1,10 +1,10 @@
 package manager
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -187,9 +187,13 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
 	defer m.pipeWg.Done()
 	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
 	defer stop()
-	tw := &logutil.TimestampWriter{W: w}
-	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
-		m.logger.Error("copying read log pipe data to timestamp writer", "service", name, "error", copyErr)
+	logger := logutil.NewJSONLogger(w, false)
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		logger.Info(scanner.Text(), "service", name, "source", "stdout")
+	}
+	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
+		m.logger.Error("scanning log pipe", "service", name, "error", scanErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Error("closing read log file pipe", "service", name, "error", err)
@@ -203,9 +207,13 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
 	defer m.pipeWg.Done()
 	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
 	defer stop()
-	tw := &logutil.TimestampWriter{W: w}
-	if _, copyErr := io.Copy(tw, r); copyErr != nil && m.ctx.Err() == nil {
-		m.logger.Error("copying read error log pipe data to timestamp writer", "service", name, "error", copyErr)
+	logger := logutil.NewJSONLogger(w, false)
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		logger.Info(scanner.Text(), "service", name, "source", "stderr")
+	}
+	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
+		m.logger.Error("scanning error log pipe", "service", name, "error", scanErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Error("closing read error log file pipe", "service", name, "error", err)
