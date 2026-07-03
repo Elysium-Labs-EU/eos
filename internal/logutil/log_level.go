@@ -1,23 +1,26 @@
-// Package logutil provides log level types and a timestamped writer for structured daemon logging.
+// Package logutil provides structured logger constructors for daemon and local (stderr) logging.
 package logutil
 
-import "fmt"
-
-type LogLevel string
-
-const (
-	LogLevelInfo  LogLevel = "INFO"
-	LogLevelWarn  LogLevel = "WARN"
-	LogLevelError LogLevel = "ERROR"
+import (
+	"io"
+	"log/slog"
 )
 
-type ProcessLogger interface {
-	Log(level LogLevel, message string)
+// NewTextLogger returns a *slog.Logger writing human-readable text to w.
+// Used for local (no-daemon) mode where output goes to a terminal.
+func NewTextLogger(w io.Writer, verbose bool) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slogLevel(verbose)}))
 }
 
-// StderrLogger is a simple ProcessLogger that writes to stderr.
-type StderrLogger struct{}
+// NewJSONLogger returns a *slog.Logger writing structured JSON to w.
+// Used for daemon file logs; JSON format is Loki/Promtail-compatible.
+func NewJSONLogger(w io.Writer, verbose bool) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slogLevel(verbose)}))
+}
 
-func (l *StderrLogger) Log(level LogLevel, message string) {
-	fmt.Printf("[%s] %s\n", level, message)
+func slogLevel(verbose bool) slog.Level {
+	if verbose {
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
 }

@@ -100,6 +100,7 @@ type SystemConfig struct {
 	Health       HealthConfig   `json:"health" yaml:"health"`
 	Shutdown     ShutdownConfig `json:"shutdown" yaml:"shutdown"`
 	UnderSystemd bool           `json:"under_systemd" yaml:"underSystemd"`
+	Verbose      bool           `json:"verbose" yaml:"verbose"`
 }
 
 func UserSystemdDir() (string, error) {

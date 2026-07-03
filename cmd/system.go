@@ -537,7 +537,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		return
 	}
 
-	if err := forkDaemon(ctx, config.DaemonPIDFile); err != nil {
+	if err := forkDaemon(ctx, config.DaemonPIDFile, false); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return
@@ -678,7 +678,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return
 	}
 
-	if err := ctrl.Start(ctx, true, false); err != nil {
+	if err := ctrl.Start(ctx, true, false, false); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return

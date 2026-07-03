@@ -19,7 +19,7 @@ import (
 )
 
 type DaemonController interface {
-	Start(ctx context.Context, detach bool, logToFileAndConsole bool) error
+	Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error
 	Stop(ctx context.Context) (bool, error)
 	Remove() error
 	Info(cmd *cobra.Command)
@@ -35,11 +35,11 @@ type standaloneDaemonController struct {
 	underSystemd bool
 }
 
-func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool) error {
+func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error {
 	if detach && !c.underSystemd {
-		return forkDaemon(ctx, c.cfg.PIDFile)
+		return forkDaemon(ctx, c.cfg.PIDFile, verbose)
 	}
-	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
+	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context) (bool, error) {
@@ -113,7 +113,7 @@ type systemdDaemonController struct {
 	cfg config.SystemdConfig
 }
 
-func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool) error {
+func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
 	if os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
@@ -225,7 +225,8 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
 			}
 
-			if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole); err != nil {
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole, verbose); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 				return
 			}
@@ -307,13 +308,17 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 }
 
 // Stay in sync with "startDaemonProcess"
-func forkDaemon(ctx context.Context, pidFile string) error {
+func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, exePath, "daemon", "start", "--log-to-file-and-console") // #nosec G204 -- exePath is from os.Executable(), not user input
+	args := []string{"daemon", "start", "--log-to-file-and-console"}
+	if verbose {
+		args = append(args, "--verbose")
+	}
+	cmd := exec.CommandContext(ctx, exePath, args...) // #nosec G204 -- exePath is from os.Executable(), not user input
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil

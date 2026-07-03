@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -66,41 +67,39 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 }
 
 func (m *LocalManager) LogToServiceStdout(serviceName string, message string) error {
-	logPath, err := m.GetServiceLogFilePath(serviceName, false)
-	if err != nil {
-		return err
-	}
-	return m.appendToFile(logPath, "[HEALTH MONITOR] "+message)
+	return m.appendHealthEventToLog(serviceName, false, slog.LevelInfo, message)
 }
 
 func (m *LocalManager) LogToServiceStderr(serviceName string, message string) error {
-	logPath, err := m.GetServiceLogFilePath(serviceName, true)
-	if err != nil {
-		return err
-	}
-	return m.appendToFile(logPath, "[HEALTH MONITOR] "+message)
+	return m.appendHealthEventToLog(serviceName, true, slog.LevelWarn, message)
 }
 
-func (m *LocalManager) appendToFile(filePath *string, content string) (err error) {
-	file, openErr := os.OpenFile(*filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
+func (m *LocalManager) appendHealthEventToLog(serviceName string, errorLog bool, level slog.Level, message string) (err error) {
+	logPath, pathErr := m.GetServiceLogFilePath(serviceName, errorLog)
+	if pathErr != nil {
+		return pathErr
+	}
+	file, openErr := os.OpenFile(filepath.Clean(*logPath), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
 	if openErr != nil {
-		return fmt.Errorf("failed to open log file %s: %w", *filePath, openErr)
+		return fmt.Errorf("opening log file: %w", openErr)
 	}
 	defer func() {
-		if closeError := file.Close(); closeError != nil && err == nil {
-			err = fmt.Errorf("failed to close the file connection for %s: %w", *filePath, err)
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("closing log file: %w", closeErr)
 		}
 	}()
-
-	tw := &logutil.TimestampWriter{W: file}
-	if _, err = fmt.Fprintf(tw, "%s\n", content); err != nil {
-		return fmt.Errorf("failed to write to log file %s: %w", *filePath, err)
+	l := logutil.NewJSONLogger(file, false)
+	switch {
+	case level >= slog.LevelError:
+		l.Error(message, "service", serviceName, "source", "health")
+	case level >= slog.LevelWarn:
+		l.Warn(message, "service", serviceName, "source", "health")
+	default:
+		l.Info(message, "service", serviceName, "source", "health")
 	}
-
-	if err = file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync log file %s: %w", *filePath, err)
+	if syncErr := file.Sync(); syncErr != nil {
+		return fmt.Errorf("syncing log file: %w", syncErr)
 	}
-
 	return nil
 }
 
