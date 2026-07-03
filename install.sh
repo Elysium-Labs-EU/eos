@@ -480,13 +480,45 @@ main() {
             dim "  URL: $download_url"
             exit 1
         fi
-        
+
         if [ ! -f "$tmp_binary" ]; then
             error "Binary not found after download"
             exit 1
         fi
-        
+
         success "Downloaded successfully"
+
+        step "Verifying checksum..."
+        local checksums_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/sha256sums.txt"
+        local tmp_checksums="/tmp/${BINARY_NAME}_sha256sums.txt"
+
+        if ! download_file "$checksums_url" "$tmp_checksums" "$download_tool"; then
+            error "Failed to download sha256sums.txt"
+            exit 1
+        fi
+
+        local binary_name="eos-linux-${arch}"
+        local expected_checksum
+        expected_checksum=$(grep "  ${binary_name}$" "$tmp_checksums" | awk '{print $1}')
+
+        if [ -z "$expected_checksum" ]; then
+            error "No checksum found for ${binary_name} in sha256sums.txt"
+            exit 1
+        fi
+
+        local actual_checksum
+        actual_checksum=$(sha256sum "$tmp_binary" | awk '{print $1}')
+
+        if [ "$expected_checksum" != "$actual_checksum" ]; then
+            error "Checksum mismatch — binary may be corrupted"
+            dim "  expected: $expected_checksum"
+            dim "  got:      $actual_checksum"
+            rm -f "$tmp_binary" "$tmp_checksums"
+            exit 1
+        fi
+
+        rm -f "$tmp_checksums"
+        success "Checksum verified"
     fi
     
     # Stop running daemon before overwriting binary
