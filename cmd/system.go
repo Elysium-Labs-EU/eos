@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -167,7 +168,7 @@ Auto-detects the unit scope based on how you invoke the command:
 			if override := os.Getenv("USER_OS"); override != "" {
 				userOS = override
 			}
-			updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary)
+			updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -545,7 +546,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 }
 
-func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, ctrl DaemonController, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error)) {
+func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, ctrl DaemonController, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) {
 	binaryPath := filepath.Join(installDir, "eos")
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
@@ -620,7 +621,15 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "validating checksums...")
-	err = validateDigest(latestAsset, binary)
+	expectedChecksum, err := getChecksum(ctx, result.ChecksumsAsset, latestAsset.Name)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching checksums: %v", err))
+		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
+		}
+		return
+	}
+	err = validateDigest(expectedChecksum, binary)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
@@ -693,7 +702,6 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 type Asset struct {
 	Name               string `json:"name"`
-	Digest             string `json:"digest"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
@@ -753,8 +761,9 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 }
 
 type UpdateResult struct {
-	Asset         *Asset
-	LatestVersion string
+	Asset          *Asset
+	ChecksumsAsset *Asset
+	LatestVersion  string
 }
 
 func checkForUpdates(release *Release, current string, arch string, os string) (result UpdateResult, err error) {
@@ -764,18 +773,22 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 		return UpdateResult{}, nil
 	}
 
-	var usuableAsset *Asset
-	for _, asset := range release.Assets {
+	var usableAsset *Asset
+	var checksumsAsset *Asset
+	for i, asset := range release.Assets {
 		if strings.Contains(asset.Name, arch) && strings.Contains(asset.Name, os) {
-			usuableAsset = &asset
+			usableAsset = &release.Assets[i]
+		}
+		if asset.Name == "sha256sums.txt" {
+			checksumsAsset = &release.Assets[i]
 		}
 	}
 
-	if usuableAsset == nil {
+	if usableAsset == nil {
 		return UpdateResult{}, fmt.Errorf("no usable asset found")
 	}
 
-	return UpdateResult{Asset: usuableAsset, LatestVersion: latest}, nil
+	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, LatestVersion: latest}, nil
 }
 
 func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, tempDir string, err error) {
@@ -866,23 +879,60 @@ func checkWritable(cmd *cobra.Command, dir string) error {
 	return nil
 }
 
-func validateDigest(latestAsset *Asset, binary *os.File) error {
-	_, err := binary.Seek(0, io.SeekStart)
+func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryName string) (string, error) {
+	if checksumsAsset == nil {
+		return "", fmt.Errorf("no sha256sums.txt asset in release")
+	}
+
+	parsedURL, err := url.Parse(checksumsAsset.BrowserDownloadURL)
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
+		return "", fmt.Errorf("invalid checksums URL")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumsAsset.BrowserDownloadURL, nil)
 	if err != nil {
+		return "", fmt.Errorf("building request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if resp != nil {
+		defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
+	}
+	if err != nil {
+		return "", fmt.Errorf("fetching sha256sums.txt: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status fetching sha256sums.txt: %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == binaryName {
+			return fields[0], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("reading sha256sums.txt: %w", err)
+	}
+
+	return "", fmt.Errorf("no checksum found for %q in sha256sums.txt", binaryName)
+}
+
+func validateDigest(expectedChecksum string, binary *os.File) error {
+	if _, err := binary.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("failed to reset seeker on the file: %w", err)
 	}
 
-	receivedChecksum := strings.TrimPrefix(latestAsset.Digest, "sha256:")
-
 	hasher := sha256.New()
-
 	if _, err := io.Copy(hasher, binary); err != nil {
 		return fmt.Errorf("failed to hash binary: %w", err)
 	}
 	calculatedChecksum := hex.EncodeToString(hasher.Sum(nil))
 
-	if receivedChecksum != calculatedChecksum {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", receivedChecksum, calculatedChecksum)
+	if expectedChecksum != calculatedChecksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, calculatedChecksum)
 	}
 
 	return nil
