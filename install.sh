@@ -241,6 +241,56 @@ install_sqlite3() {
     return 1
 }
 
+stop_running_daemon() {
+    local eos_bin="${INSTALL_DIR}/${BINARY_NAME}"
+
+    if [ ! -x "$eos_bin" ]; then
+        return 0
+    fi
+
+    local pid
+    pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
+    if [ -z "$pid" ]; then
+        return 0
+    fi
+
+    echo ""
+    warn "eos daemon is running (PID $pid)"
+    dim "  Replacing binary while daemon is active may cause issues"
+    echo ""
+
+    if confirm "Stop eos daemon before installing?" "y"; then
+        if "$eos_bin" daemon stop &>/dev/null; then
+            local retries=5
+            while [ $retries -gt 0 ]; do
+                pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
+                [ -z "$pid" ] && break
+                sleep 1
+                retries=$((retries - 1))
+            done
+        fi
+
+        pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            warn "Graceful stop timed out — force killing PID $pid"
+            kill -9 "$pid" 2>/dev/null || true
+            sleep 1
+        fi
+
+        pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            error "Failed to stop eos daemon (PID $pid)"
+            if ! confirm "Continue anyway?" "n"; then
+                exit 1
+            fi
+        else
+            success "Daemon stopped"
+        fi
+    else
+        warn "Continuing with daemon running"
+    fi
+}
+
 setup_sqlite3() {
     local pkg_manager="$1"
     
@@ -439,6 +489,9 @@ main() {
         success "Downloaded successfully"
     fi
     
+    # Stop running daemon before overwriting binary
+    stop_running_daemon
+
     # Install binary
     step "Installing binary..."
     mkdir -p "$INSTALL_DIR"
