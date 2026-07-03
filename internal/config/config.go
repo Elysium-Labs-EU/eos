@@ -102,6 +102,14 @@ type SystemConfig struct {
 	UnderSystemd bool           `json:"under_systemd" yaml:"underSystemd"`
 }
 
+func UserSystemdDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".config", "systemd", "user") + "/", nil
+}
+
 func GetBaseDir() (string, error) {
 	if override := os.Getenv("EOS_BASE_DIR"); override != "" {
 		return override, nil

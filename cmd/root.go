@@ -182,7 +182,7 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, logCfg config.EosLogConfig) config.DaemonConfig {
+func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, systemdDir string, logCfg config.EosLogConfig) config.DaemonConfig {
 	// When invoked BY systemd (INVOCATION_ID set) we ARE the daemon process —
 	// run standalone in the foreground. Only delegate to systemctl when a human
 	// calls "eos daemon start" from outside systemd.
@@ -190,7 +190,7 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, l
 		return config.DaemonConfig{
 			Standalone: nil,
 			Systemd: &config.SystemdConfig{
-				SystemdTargetDir:      config.SystemdTargetDir,
+				SystemdTargetDir:      systemdDir,
 				SystemdTargetFileName: config.SystemdTargetFileName,
 			},
 		}
@@ -230,11 +230,20 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		FileSizeLimitBytes: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", eosCfg.Log.FileSizeLimitBytes),
 	}
 
-	isSystemdManaged, err := config.IsSystemdManaged(config.SystemdTargetDir, config.SystemdTargetFileName)
+	systemdDir := config.SystemdTargetDir
+	if os.Getuid() != 0 {
+		userDir, userDirErr := config.UserSystemdDir()
+		if userDirErr != nil {
+			return "", "", nil, fmt.Errorf("resolving user systemd dir: %w", userDirErr)
+		}
+		systemdDir = userDir
+	}
+
+	isSystemdManaged, err := config.IsSystemdManaged(systemdDir, config.SystemdTargetFileName)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("checking systemd managed state: %w", err)
 	}
-	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), logCfg)
+	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), systemdDir, logCfg)
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
 	if restartCounterResetWindow <= 0 {

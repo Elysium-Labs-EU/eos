@@ -64,7 +64,7 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service",
+	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false,
 		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -77,7 +77,7 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service",
+	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false,
 		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
@@ -94,7 +94,7 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service",
+	}, tempDir+"/", "eos.service", false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -115,7 +115,7 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service",
+	}, tempDir+"/", "eos.service", false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
@@ -132,8 +132,8 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 		t.Errorf("expected systemctl calls %v, got %v", want, calls)
 	}
 
-	if !strings.Contains(outBuf.String(), "eos enabled, will start on boot") {
-		t.Errorf("expected 'eos enabled' message, got: %s", outBuf.String())
+	if !strings.Contains(outBuf.String(), "system unit enabled, eos will start on boot") {
+		t.Errorf("expected 'system unit enabled' message, got: %s", outBuf.String())
 	}
 }
 
@@ -147,7 +147,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service",
+	}, tempDir+"/", "eos.service", false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
@@ -163,7 +163,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -178,7 +178,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -203,7 +203,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
-	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	}, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -218,7 +218,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 		t.Errorf("expected systemctl calls %v, got %v", want, calls)
 	}
 
-	if !strings.Contains(outBuf.String(), "systemd startup removed") {
+	if !strings.Contains(outBuf.String(), "system unit startup removed") {
 		t.Errorf("expected success message, got: %s", outBuf.String())
 	}
 }
