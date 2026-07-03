@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff profile-orb
+.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -41,6 +41,14 @@ bench-diff: ## Compare two latest memory snapshots with benchstat
 	if [ $$(echo "$$files" | wc -w) -lt 2 ]; then echo "Need ≥2 snapshots — run bench-mem on two commits"; exit 1; fi; \
 	old=$$(echo "$$files" | awk 'NR==2'); new=$$(echo "$$files" | awk 'NR==1'); \
 	echo "comparing $$old → $$new"; benchstat $$old $$new
+
+bench-db: ## Run database benchmarks locally (quick iteration, no snapshot)
+	go test -bench=. -benchmem -count=3 ./internal/database/...
+
+bench-db-orb: ## Run database benchmarks on OrbStack $(ORB_MACHINE), save snapshot
+	@mkdir -p $(BENCHMARKS_DIR)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test -bench=. -benchmem -count=5 ./internal/database/... 2>&1 | tee $(PWD)/$(BENCHMARKS_DIR)/db.$(COMMIT).txt"
+	@echo "Snapshot: $(BENCHMARKS_DIR)/db.$(COMMIT).txt"
 
 profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF_ADDR=:6060 eos daemon start)
 	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap

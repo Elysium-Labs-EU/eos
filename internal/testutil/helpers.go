@@ -15,7 +15,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
-func SetupTestDB(t *testing.T, migrationsFS embed.FS, migrationsPath string) (*database.DB, *sql.DB, string) {
+func SetupTestDB(t testing.TB, migrationsFS embed.FS, migrationsPath string) (*database.DB, *sql.DB, string) {
 	t.Helper()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
