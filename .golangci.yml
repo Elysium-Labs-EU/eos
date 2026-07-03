@@ -87,6 +87,7 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - ^\.\./   # outside current dir; golangci-lint resolves paths via git-common-dir in worktrees
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
