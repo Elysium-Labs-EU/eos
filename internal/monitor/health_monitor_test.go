@@ -650,6 +650,112 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	}
 }
 
+// TestHealthMonitor_CheckRunningProcess_ThrottledMemSample verifies that when the
+// mem sample interval has not elapsed, checkRunningProcess does NOT overwrite the
+// last known RSS value in the DB with 0.
+func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	// 24h interval ensures the throttle fires on every tick during the test
+	healthConfig := newTestHealthConfig(t, WithMemSampleInterval(24*time.Hour))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to create listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+	}
+	port := tcpAddr.Port
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	const serviceName = "throttle-test-svc"
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(port),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("error registering service: %v", err)
+	}
+
+	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get recent process history entry failed: %v", err)
+	}
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+	// Seed a known RSS value so we can detect if it gets zeroed.
+	const knownRssKb = int64(12345)
+	if err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+		RssMemoryKb: &[]int64{knownRssKb}[0],
+	}); err != nil {
+		t.Fatalf("seed RSS value failed: %v", err)
+	}
+
+	// Mark the sample as just-taken so the throttle fires on the next call.
+	hm.lastMemSample[serviceName] = time.Now()
+
+	serviceInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || serviceInstance == nil {
+		t.Fatalf("get service instance failed: %v", err)
+	}
+	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get process history entry failed: %v", err)
+	}
+
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance)
+
+	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get process history entry after tick failed: %v", err)
+	}
+	if processHistoryEntry.RssMemoryKb != knownRssKb {
+		t.Fatalf("RSS overwritten during throttled tick: want %d KB, got %d KB", knownRssKb, processHistoryEntry.RssMemoryKb)
+	}
+}
+
 // func TestHealthMonitor_CheckRunningProcess_AliveButPortUnreachable(t *testing.T) {
 // 	tempDir := t.TempDir()
 //  daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
@@ -1701,6 +1807,12 @@ func WithTimeoutLimit(timeoutLimit time.Duration) HealthConfigOption {
 func WithRestartCounterResetWindow(window time.Duration) HealthConfigOption {
 	return func(hc *config.HealthConfig) {
 		hc.RestartCounterResetWindow = window
+	}
+}
+
+func WithMemSampleInterval(d time.Duration) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.MemSampleInterval = d
 	}
 }
 
