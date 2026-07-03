@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -375,7 +374,19 @@ func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 	}
 
 	if daemonConfig.Standalone == nil {
-		return nil, nil, errors.New("daemon running in systemd mode, cannot connect via socket")
+		db, dbErr := database.NewDB(ctx, baseDir)
+		if dbErr != nil {
+			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
+		}
+		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose))
+		cleanup := func() {
+			err = db.CloseDBConnection()
+			if err != nil {
+				fmt.Printf("closing database connection on cleanup: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		return mgr, cleanup, nil
 	}
 
 	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout, verbose)
