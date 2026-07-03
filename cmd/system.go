@@ -895,12 +895,13 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	}
 
 	resp, err := httpClient.Do(req)
-	if resp != nil {
-		defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
-	}
 	if err != nil {
 		return "", fmt.Errorf("fetching sha256sums.txt: %w", err)
 	}
+	if resp == nil {
+		return "", fmt.Errorf("nil response fetching sha256sums.txt")
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status fetching sha256sums.txt: %d", resp.StatusCode)
 	}
