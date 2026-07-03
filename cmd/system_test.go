@@ -372,7 +372,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		}, nil
 	}
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary)
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
 
 	output := errBuf.String()
 
@@ -406,7 +406,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	binaryContent := []byte("fake binary")
 	sum := sha256.Sum256(binaryContent)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
+	expectedDigest := hex.EncodeToString(sum[:])
 
 	fakeFetchRelease := func(_ context.Context, _ bool) (*Release, error) {
 		return &Release{
@@ -414,11 +414,14 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 			Assets: []Asset{
 				{
 					Name:               "eos-linux-arm64",
-					Digest:             digest,
 					BrowserDownloadURL: "https://codeberg.org/fake/download",
 				},
 			},
 		}, nil
+	}
+
+	fakeGetChecksum := func(_ context.Context, _ *Asset, _ string) (string, error) {
+		return expectedDigest, nil
 	}
 
 	fakeDownloadBinary := func(_ context.Context, asset *Asset) (*os.File, string, error) {
@@ -440,7 +443,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	cmd.SetIn(strings.NewReader("y\ny\n"))
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary)
+	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 
 	output := outBuf.String()
 
