@@ -48,6 +48,8 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, baseDi
 		go func() { _ = http.ListenAndServe(addr, nil) }() //nolint:gosec // addr is operator-controlled via env var
 	}
 
+	reconcileOrphans(ctx, d.db, d.logger)
+
 	if underSystemd {
 		err := d.recover()
 		if err != nil {
@@ -79,6 +81,47 @@ func bootPersistedServices(mgr *manager.LocalManager, logger *manager.DaemonLogg
 		}
 	}
 	return nil
+}
+
+func reconcileOrphans(ctx context.Context, db *database.DB, logger logutil.ProcessLogger) {
+	entries, err := db.GetAllServiceCatalogEntries(ctx)
+	if err != nil {
+		logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans: listing catalog: %v", err))
+		return
+	}
+
+	for _, entry := range entries {
+		hist, err := db.GetMostRecentProcessHistoryEntryByName(ctx, entry.Name)
+		if err != nil {
+			if !errors.Is(err, database.ErrProcessHistoryNotFound) {
+				logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans [%s]: fetching history: %v", entry.Name, err))
+			}
+			continue
+		}
+
+		switch hist.State {
+		case types.ProcessStateRunning, types.ProcessStateStarting, types.ProcessStateUnknown:
+			// fall through to kill
+		case types.ProcessStateStopped, types.ProcessStateFailed:
+			continue
+		}
+
+		if hist.PGID > 0 {
+			if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
+				logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reconcile orphans [%s]: kill PGID %d: %v", entry.Name, hist.PGID, killErr))
+			}
+		}
+
+		now := time.Now()
+		if updateErr := db.UpdateProcessHistoryEntry(ctx, hist.PGID, database.ProcessHistoryUpdate{
+			State:     new(types.ProcessStateStopped),
+			StoppedAt: &now,
+		}); updateErr != nil {
+			logger.Log(logutil.LogLevelError, fmt.Sprintf("reconcile orphans [%s]: updating state: %v", entry.Name, updateErr))
+		} else {
+			logger.Log(logutil.LogLevelInfo, fmt.Sprintf("reconcile orphans: orphan PGID %d (%s) stopped", hist.PGID, entry.Name))
+		}
+	}
 }
 
 func (d *daemon) shutdown() {
