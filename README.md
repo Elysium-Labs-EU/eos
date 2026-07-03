@@ -2,6 +2,8 @@
 
 [![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium_Labs/eos)
 
+![eos demo](demo/eos-demo.gif)
+
 Lightweight process manager for your VPS. Register services, start them, keep them running. No Node.js, no global daemon, no overhead.
 
 If you've used PM2 and want something smaller and self-contained, eos covers the core workflow.
