@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-integration lint nilcheck leak-test clean docker-* test-docker-* release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-install-orb test-integration lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -137,59 +137,14 @@ sg-rules: ## List all ast-grep rules
 ci: test lint sg nilcheck ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
-docker-local: ## Test with local Docker setup
-	@echo "Starting local Docker test environment..."
-	@mkdir -p test-files-local/nginx-logs
-	@sh -c 'docker compose -f test-files-local/docker-compose.yml up --build'
+test-linux: ## Run tests on OrbStack $(ORB_MACHINE) Linux (mirrors CI)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd ./internal/... -race -count=2"
 
-docker-local-down:  ## Tear down local Docker setup
-	docker compose -f test-files-local/docker-compose.yml down
+test-linux-single: ## Run single test on OrbStack $(ORB_MACHINE) (TEST=TestName)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd ./internal/... -race -count=1 -v -run $(TEST)"
 
-docker-local-logs: ## Tail logs local Docker setup
-	docker compose -f test-files-local/docker-compose.yml logs -f
-
-docker-vps: ## Test install.sh in VPS simulator
-	@echo "Starting VPS simulator..."
-	@echo "Once started, run: make docker-vps-test"
-	@sh -c 'docker compose -f test-files-vps/docker-compose.yml up --build -d'
-
-docker-vps-down: ## Tear down VPS simulator
-	docker compose -f test-files-vps/docker-compose.yml down
-
-docker-vps-test: ## Run install.sh in VPS simulator
-	@echo "Testing install.sh in VPS simulator..."
-	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
-
-docker-vps-shell: ## Open shell in VPS simulator
-	@echo "Opening shell in VPS simulator..."
-	docker exec -it vps-test-eos bash
-
-docker-vps-status: ## Check eos service status in VPS simulator
-	@echo "Checking eos service status in VPS..."
-	docker exec -it vps-test-eos systemctl status eos
-
-docker-vps-logs: ## Follow eos logs in VPS simulator
-	@echo "Following eos logs in VPS..."
-	docker exec -it vps-test-eos journalctl -u eos -f
-
-test-docker-build: ## Build Linux test Docker image
-	docker build -f test-files/Dockerfile.test -t eos-test .
-
-test-docker-linux: test-docker-build ## Run tests in Linux Docker container
-	docker run --rm eos-test
-
-test-docker-linux-verbose: test-docker-build ## Run tests in Linux Docker container with verbose output
-	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v
-
-test-docker-linux-single: test-docker-build ## Run a single test in Linux Docker container (TEST=TestName)
-	docker run --rm eos-test go test ./cmd ./internal/... -race -count=1 -v -run $(TEST)
-
-docker-clean: ## Clean up Docker resources
-	@echo "Cleaning up Docker resources..."
-	docker compose -f test-files-local/docker-compose.yml down -v 2>/dev/null || true
-	docker compose -f test-files-vps/docker-compose.yml down -v 2>/dev/null || true
-	docker rmi eos-test 2>/dev/null || true
-	rm -rf test-files-local/nginx-logs
+test-install-orb: release-local ## Build and test install.sh on OrbStack $(ORB_MACHINE) with local binary
+	orb run -m $(ORB_MACHINE) bash -lc "arch=\$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-linux-\$$arch"
 
 release-local: ## Build release binaries locally
 	@echo "Building release binaries..."
@@ -225,25 +180,8 @@ pre-release: ## Tag and push a pre-release (requires TAG=v1.2.0-rc.1, no changel
 	git tag -a $(TAG) -m "Pre-release $(TAG)"
 	git push origin $(TAG)
 
-test-install-local: release-local ## Build and test local binary install in VPS simulator
-	@$(MAKE) docker-vps
-	@sleep 5
-	@echo "Copying binary to VPS..."
-	docker cp dist/eos-linux-amd64 vps-test-eos:/usr/local/src/eos-local
-	docker exec -it vps-test-eos ls -la /usr/local/src/eos-local
-	@echo "Running install.sh..."
-	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh -y --local /usr/local/src/eos-local"
-	docker exec -it vps-test-eos bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash && \. "$$HOME/.nvm/nvm.sh" && nvm install 24 && corepack enable pnpm'
-
-test-install-remote: ## Test remote install.sh in VPS simulator
-	@$(MAKE) docker-vps
-	@sleep 5
-	@echo "Running install.sh..."
-	docker exec -it vps-test-eos bash -c "cd /test-scripts && bash install.sh"
-
-clean: ## Remove build artifacts and clean Docker resources
+clean: ## Remove build artifacts
 	@echo "Cleaning..."
 	rm -rf $(GOBIN) dist/
-	@$(MAKE) docker-clean
 	go clean
 	@echo "Cleaned"
