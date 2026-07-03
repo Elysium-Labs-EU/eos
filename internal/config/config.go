@@ -268,7 +268,7 @@ func (c EosConfig) Validate() error {
 func LoadEosConfig(baseDir string) (EosConfig, error) {
 	cfg := DefaultEosConfig()
 	path := filepath.Join(baseDir, EosConfigFileName)
-	data, err := os.ReadFile(path) //nolint:gosec // path is constructed from trusted baseDir
+	data, err := os.ReadFile(path) // #nosec G304 -- path is constructed from trusted baseDir
 	if os.IsNotExist(err) {
 		return cfg, nil
 	}
