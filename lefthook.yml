@@ -1,3 +1,10 @@
+pre-push:
+  commands:
+    coverage:
+      glob: "*.go"
+      run: make test-coverage-check
+      priority: 1
+
 pre-commit:
   commands:
     format:

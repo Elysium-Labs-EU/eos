@@ -36,6 +36,13 @@ jobs:
       - name: Run tests
         run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
+      - name: Check coverage threshold
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,""); print $3}')
+          echo "Total coverage: ${total}%"
+          awk -v total="$total" -v threshold="40" \
+            'BEGIN { if (total+0 < threshold+0) { print "Coverage " total "% is below threshold " threshold "%"; exit 1 } }'
+
       # - name: Upload coverage
       #   uses: codecov/codecov-action@v4
       #   with:

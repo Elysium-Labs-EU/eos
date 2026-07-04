@@ -104,6 +104,17 @@ test-coverage: ## Get test coverage
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
+COVERAGE_THRESHOLD ?= 40
+
+test-coverage-check: ## Fail if total coverage is below COVERAGE_THRESHOLD (default 40%)
+	@echo "Checking test coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
+	@go test -coverprofile=coverage.out ./... -covermode=atomic -count=1 2>&1 | grep -v "^?" || true
+	@total=$$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,""); print $$3}'); \
+	echo "Total coverage: $${total}%"; \
+	awk -v total="$${total}" -v threshold="$(COVERAGE_THRESHOLD)" \
+		'BEGIN { if (total+0 < threshold+0) { print "Coverage " total "% below threshold " threshold "%"; exit 1 } }'
+	@echo "Coverage check passed."
+
 lint: ## Run all linters
 	@echo "Running linters..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
@@ -134,7 +145,7 @@ sg-test: ## Run ast-grep rule tests
 sg-rules: ## List all ast-grep rules
 	@find rules -name '*.yml' ! -path '*__tests__*' | sort
 
-ci: test lint sg nilcheck ## Run all CI checks locally
+ci: test lint sg nilcheck test-coverage-check ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 test-linux: ## Run tests on OrbStack $(ORB_MACHINE) Linux (mirrors CI)
