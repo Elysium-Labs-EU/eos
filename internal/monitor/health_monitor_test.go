@@ -1717,6 +1717,12 @@ func WithMemSampleInterval(d time.Duration) HealthConfigOption {
 	}
 }
 
+func WithCheckInterval(d time.Duration) HealthConfigOption {
+	return func(hc *config.HealthConfig) {
+		hc.CheckInterval = d
+	}
+}
+
 func newTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.HealthConfig {
 	t.Helper()
 	healthConfig := &config.HealthConfig{
@@ -1973,5 +1979,26 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	}
 	if updated.State != types.ProcessStateFailed {
 		t.Errorf("expected Failed for dead process in unknown state, got %v", updated.State)
+	}
+}
+
+func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithCheckInterval(0))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	if hm.checkInterval != 2*time.Second {
+		t.Errorf("expected default checkInterval 2s, got %v", hm.checkInterval)
 	}
 }
