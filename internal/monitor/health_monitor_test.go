@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -290,106 +291,6 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		}
 	}
 }
-
-// func TestHealthMonitor_CheckStartProcess_Invalid_Port(t *testing.T) {
-// 	tempDir := t.TempDir()
-//  daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-// 	timoutLimit := 30 * time.Second
-
-// 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-// 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
-
-// 	if err != nil {
-// 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
-// 	}
-
-// 	hm := NewHealthMonitor(mgr, db, logger, healthConfig)
-
-// 	serviceName := "test-service"
-// 	serviceDir := filepath.Join(tempDir, serviceName)
-// 	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-// 		t.Fatalf("Failed to create service directory: %v", err)
-// 	}
-
-// 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithRuntimePath(""), testutil.WithName(serviceName))
-// 	yamlData, err := yaml.Marshal(testFile)
-// 	if err != nil {
-// 		t.Fatalf("Failed to marshal test config: %v", err)
-// 	}
-
-// 	fullDirPath := filepath.Join(tempDir, "test-project")
-// 	err = os.MkdirAll(fullDirPath, 0755)
-
-// 	if err != nil {
-// 		t.Fatalf("could not create test-project directory: %v\n", err)
-// 	}
-
-// 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-// 	err = os.WriteFile(fullPath, yamlData, 0644)
-// 	if err != nil {
-// 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
-// 	}
-
-// 	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
-// 	if err != nil {
-// 		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
-// 	}
-
-// 	err = mgr.AddServiceCatalogEntry(,serviceCatalogEntry)
-// 	if err != nil {
-// 		t.Fatalf("Error registering service: %v\n", err)
-// 	}
-
-// 	pid, err := mgr.StartService(,serviceCatalogEntry.Name)
-
-// 	if err != nil {
-// 		t.Fatalf("Service unable to start, got: %v", err)
-// 	}
-// 	if pid < 1 {
-// 		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
-// 	}
-
-// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
-// 	if err != nil {
-// 		t.Fatalf("Service unable to get recent process history entry, got: %v", err)
-// 	}
-// 	if processHistoryEntry == nil {
-// 		t.Fatal("Service process history entry not found")
-// 	}
-// 	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timoutLimit)
-
-// 	var buf bytes.Buffer
-// 	var errorBuf bytes.Buffer
-
-// 	tailLogCommand := exec.Command("tail", "-n", "20", filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
-// 	tailLogCommand.Stdout = &buf
-// 	tailLogCommand.Stderr = &errorBuf
-
-// 	err = tailLogCommand.Run()
-
-// 	if err != nil {
-// 		t.Fatalf("The log command failed, got:\n%v\nOutput: %s", err, errorBuf.String())
-// 	}
-// 	time.Sleep(100 * time.Millisecond)
-
-// 	output := buf.String()
-
-// 	if strings.Count(output, "\n") != 1 {
-// 		t.Fatalf("No logs were created")
-// 	}
-
-// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
-// 	if err != nil {
-// 		t.Fatalf("Service unable to get recent process history entry, got: %v", err)
-// 	}
-// 	if processHistoryEntry == nil {
-// 		t.Fatal("Service process history entry not found")
-// 	}
-// 	if !strings.Contains(output, "is not running on port") {
-// 		t.Fatalf("Process check should confirm that service is running on the assigned port")
-// 	}
-// }
 
 func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	tempDir := t.TempDir()
@@ -1872,4 +1773,205 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	return limit
 }
 
-// func TestCheckUnknownProcess(t *testing.T) {}
+func TestScanStatusFieldBytes_found(t *testing.T) {
+	contents := []byte("Name:\tmy-proc\nVmRSS:\t12345 kB\nNSpgid:\t42\n")
+	got := scanStatusFieldBytes(contents, []byte("VmRSS:\t"))
+	if got == nil {
+		t.Fatal("expected to find VmRSS field, got nil")
+	}
+	if string(got) != "12345 kB" {
+		t.Errorf("got %q, want %q", string(got), "12345 kB")
+	}
+}
+
+func TestScanStatusFieldBytes_notFound(t *testing.T) {
+	contents := []byte("Name:\tmy-proc\nVmRSS:\t12345 kB\n")
+	got := scanStatusFieldBytes(contents, []byte("NSpgid:\t"))
+	if got != nil {
+		t.Errorf("expected nil for missing field, got %q", got)
+	}
+}
+
+func TestScanStatusFieldBytes_lastLine(t *testing.T) {
+	contents := []byte("Name:\tmy-proc\nNSpgid:\t99")
+	got := scanStatusFieldBytes(contents, []byte("NSpgid:\t"))
+	if got == nil {
+		t.Fatal("expected to find NSpgid at last line (no trailing newline)")
+	}
+	if string(got) != "99" {
+		t.Errorf("got %q, want %q", string(got), "99")
+	}
+}
+
+func TestScanStatusFieldBytes_empty(t *testing.T) {
+	got := scanStatusFieldBytes([]byte{}, []byte("VmRSS:\t"))
+	if got != nil {
+		t.Errorf("expected nil for empty contents, got %q", got)
+	}
+}
+
+func TestCheckMemoryLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("checkMemoryLinux only runs on Linux")
+	}
+
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	pgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("failed to get pgid: %v", err)
+	}
+
+	rss := hm.checkMemoryLinux(pgid)
+	if rss <= 0 {
+		t.Errorf("expected positive RSS for own process group, got %d", rss)
+	}
+}
+
+func TestCheckUnknownProcess_alive(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	fullDirPath := filepath.Join(tempDir, "unknown-alive-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("failed to create project dir: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	const serviceName = "unknown-alive-svc"
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(serviceName)
+	if err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+	processEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processEntry == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+
+	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updated == nil {
+		t.Fatal("failed to get updated process history")
+	}
+	if updated.State != types.ProcessStateRunning {
+		t.Errorf("expected Running for alive process in unknown state, got %v", updated.State)
+	}
+}
+
+func TestCheckUnknownProcess_dead(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "unknown-dead-svc"
+	fullDirPath := filepath.Join(tempDir, "unknown-dead-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName))
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	yamlData, yamlErr := yaml.Marshal(testFile)
+	if yamlErr != nil {
+		t.Fatalf("failed to marshal config: %v", yamlErr)
+	}
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(serviceName, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	fakePGID := 999997
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateUnknown); err != nil {
+		t.Fatalf("failed to register fake process history: %v", err)
+	}
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create log files: %v", err)
+	}
+
+	processEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processEntry == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+
+	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updated == nil {
+		t.Fatal("failed to get updated process history")
+	}
+	if updated.State != types.ProcessStateFailed {
+		t.Errorf("expected Failed for dead process in unknown state, got %v", updated.State)
+	}
+}

@@ -5,16 +5,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -441,7 +447,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		return f, dir, nil
 	}
 
-	cmd.SetIn(strings.NewReader("y\ny\n"))
+	setStdin(cmd, "y\ny\n")
 
 	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 
@@ -531,7 +537,362 @@ func TestSystemVersionCommand(t *testing.T) {
 	}
 }
 
-// func TestReplaceBinary(t *testing.T) {}
+// hostRedirectTransport rewrites any request to hit addr over plain HTTP.
+// Lets tests intercept hardcoded codeberg.org URLs.
+type hostRedirectTransport struct{ addr string }
+
+func (h *hostRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r2 := req.Clone(req.Context())
+	r2.URL.Host = h.addr
+	r2.URL.Scheme = "http"
+	return http.DefaultTransport.RoundTrip(r2)
+}
+
+// useHTTPTestServer starts an httptest.Server and wires httpClient to route
+// all requests to it. Restores the original client on test cleanup.
+func useHTTPTestServer(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	orig := httpClient
+	httpClient = &http.Client{Transport: &hostRedirectTransport{addr: srv.Listener.Addr().String()}}
+	t.Cleanup(func() {
+		httpClient = orig
+		srv.Close()
+	})
+}
+
+func TestFetchLatestRelease_success(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Release{TagName: "v2.0.0"})
+	})
+	rel, err := fetchLatestRelease(t.Context(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v2.0.0" {
+		t.Errorf("got tag %q", rel.TagName)
+	}
+}
+
+func TestFetchLatestRelease_includePre(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{{TagName: "v3.0.0-rc.1"}})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v3.0.0-rc.1" {
+		t.Errorf("got tag %q", rel.TagName)
+	}
+}
+
+func TestFetchLatestRelease_nonOKStatus(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	_, err := fetchLatestRelease(t.Context(), false)
+	if err == nil {
+		t.Fatal("expected error for non-OK status")
+	}
+}
+
+func TestFetchLatestRelease_emptyPreList(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{})
+	})
+	_, err := fetchLatestRelease(t.Context(), true)
+	if err == nil {
+		t.Fatal("expected error for empty pre-release list")
+	}
+}
+
+func TestFetchLatestRelease_badJSON(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	})
+	_, err := fetchLatestRelease(t.Context(), false)
+	if err == nil {
+		t.Fatal("expected error for bad JSON")
+	}
+}
+
+func TestHandleDownloadBinary_success(t *testing.T) {
+	content := []byte("fake binary content")
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	})
+	asset := &Asset{
+		Name:               "eos-linux-amd64",
+		BrowserDownloadURL: "https://codeberg.org/fake/download",
+	}
+	f, tempDir, err := handleDownloadBinary(t.Context(), asset)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	defer func() { _ = f.Close() }()
+
+	got, readErr := io.ReadAll(f)
+	if readErr != nil {
+		t.Fatalf("reading downloaded file: %v", readErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestHandleDownloadBinary_invalidURL(t *testing.T) {
+	asset := &Asset{
+		Name:               "eos-linux-amd64",
+		BrowserDownloadURL: "https://github.com/fake/download",
+	}
+	_, _, err := handleDownloadBinary(t.Context(), asset)
+	if err == nil {
+		t.Fatal("expected error for non-codeberg URL")
+	}
+}
+
+func TestHandleDownloadBinary_nonOK(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	asset := &Asset{
+		Name:               "eos-linux-amd64",
+		BrowserDownloadURL: "https://codeberg.org/fake/download",
+	}
+	_, _, err := handleDownloadBinary(t.Context(), asset)
+	if err == nil {
+		t.Fatal("expected error for non-OK status")
+	}
+}
+
+func TestFetchChecksumForBinary_success(t *testing.T) {
+	binaryName := "eos-linux-amd64"
+	checksum := "abc123def456"
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "%s  %s\n", checksum, binaryName)
+	})
+	asset := &Asset{
+		Name:               "sha256sums.txt",
+		BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt",
+	}
+	got, err := fetchChecksumForBinary(t.Context(), asset, binaryName)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != checksum {
+		t.Errorf("got checksum %q, want %q", got, checksum)
+	}
+}
+
+func TestFetchChecksumForBinary_nilAsset(t *testing.T) {
+	_, err := fetchChecksumForBinary(t.Context(), nil, "eos-linux-amd64")
+	if err == nil {
+		t.Fatal("expected error for nil asset")
+	}
+}
+
+func TestFetchChecksumForBinary_notFound(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "abc123  eos-linux-arm64\n")
+	})
+	asset := &Asset{BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt"}
+	_, err := fetchChecksumForBinary(t.Context(), asset, "eos-linux-amd64")
+	if err == nil {
+		t.Fatal("expected error when binary not found in checksums")
+	}
+}
+
+func TestFetchChecksumForBinary_nonOK(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	asset := &Asset{BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt"}
+	_, err := fetchChecksumForBinary(t.Context(), asset, "eos-linux-amd64")
+	if err == nil {
+		t.Fatal("expected error for non-OK status")
+	}
+}
+
+func TestReplaceBinary_success(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "eos-new")
+	dst := filepath.Join(dir, "eos")
+
+	if err := os.WriteFile(src, []byte("new binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceBinary(src, dst); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new binary" {
+		t.Errorf("expected 'new binary', got %q", got)
+	}
+}
+
+func TestValidateDigest_mismatch(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "binary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err = f.Write([]byte("content")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = validateDigest("wrongchecksum", f); err == nil {
+		t.Fatal("expected error for checksum mismatch")
+	}
+}
+
+func TestExtractServiceInstancesFromErrors(t *testing.T) {
+	errs := ErrorServices{
+		"svc1": {Service: types.ServiceInstance{Name: "svc1"}, Error: fmt.Errorf("err1")},
+		"svc2": {Service: types.ServiceInstance{Name: "svc2"}, Error: fmt.Errorf("err2")},
+	}
+	got := extractServiceInstancesFromErrors(errs)
+	if len(got) != 2 {
+		t.Errorf("expected 2 instances, got %d", len(got))
+	}
+}
+
+// mockMgr is a test-only manager.ServiceManager that delegates to optional func fields.
+type mockMgr struct {
+	getAllInstances func() ([]types.ServiceInstance, error)
+	stopSvc         func(string, time.Duration, time.Duration) (manager.StopServiceResult, error)
+	forceStop       func(string) (manager.StopServiceResult, error)
+	removeInstance  func(string) (bool, error)
+}
+
+func (m *mockMgr) GetAllServiceInstances() ([]types.ServiceInstance, error) {
+	if m.getAllInstances != nil {
+		return m.getAllInstances()
+	}
+	return nil, nil
+}
+func (m *mockMgr) StopService(name string, gp, tp time.Duration) (manager.StopServiceResult, error) {
+	if m.stopSvc != nil {
+		return m.stopSvc(name, gp, tp)
+	}
+	return manager.StopServiceResult{}, nil
+}
+func (m *mockMgr) ForceStopService(name string) (manager.StopServiceResult, error) {
+	if m.forceStop != nil {
+		return m.forceStop(name)
+	}
+	return manager.StopServiceResult{}, nil
+}
+func (m *mockMgr) RemoveServiceInstance(name string) (bool, error) {
+	if m.removeInstance != nil {
+		return m.removeInstance(name)
+	}
+	return true, nil
+}
+func (m *mockMgr) GetServiceInstance(string) (*types.ServiceInstance, error) {
+	return &types.ServiceInstance{}, nil
+}
+func (m *mockMgr) AddServiceCatalogEntry(*types.ServiceCatalogEntry) error           { return nil }
+func (m *mockMgr) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) { return nil, nil }
+func (m *mockMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
+	return types.ServiceCatalogEntry{}, nil
+}
+func (m *mockMgr) IsServiceRegistered(string) (bool, error)               { return false, nil }
+func (m *mockMgr) RemoveServiceCatalogEntry(string) (bool, error)         { return false, nil }
+func (m *mockMgr) UpdateServiceCatalogEntry(string, string, string) error { return nil }
+func (m *mockMgr) GetMostRecentProcessHistoryEntry(string) (*types.ProcessHistory, error) {
+	return &types.ProcessHistory{}, nil
+}
+func (m *mockMgr) NewServiceLogFiles(string) (string, string, error) { return "", "", nil }
+func (m *mockMgr) GetServiceLogFilePath(string, bool) (*string, error) {
+	s := ""
+	return &s, nil
+}
+func (m *mockMgr) RestartService(string, time.Duration, time.Duration) (int, error) { return 0, nil }
+func (m *mockMgr) StartService(string) (int, error)                                 { return 0, nil }
+
+func TestStopServices_allSuccess(t *testing.T) {
+	mgr := &mockMgr{
+		stopSvc: func(_ string, _, _ time.Duration) (manager.StopServiceResult, error) {
+			return manager.StopServiceResult{Stopped: map[int]bool{1: true}}, nil
+		},
+	}
+	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
+	cfg := &config.SystemConfig{Shutdown: config.ShutdownConfig{GracePeriod: time.Second}}
+
+	stopped, errored := stopServices(mgr, cfg, instances)
+	if len(stopped) != 2 {
+		t.Errorf("expected 2 stopped, got %d", len(stopped))
+	}
+	if len(errored) != 0 {
+		t.Errorf("expected 0 errored, got %d: %v", len(errored), errored)
+	}
+}
+
+func TestStopServices_withError(t *testing.T) {
+	mgr := &mockMgr{
+		stopSvc: func(name string, _, _ time.Duration) (manager.StopServiceResult, error) {
+			if name == "svc2" {
+				return manager.StopServiceResult{}, fmt.Errorf("stop failed")
+			}
+			return manager.StopServiceResult{Stopped: map[int]bool{1: true}}, nil
+		},
+	}
+	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
+	cfg := &config.SystemConfig{Shutdown: config.ShutdownConfig{GracePeriod: time.Second}}
+
+	stopped, errored := stopServices(mgr, cfg, instances)
+	if len(stopped) != 1 {
+		t.Errorf("expected 1 stopped, got %d", len(stopped))
+	}
+	if len(errored) != 1 {
+		t.Errorf("expected 1 errored, got %d", len(errored))
+	}
+}
+
+func TestForceStopServices_allSuccess(t *testing.T) {
+	mgr := &mockMgr{
+		forceStop: func(_ string) (manager.StopServiceResult, error) {
+			return manager.StopServiceResult{Stopped: map[int]bool{2: true}}, nil
+		},
+	}
+	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
+
+	errored := forceStopServices(mgr, instances)
+	if len(errored) != 0 {
+		t.Errorf("expected 0 errored, got %d: %v", len(errored), errored)
+	}
+}
+
+func TestForceStopServices_withError(t *testing.T) {
+	mgr := &mockMgr{
+		forceStop: func(name string) (manager.StopServiceResult, error) {
+			if name == "svc1" {
+				return manager.StopServiceResult{}, fmt.Errorf("force stop failed")
+			}
+			return manager.StopServiceResult{Stopped: map[int]bool{3: true}}, nil
+		},
+	}
+	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
+
+	errored := forceStopServices(mgr, instances)
+	if len(errored) != 1 {
+		t.Errorf("expected 1 errored, got %d", len(errored))
+	}
+}
 
 func TestSupportedPlatformsMatchCheckForUpdates(t *testing.T) {
 	for _, platform := range supportedPlatforms {
