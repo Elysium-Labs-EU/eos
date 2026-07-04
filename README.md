@@ -4,7 +4,7 @@
 
 ![eos demo](demo/eos-demo.gif)
 
-Lightweight process manager for your VPS. Register services, start them, keep them running.
+Lightweight service supervisor for your VPS. Register services, start them, keep them running.
 
 ## Features
 
@@ -82,6 +82,7 @@ command: "/home/user/start.sh"
 With all options:
 
 ```yaml
+# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json
 name: "cms"
 command: "/home/user/start.sh"
 port: 1337
