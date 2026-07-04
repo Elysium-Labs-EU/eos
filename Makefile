@@ -104,7 +104,7 @@ test-coverage: ## Get test coverage
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-COVERAGE_THRESHOLD ?= 46
+COVERAGE_THRESHOLD ?= 49
 
 test-coverage-check: ## Fail if total coverage is below COVERAGE_THRESHOLD (default 40%)
 	@echo "Checking test coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
