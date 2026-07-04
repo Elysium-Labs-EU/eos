@@ -82,6 +82,7 @@ command: "/home/user/start.sh"
 With all options:
 
 ```yaml
+# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json
 name: "cms"
 command: "/home/user/start.sh"
 port: 1337
