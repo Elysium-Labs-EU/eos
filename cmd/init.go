@@ -19,7 +19,7 @@ import (
 const initSchemaHeader = "# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json\n\n"
 
 // initServiceConfig mirrors types.ServiceConfig but with Runtime as a pointer
-// so yaml omitempty works — an empty Runtime struct would otherwise marshal to "runtime: {}".
+// so yaml omitempty works ; an empty Runtime struct would otherwise marshal to "runtime: {}".
 type initServiceConfig struct {
 	Runtime       *types.Runtime `yaml:"runtime,omitempty"`
 	Name          string         `yaml:"name"`
@@ -61,7 +61,7 @@ func newInitCmd() *cobra.Command {
 
 			outputPath := filepath.Join(absDir, "service.yaml")
 
-			// single reader for all prompts — prevents buffering skew between confirm and wizard
+			// single reader for all prompts ; prevents buffering skew between confirm and wizard
 			reader := bufio.NewReader(cmd.InOrStdin())
 
 			force, _ := cmd.Flags().GetBool("force")
@@ -166,7 +166,7 @@ func detectRuntime(dir string) runtimeDetection {
 		return strings.TrimSpace(first)
 	}
 
-	// bun checked before node — bun projects often also have package.json
+	// bun checked before node ; bun projects often also have package.json
 	if fileExists("bun.lockb") || fileExists("bunfig.toml") {
 		return runtimeDetection{runtimeType: "bun", suggestedPath: "~/.bun/bin"}
 	}
