@@ -40,7 +40,7 @@ jobs:
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,""); print $3}')
           echo "Total coverage: ${total}%"
-          awk -v total="$total" -v threshold="40" \
+          awk -v total="$total" -v threshold="43" \
             'BEGIN { if (total+0 < threshold+0) { print "Coverage " total "% is below threshold " threshold "%"; exit 1 } }'
 
       # - name: Upload coverage
