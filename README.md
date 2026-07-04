@@ -6,6 +6,14 @@
 
 Lightweight process manager for your VPS. Register services, start them, keep them running. No Node.js, no global daemon, no overhead.
 
+## Features
+
+**Auto-restarts crashed processes** with exponential backoff, up to a configurable restart limit.
+**Memory enforcement** — warns at soft thresholds, restarts at hard limits, no manual intervention needed.
+**Log rotation** out of the box; tail logs live with `eos logs --follow`.
+**Boot persistence** via systemd (Linux) — system-wide or per-user, no manual unit file authoring.
+**Zero runtime dependencies** — single static binary, installs in seconds.
+
 If you've used PM2 and want something smaller and self-contained, eos covers the core workflow.
 
 ## Install
@@ -58,19 +66,70 @@ eos status
 | `eos stop <name>` | Stop a service |
 | `eos restart <name>` | Restart a service |
 
+`eos system` covers boot startup, updates, uninstall, and version — run `eos system --help` for the full list.
+
 ## Service Configuration
 
-Each service needs a `service.yaml` (or `service.yml`) in its directory:
+Each service needs a `service.yaml` (or `service.yml`) in its directory.
+
+Minimal:
+
+```yaml
+name: "my-service"
+command: "/home/user/start.sh"
+```
+
+With all options:
 
 ```yaml
 name: "cms"
-command: "/home/user/start-script.sh"
+command: "/home/user/start.sh"
 port: 1337
+env_file: "/home/user/.env"
+memory_limit_mb: 200
 runtime:
   type: "nodejs"
-  path: "/opt/homebrew/bin"
-memory_limit_mb: 200
+  path: "/usr/local/bin"
 ```
+
+## Boot-time Startup
+
+On Linux, `eos system startup` installs a systemd unit and enables it on boot.
+
+```bash
+sudo eos system startup   # system-wide unit (runs as invoking user)
+eos system startup        # per-user unit (no root required)
+```
+
+For user units without a persistent login session:
+
+```bash
+loginctl enable-linger <username>
+```
+
+Remove with `eos system unstartup`.
+
+## Configuration
+
+eos reads `~/.eos/config.yaml` on startup. All fields are optional.
+
+```yaml
+health:
+  checkIntervalMs: 2000
+  memSampleIntervalMs: 30000
+  backoff:
+    baseMs: 300
+    maxMs: 60000
+  memory:
+    warningThreshold: 0.75
+    softRestartThreshold: 0.85
+    forceRestartThreshold: 0.95
+log:
+  maxFiles: 5
+  fileSizeLimitBytes: 10485760
+```
+
+Environment variables take precedence over defaults: `EOS_BASE_DIR`, `EOS_INSTALL_DIR`, `EOS_SYSTEMD_TARGET_DIR`, `EOS_VERBOSE`.
 
 ## License
 
