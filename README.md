@@ -4,7 +4,7 @@
 
 ![eos demo](demo/eos-demo.gif)
 
-Lightweight process manager for your VPS. Register services, start them, keep them running.
+Lightweight service supervisor for your VPS. Register services, start them, keep them running.
 
 ## Features
 
