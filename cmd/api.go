@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, getDaemonConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
 	apiCmd := &cobra.Command{
 		Use:           "api",
 		Short:         "Machine-readable JSON interface",
@@ -17,6 +17,7 @@ func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *confi
 	apiCmd.AddCommand(newAPIInfoCmd(getManager))
 	apiCmd.AddCommand(newAPILogsCmd(getManager))
 	apiCmd.AddCommand(newAPIRunCmd(getManager, getConfig))
+	apiCmd.AddCommand(newAPIDaemonCmd(getDaemonConfig))
 
 	return apiCmd
 }

@@ -61,7 +61,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 
-	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+	testDaemonConfig := func() (string, *config.SystemConfig, error) {
 		testBaseDir := os.TempDir()
 		return testBaseDir, &config.SystemConfig{
 			Daemon: config.DaemonConfig{
@@ -78,9 +78,10 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
 		}, nil
-	}))
+	}
+	rootCmd.AddCommand(newDaemonCmd(testDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
-	rootCmd.AddCommand(newAPICmd(getManager, getConfig))
+	rootCmd.AddCommand(newAPICmd(getManager, getConfig, testDaemonConfig))
 
 	rootCmd.InitDefaultCompletionCmd()
 
@@ -169,15 +170,16 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 
-	rootCmd.AddCommand(newDaemonCmd(func() (string, *config.SystemConfig, error) {
+	getDaemonConfig := func() (string, *config.SystemConfig, error) {
 		_, baseDir, c, err := newSystemConfig()
 		return baseDir, c, err
-	}))
+	}
+	rootCmd.AddCommand(newDaemonCmd(getDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 
 	rootCmd.InitDefaultCompletionCmd()
 
-	rootCmd.AddCommand(newAPICmd(getManager, getConfig))
+	rootCmd.AddCommand(newAPICmd(getManager, getConfig, getDaemonConfig))
 
 	return rootCmd
 }
