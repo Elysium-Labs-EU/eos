@@ -2,33 +2,46 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+)
+
+var (
+	streamLabelOut = lipgloss.NewStyle().Faint(true).Foreground(ui.ColorMuted).Render("out")
+	streamLabelErr = lipgloss.NewStyle().Bold(true).Foreground(ui.ColorWarning).Render("err")
 )
 
 func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	var lines int
-	var errorLog bool
+	var errorOnly bool
+	var outputOnly bool
 	var follow bool
 
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "View logs for a registered service",
-		Long:  `Stream or display logs for a registered service. Shows output logs by default; use --error for error logs, --lines to control history depth, and --follow to tail in real time.`,
-		Example: `  eos logs cms                   # last 300 lines of stdout log
-  eos logs cms --lines 100      # last 100 lines
-  eos logs cms --follow         # stream live output
-  eos logs cms --error          # error log instead of output log`,
+		Long: `Stream or display logs for a registered service. Shows both stdout and stderr logs interleaved by default.
+Use --output for stdout only, --error for stderr only, --lines to control history depth, and --follow to tail in real time.
+
+In combined mode --lines applies per stream, so up to 2x lines may be shown. Each line is prefixed with a dim "out" or bold "err" label to identify the source stream.`,
+		Example: `  eos logs cms                   # last 300 lines from both streams combined
+  eos logs cms --lines 100      # last 100 lines per stream combined
+  eos logs cms --follow         # stream live output from both streams
+  eos logs cms --error          # error stream only
+  eos logs cms --output         # stdout stream only`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -47,7 +60,6 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 				return
@@ -63,7 +75,34 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
+			if follow {
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
+			} else {
+				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "showing logs for", ui.TextBold.Render(serviceName))
+			}
+
+			combined := !errorOnly && !outputOnly
+
+			if combined {
+				outPath, outErr := mgr.GetServiceLogFilePath(serviceName, false)
+				if outErr != nil {
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
+					return
+				}
+				errPath, errPathErr := mgr.GetServiceLogFilePath(serviceName, true)
+				if errPathErr != nil {
+					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
+					return
+				}
+				if follow {
+					followCombinedLogs(cmd.Context(), cmd.OutOrStdout(), *outPath, *errPath)
+				} else {
+					showCombinedLogs(cmd.OutOrStdout(), cmd.ErrOrStderr(), *outPath, *errPath, lines)
+				}
+				return
+			}
+
+			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorOnly)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
 				return
@@ -74,12 +113,6 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				tailArgs = append(tailArgs, "-f")
 			}
 			tailArgs = append(tailArgs, *logPath)
-
-			if follow {
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
-			} else {
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "showing logs for", ui.TextBold.Render(serviceName))
-			}
 
 			// #nosec G204 - args are validated above
 			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
@@ -94,16 +127,18 @@ func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", startErr))
 				return
 			}
-			renderServiceLogs(cmd.OutOrStdout(), stdout)
+			renderServiceLogs(cmd.OutOrStdout(), stdout, "")
 			if waitErr := tailLogCommand.Wait(); waitErr != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", waitErr))
 			}
 		},
 	}
 
-	cmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
-	cmd.Flags().BoolVar(&errorLog, "error", false, "show error logs instead of output logs")
+	cmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display (per stream in combined mode)")
+	cmd.Flags().BoolVar(&errorOnly, "error", false, "show error stream only")
+	cmd.Flags().BoolVar(&outputOnly, "output", false, "show stdout stream only")
 	cmd.Flags().BoolVar(&follow, "follow", false, "follow log output")
+	cmd.MarkFlagsMutuallyExclusive("error", "output")
 
 	return cmd
 }
@@ -115,17 +150,21 @@ type serviceLogEntry struct {
 	Source string `json:"source"`
 }
 
-func renderServiceLogs(w io.Writer, r io.Reader) {
+// streamLabel is the pre-rendered label to prepend ("out", "err", or "" for single-stream mode).
+func renderServiceLogs(w io.Writer, r io.Reader, streamLabel string) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		_, _ = fmt.Fprintln(w, renderServiceLogLine(scanner.Text()))
+		_, _ = fmt.Fprintln(w, renderServiceLogLine(scanner.Text(), streamLabel))
 	}
 	_ = scanner.Err()
 }
 
-func renderServiceLogLine(line string) string {
+func renderServiceLogLine(line, streamLabel string) string {
 	var entry serviceLogEntry
 	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if streamLabel != "" {
+			return fmt.Sprintf("%s %s", streamLabel, line)
+		}
 		return line
 	}
 
@@ -139,8 +178,113 @@ func renderServiceLogLine(line string) string {
 		source = strings.ToLower(entry.Level)
 	}
 
+	var body string
 	if entry.Level == "WARN" || entry.Level == "ERROR" {
-		return fmt.Sprintf("%s %-6s [%s] %s", timeStr, source, entry.Level, entry.Msg)
+		body = fmt.Sprintf("%s %-6s [%s] %s", timeStr, source, entry.Level, entry.Msg)
+	} else {
+		body = fmt.Sprintf("%s %-6s %s", timeStr, source, entry.Msg)
 	}
-	return fmt.Sprintf("%s %-6s %s", timeStr, source, entry.Msg)
+
+	if streamLabel != "" {
+		return fmt.Sprintf("%s %s", streamLabel, body)
+	}
+	return body
+}
+
+type logLineWithTime struct {
+	t     time.Time
+	raw   string
+	isErr bool
+}
+
+func parseLogLineTime(line string) time.Time {
+	var entry serviceLogEntry
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, entry.Time)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func showCombinedLogs(out, errW io.Writer, outPath, errPath string, lines int) {
+	outLines, outErr := tailLogLines(outPath, lines)
+	errLines, errErr := tailLogLines(errPath, lines)
+	if outErr != nil && errErr != nil {
+		_, _ = fmt.Fprintf(errW, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log files: %v, %v", outErr, errErr))
+		return
+	}
+
+	merged := make([]logLineWithTime, 0, len(outLines)+len(errLines))
+	for _, l := range outLines {
+		merged = append(merged, logLineWithTime{t: parseLogLineTime(l), raw: l, isErr: false})
+	}
+	for _, l := range errLines {
+		merged = append(merged, logLineWithTime{t: parseLogLineTime(l), raw: l, isErr: true})
+	}
+
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].t.Before(merged[j].t)
+	})
+
+	for _, entry := range merged {
+		label := streamLabelOut
+		if entry.isErr {
+			label = streamLabelErr
+		}
+		_, _ = fmt.Fprintln(out, renderServiceLogLine(entry.raw, label))
+	}
+}
+
+type followMsg struct {
+	text  string
+	isErr bool
+}
+
+func followCombinedLogs(ctx context.Context, out io.Writer, outPath, errPath string) {
+	ch := make(chan followMsg, 256)
+
+	startTailGoroutine(ctx, outPath, false, ch)
+	startTailGoroutine(ctx, errPath, true, ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			label := streamLabelOut
+			if msg.isErr {
+				label = streamLabelErr
+			}
+			_, _ = fmt.Fprintln(out, renderServiceLogLine(msg.text, label))
+		}
+	}
+}
+
+func startTailGoroutine(ctx context.Context, path string, isErr bool, ch chan<- followMsg) {
+	// #nosec G204 - path comes from manager, not user input
+	tail := exec.CommandContext(ctx, "tail", "-n", "0", "-f", path)
+
+	stdout, err := tail.StdoutPipe()
+	if err != nil {
+		return
+	}
+	if err := tail.Start(); err != nil {
+		return
+	}
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			select {
+			case ch <- followMsg{text: scanner.Text(), isErr: isErr}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		_ = scanner.Err()
+		_ = tail.Wait()
+	}()
 }

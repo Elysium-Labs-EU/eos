@@ -23,7 +23,7 @@ type DaemonController interface {
 	Stop(ctx context.Context) (bool, error)
 	Remove() error
 	Info(cmd *cobra.Command)
-	Logs(cmd *cobra.Command, lines int)
+	Logs(cmd *cobra.Command, lines int, follow bool)
 	LogsHint() string
 }
 
@@ -81,7 +81,7 @@ func (c *standaloneDaemonController) LogsHint() string {
 	return "eos daemon logs"
 }
 
-func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int) {
+func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	logPath := filepath.Join(manager.CreateLogDirPath(c.baseDir), c.cfg.Log.LogFileName)
 
 	if _, err := os.Stat(logPath); err != nil {
@@ -92,14 +92,33 @@ func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int) {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
 		return
 	}
+
+	if follow {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "streaming daemon logs")
+	} else {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "showing daemon logs")
+	}
+
+	tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
+	if follow {
+		tailArgs = append(tailArgs, "-f")
+	}
+	tailArgs = append(tailArgs, logPath)
+
 	// #nosec G204 - args are validated above
-	tailCmd := exec.CommandContext(cmd.Context(), "tail", "-n", fmt.Sprintf("%d", lines), "-f", logPath)
-	tailCmd.Stdout = cmd.OutOrStdout()
+	tailCmd := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
 	tailCmd.Stderr = cmd.ErrOrStderr()
+
+	stdout, pipeErr := tailCmd.StdoutPipe()
+	if pipeErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
+		return
+	}
 	if err := tailCmd.Start(); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
 		return
 	}
+	renderServiceLogs(cmd.OutOrStdout(), stdout, "")
 	if err := tailCmd.Wait(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			if exitErr.ExitCode() != 130 { // 130 = Ctrl+C
@@ -144,13 +163,25 @@ func (c systemdDaemonController) LogsHint() string {
 	return "journalctl -u eos -f"
 }
 
-func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int) {
+func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	if lines < 0 || lines > 10000 {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
 		return
 	}
+
+	if follow {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "streaming daemon logs")
+	} else {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "showing daemon logs")
+	}
+
 	// #nosec G204 - lines is validated above
-	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", "-u", "eos", "-n", fmt.Sprintf("%d", lines), "-f")
+	journalArgs := []string{"-u", "eos", "-n", fmt.Sprintf("%d", lines)}
+	if follow {
+		journalArgs = append(journalArgs, "-f")
+	}
+	// #nosec G204 - lines is validated above; journalArgs contains only -u, eos, -n, <int>, and optionally -f
+	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", journalArgs...)
 	journalCmd.Stdout = cmd.OutOrStdout()
 	journalCmd.Stderr = cmd.ErrOrStderr()
 	if err := journalCmd.Start(); err != nil {
@@ -288,15 +319,17 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 	}
 
 	var lines int
+	var follow bool
 	logsCmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Stream the daemon log output",
-		Long:  "Tail and follow the daemon's log file in real time. Defaults to the last 300 lines. Use --lines to control how many historical lines are shown before following. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
+		Short: "View daemon log output",
+		Long:  "Display or stream the daemon's log file. Defaults to the last 300 lines. Use --follow to tail in real time, --lines to control history depth. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
 		Run: func(cmd *cobra.Command, args []string) {
-			ctrl.Logs(cmd, lines)
+			ctrl.Logs(cmd, lines, follow)
 		},
 	}
 	logsCmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
+	logsCmd.Flags().BoolVar(&follow, "follow", false, "follow log output")
 
 	daemonCmd.AddCommand(infoCmd)
 	daemonCmd.AddCommand(logsCmd)
