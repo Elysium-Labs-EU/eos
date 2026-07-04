@@ -20,8 +20,23 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
+type Monitor interface {
+	Start(ctx context.Context)
+}
+
+type monitorManager interface {
+	GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)
+	GetServiceInstance(name string) (*types.ServiceInstance, error)
+	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
+	LogToServiceStdout(serviceName string, message string) error
+	LogToServiceStderr(serviceName string, message string) error
+	RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
+}
+
+var _ monitorManager = (*manager.LocalManager)(nil)
+
 type HealthMonitor struct {
-	mgr                       *manager.LocalManager
+	mgr                       monitorManager
 	db                        *database.DB
 	logger                    *slog.Logger
 	lastMemSample             map[string]time.Time
@@ -38,7 +53,7 @@ type HealthMonitor struct {
 }
 
 func NewHealthMonitor(
-	mgr *manager.LocalManager,
+	mgr monitorManager,
 	db *database.DB,
 	logger *slog.Logger,
 	healthConfig *config.HealthConfig,
