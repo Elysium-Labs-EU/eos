@@ -183,14 +183,23 @@ func newPipeForStd() (r *os.File, w *os.File, err error) {
 	return r, w, nil
 }
 
-func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
+func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
+	if wg != nil {
+		defer wg.Done()
+	}
 	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
 	defer stop()
 	logger := logutil.NewJSONLogger(w, false)
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		logger.Info(scanner.Text(), "service", name, "source", "stdout")
+		line := scanner.Text()
+		logger.Info(line, "service", name, "source", "stdout")
+		for _, s := range sinks {
+			if sinkWantsStream(s, "stdout") {
+				s.Send(line, "stdout")
+			}
+		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning log pipe", "service", name, "error", scanErr)
@@ -203,14 +212,23 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string) {
 	}
 }
 
-func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string) {
+func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
+	if wg != nil {
+		defer wg.Done()
+	}
 	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
 	defer stop()
 	logger := logutil.NewJSONLogger(w, false)
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		logger.Info(scanner.Text(), "service", name, "source", "stderr")
+		line := scanner.Text()
+		logger.Info(line, "service", name, "source", "stderr")
+		for _, s := range sinks {
+			if sinkWantsStream(s, "stderr") {
+				s.Send(line, "stderr")
+			}
+		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning error log pipe", "service", name, "error", scanErr)
@@ -344,9 +362,20 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
 	}
 
+	sinks := startSinkProcesses(m.ctx, config.LogSinks, name, m.logger)
+	var sinkWg *sync.WaitGroup
+	if len(sinks) > 0 {
+		sinkWg = &sync.WaitGroup{}
+		sinkWg.Add(2)
+		go func() {
+			sinkWg.Wait()
+			stopSinkProcesses(sinks)
+		}()
+	}
+
 	m.pipeWg.Add(2)
-	go m.pipeToLogFile(readLogFilePipe, logFile, name)
-	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
+	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
+	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name, sinks, sinkWg)
 
 	go func() {
 		_ = startCommand.Wait()
@@ -496,9 +525,20 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
 	}
 
+	sinks := startSinkProcesses(m.ctx, config.LogSinks, name, m.logger)
+	var sinkWg *sync.WaitGroup
+	if len(sinks) > 0 {
+		sinkWg = &sync.WaitGroup{}
+		sinkWg.Add(2)
+		go func() {
+			sinkWg.Wait()
+			stopSinkProcesses(sinks)
+		}()
+	}
+
 	m.pipeWg.Add(2)
-	go m.pipeToLogFile(readLogFilePipe, logFile, name)
-	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name)
+	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
+	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, name, sinks, sinkWg)
 
 	go func() {
 		_ = restartCommand.Wait()

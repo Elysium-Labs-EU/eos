@@ -21,13 +21,27 @@ type Runtime struct {
 	Path string `json:"path" yaml:"path"`
 }
 
+// LogSink declares an external log sink plugin for a service.
+// eos owns: Type, Exec, BufferSize, RestartDelayMs, Streams.
+// Options is an opaque blob passed to the plugin via EOS_SINK_OPTIONS env var.
+type LogSink struct {
+	Options        map[string]any `json:"options,omitempty"          yaml:"options,omitempty"`
+	Type           string         `json:"type"                       yaml:"type"`
+	Exec           string         `json:"exec,omitempty"             yaml:"exec,omitempty"`
+	Args           []string       `json:"args,omitempty"             yaml:"args,omitempty"`
+	Streams        []string       `json:"streams,omitempty"          yaml:"streams,omitempty"`
+	BufferSize     int            `json:"buffer_size,omitempty"      yaml:"buffer_size,omitempty"`
+	RestartDelayMs int            `json:"restart_delay_ms,omitempty" yaml:"restart_delay_ms,omitempty"`
+}
+
 type ServiceConfig struct {
-	Runtime       Runtime `json:"runtime" yaml:"runtime"`
-	Name          string  `json:"name" yaml:"name"`
-	Command       string  `json:"command" yaml:"command"`
-	EnvFile       string  `json:"env_file,omitempty" yaml:"env_file,omitempty"`
-	Port          int     `json:"port,omitempty" yaml:"port,omitempty"`
-	MemoryLimitMb int     `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
+	Runtime       Runtime   `json:"runtime"                  yaml:"runtime"`
+	Name          string    `json:"name"                     yaml:"name"`
+	Command       string    `json:"command"                  yaml:"command"`
+	EnvFile       string    `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
+	LogSinks      []LogSink `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
+	Port          int       `json:"port,omitempty"           yaml:"port,omitempty"`
+	MemoryLimitMb int       `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
 }
 
 type ServiceInstance struct {
