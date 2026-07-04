@@ -4,15 +4,15 @@
 
 ![eos demo](demo/eos-demo.gif)
 
-Lightweight process manager for your VPS. Register services, start them, keep them running. No Node.js, no global daemon, no overhead.
+Lightweight process manager for your VPS. Register services, start them, keep them running.
 
 ## Features
 
-**Auto-restarts crashed processes** with exponential backoff, up to a configurable restart limit.
-**Memory enforcement** — warns at soft thresholds, restarts at hard limits, no manual intervention needed.
-**Log rotation** out of the box; tail logs live with `eos logs --follow`.
-**Boot persistence** via systemd (Linux) — system-wide or per-user, no manual unit file authoring.
-**Zero runtime dependencies** — single static binary, installs in seconds.
+* **Auto-restarts crashed processes** with exponential backoff, up to a configurable restart limit.
+* **Memory enforcement**, warns at soft thresholds, restarts at hard limits.
+* **Log rotation** out of the box; tail logs live with `eos logs --follow`.
+* **Boot persistence** via systemd (Linux), system-wide or per-user, generates fitting unit file.
+* **Zero runtime dependencies** single static binary.
 
 If you've used PM2 and want something smaller and self-contained, eos covers the core workflow.
 
