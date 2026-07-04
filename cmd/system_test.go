@@ -447,7 +447,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		return f, dir, nil
 	}
 
-	cmd.SetIn(strings.NewReader("y\ny\n"))
+	setStdin(cmd, "y\ny\n")
 
 	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 

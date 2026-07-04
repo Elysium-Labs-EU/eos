@@ -106,7 +106,7 @@ test-coverage: ## Get test coverage
 
 COVERAGE_THRESHOLD ?= 49
 
-test-coverage-check: ## Fail if total coverage is below COVERAGE_THRESHOLD (default 40%)
+test-coverage-check: ## Fail if total coverage is below COVERAGE_THRESHOLD (default 49%)
 	@echo "Checking test coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
 	@go test -coverprofile=coverage.out ./... -covermode=atomic -count=1 2>&1 | grep -v "^?" || true
 	@total=$$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,""); print $$3}'); \

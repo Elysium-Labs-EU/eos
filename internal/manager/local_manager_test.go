@@ -626,9 +626,6 @@ func TestValidateRuntimePath_unknownRuntime(t *testing.T) {
 	}
 }
 
-// func TestLocalManager_RemoveServiceInstance(t *testing.T) {}
-// func TestLocalManager_RemoveServiceCatalogEntry(t *testing.T) {}
-// func TestLocalManager_IsServiceRegistered(t *testing.T) {}
 func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T) {
 	db, rawDB, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -666,18 +663,3 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 		t.Errorf("expected PGID 1002 (newer), got %d", entry.PGID)
 	}
 }
-
-// func TestLocalManager_GetMostRecentProcessHistoryEntry(t *testing.T) {}
-// func TestLocalManager_UpdateServiceCatalogEntry(t *testing.T) {}
-// func TestLocalManager_RestartService(t *testing.T) {}
-// func TestLocalManager_StopService(t *testing.T) {}
-// func TestIsProcessAlive(t *testing.T) {}
-// func TestLocalManager_ForceStopService(t *testing.T) {}
-// func TestUpdateProcessHistoryEntriesAsStopped(t *testing.T) {}
-// func TestUpdateProcessHistoryEntriesAsUnknown(t *testing.T) {}
-// func TestStopServiceWithSignal(t *testing.T) {}
-// func TestValidateRuntimePath(t *testing.T) {}
-// func TestLocalManager_GetServiceLogFilePath(t *testing.T) {}
-// func TestLocalManager_LogToServiceStdout(t *testing.T) {}
-// func TestLocalManager_LogToServiceStderr(t *testing.T) {}
-// func TestAppendToFile(t *testing.T) {}
