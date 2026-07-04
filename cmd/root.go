@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
@@ -89,23 +90,44 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 }
 
 func newRootCmd() *cobra.Command {
+	// rootCmd declared before assignment so lazyInit can capture the variable.
+	// By the time any closure executes (at RunE time), rootCmd is non-nil.
+	var rootCmd *cobra.Command
+
+	var once sync.Once
 	var mgr manager.ServiceManager
 	var cleanup func()
 	var cfg *config.SystemConfig
 
-	skipManagerInit := func(cmd *cobra.Command) bool {
-		if cmd.Parent() == nil {
-			return true
-		}
-		for c := cmd; c != nil; c = c.Parent() {
-			if c.Use == "daemon" || c.Use == "uninstall" || c.Use == "validate" {
-				return true
+	lazyInit := func() {
+		once.Do(func() {
+			_, baseDir, c, err := newSystemConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+				os.Exit(1)
 			}
-		}
-		return false
+			m, cl, err := newManager(rootCmd, baseDir, c.Daemon)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting manager: %v", err))
+				os.Exit(1)
+			}
+			mgr = m
+			cleanup = cl
+			cfg = c
+		})
 	}
 
-	rootCmd := &cobra.Command{
+	getManager := func() manager.ServiceManager {
+		lazyInit()
+		return mgr
+	}
+
+	getConfig := func() *config.SystemConfig {
+		lazyInit()
+		return cfg
+	}
+
+	rootCmd = &cobra.Command{
 		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
 		Long: `eos is a modern deployment orchestration tool.
@@ -117,29 +139,6 @@ func newRootCmd() *cobra.Command {
 			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
 		},
 
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			if skipManagerInit(cmd) {
-				return
-			}
-			_, baseDir, config, err := newSystemConfig()
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				os.Exit(1)
-			}
-			if config == nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "getting system configuration: nil pointer")
-				os.Exit(1)
-			}
-			manager, possibleCleanup, err := getManager(cmd, baseDir, config.Daemon)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting manager: %v", err))
-				os.Exit(1)
-			}
-			mgr = manager
-			cleanup = possibleCleanup
-			cfg = config
-		},
-
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if cleanup != nil {
 				cleanup()
@@ -149,14 +148,6 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.PersistentFlags().Bool("no-daemon", false, "run in local mode without daemon")
 	rootCmd.PersistentFlags().Bool("verbose", false, "enable verbose debug logging")
-
-	getManager := func() manager.ServiceManager {
-		return mgr
-	}
-
-	getConfig := func() *config.SystemConfig {
-		return cfg
-	}
 
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
@@ -350,7 +341,7 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	return limit
 }
 
-func getManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig) (mgr manager.ServiceManager, cleanUp func(), err error) {
+func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig) (mgr manager.ServiceManager, cleanUp func(), err error) {
 	ctx := rootCmd.Context()
 	noDaemon, err := rootCmd.Flags().GetBool("no-daemon")
 	if err != nil {
