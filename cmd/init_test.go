@@ -212,7 +212,7 @@ func TestInitCmd_Force(t *testing.T) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	// no y/n prompt ; --force skips it
+	// no y/n prompt; --force skips it
 	root.SetIn(&slowReader{strings.NewReader("forced\nforced.sh\ns\n\n")})
 	root.SetArgs([]string{"init", "--force", dir})
 
@@ -239,7 +239,7 @@ func TestInitCmd_RuntimeDetection_Bun(t *testing.T) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	// advanced mode ; press enter on runtime fields to accept detected defaults
+	// advanced mode; press enter on runtime fields to accept detected defaults
 	root.SetIn(&slowReader{strings.NewReader("svc\nindex.ts\na\n\n\n\n\n\n")})
 	root.SetArgs([]string{"init", dir})
 
@@ -292,7 +292,7 @@ func TestInitCmd_SkippedCommand(t *testing.T) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	// blank command ; should be accepted and file written with empty command
+	// blank command; should be accepted and file written with empty command
 	root.SetIn(&slowReader{strings.NewReader("svc\n\ns\n\n")})
 	root.SetArgs([]string{"init", dir})
 
