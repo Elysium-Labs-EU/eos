@@ -213,27 +213,10 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 	return nil, errors.New("invalid daemon config: both standalone and systemd are nil")
 }
 
-func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
-	var ctrl DaemonController // closed over by all subcommands below
-
-	daemonCmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Manage the deployment daemon",
-		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			baseDir, systemConfig, err := getConfig()
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
-				os.Exit(1)
-			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
-				os.Exit(1)
-			}
-		},
-	}
-
+// buildDaemonSubcmds attaches all daemon subcommands to daemonCmd.
+// getCtrl is called at Run time; in production it returns the controller set by
+// PersistentPreRun, and in tests it returns a mock.
+func buildDaemonSubcmds(daemonCmd *cobra.Command, getCtrl func() DaemonController) {
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon process",
@@ -243,6 +226,7 @@ If a systemd unit file is installed, delegates to "systemctl start eos" (require
 
 Otherwise, starts the daemon directly. By default runs in the foreground and streams output to the console. Pass --detach (-d) to fork the process into a new session in the background; control returns once the PID file is written (timeout: 5s).`,
 		Run: func(cmd *cobra.Command, args []string) {
+			ctrl := getCtrl()
 			detach, err := cmd.Flags().GetBool("detach")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
@@ -280,6 +264,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Short: "Stop the running daemon",
 		Long:  "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
 		Run: func(cmd *cobra.Command, args []string) {
+			ctrl := getCtrl()
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
 			killed, err := ctrl.Stop(cmd.Context())
 			if err != nil {
@@ -299,6 +284,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Short: "Remove a stopped daemon",
 		Long:  "Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.",
 		Run: func(cmd *cobra.Command, args []string) {
+			ctrl := getCtrl()
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "removing daemon...")
 			if err := ctrl.Remove(); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing daemon: %v", err))
@@ -314,6 +300,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Short: "Show daemon status and configuration",
 		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.",
 		Run: func(cmd *cobra.Command, args []string) {
+			ctrl := getCtrl()
 			ctrl.Info(cmd)
 		},
 	}
@@ -325,6 +312,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Short: "View daemon log output",
 		Long:  "Display or stream the daemon's log file. Defaults to the last 300 lines. Use --follow to tail in real time, --lines to control history depth. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
 		Run: func(cmd *cobra.Command, args []string) {
+			ctrl := getCtrl()
 			ctrl.Logs(cmd, lines, follow)
 		},
 	}
@@ -336,6 +324,30 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 	daemonCmd.AddCommand(removeCmd)
 	daemonCmd.AddCommand(startCmd)
 	daemonCmd.AddCommand(stopCmd)
+}
+
+func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
+	var ctrl DaemonController
+
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Manage the deployment daemon",
+		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			baseDir, systemConfig, err := getConfig()
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+				os.Exit(1)
+			}
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
+				os.Exit(1)
+			}
+		},
+	}
+
+	buildDaemonSubcmds(daemonCmd, func() DaemonController { return ctrl })
 
 	return daemonCmd
 }
