@@ -40,19 +40,18 @@
     },
     "runtime": {
       "type": "object",
-      "description": "Runtime configuration. Required when the service needs a specific runtime binary (Node.js, Bun, Deno).",
+      "description": "Runtime configuration. Use 'type' to verify the runtime exists in system PATH, 'path' to prepend a directory to PATH, or both to verify a specific binary in that directory.",
       "additionalProperties": false,
-      "required": ["type", "path"],
       "properties": {
         "type": {
           "type": "string",
-          "description": "Runtime type.",
+          "description": "Runtime type. When set without 'path', eos verifies the binary exists in system PATH. When set with 'path', eos verifies the binary exists in that directory.",
           "enum": ["nodejs", "node", "bun", "deno", "python", "python3"],
           "examples": ["nodejs", "bun", "deno", "python3"]
         },
         "path": {
           "type": "string",
-          "description": "Absolute or home-relative (~/) path to the directory containing the runtime binary.",
+          "description": "Absolute or home-relative (~/) path to the directory containing the runtime binary. Prepended to PATH when the service starts.",
           "examples": [
             "/opt/homebrew/bin",
             "~/.nvm/versions/node/v20.0.0/bin",
