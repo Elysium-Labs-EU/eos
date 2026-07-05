@@ -99,7 +99,7 @@ func TestLogsNonExistingServiceCommand(t *testing.T) {
 }
 
 func TestRenderServiceLogLine_plainText(t *testing.T) {
-	got := renderServiceLogLine("not json at all")
+	got := renderServiceLogLine("not json at all", "")
 	if got != "not json at all" {
 		t.Errorf("expected passthrough for non-JSON, got: %q", got)
 	}
@@ -107,7 +107,7 @@ func TestRenderServiceLogLine_plainText(t *testing.T) {
 
 func TestRenderServiceLogLine_infoJSON(t *testing.T) {
 	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"INFO","msg":"server started","source":"api"}`
-	got := renderServiceLogLine(line)
+	got := renderServiceLogLine(line, "")
 	if !strings.Contains(got, "server started") {
 		t.Errorf("expected msg in output, got: %q", got)
 	}
@@ -118,7 +118,7 @@ func TestRenderServiceLogLine_infoJSON(t *testing.T) {
 
 func TestRenderServiceLogLine_errorLevel(t *testing.T) {
 	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"ERROR","msg":"crash","source":"worker"}`
-	got := renderServiceLogLine(line)
+	got := renderServiceLogLine(line, "")
 	if !strings.Contains(got, "ERROR") {
 		t.Errorf("expected ERROR level in output, got: %q", got)
 	}
@@ -129,7 +129,7 @@ func TestRenderServiceLogLine_errorLevel(t *testing.T) {
 
 func TestRenderServiceLogLine_noSource(t *testing.T) {
 	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"INFO","msg":"hello"}`
-	got := renderServiceLogLine(line)
+	got := renderServiceLogLine(line, "")
 	if !strings.Contains(got, "hello") {
 		t.Errorf("expected msg in output, got: %q", got)
 	}

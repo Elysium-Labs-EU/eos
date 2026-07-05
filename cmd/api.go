@@ -14,9 +14,15 @@ func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *confi
 		SilenceUsage:  true,
 	}
 
+	apiCmd.AddCommand(newAPIAddCmd(getManager))
 	apiCmd.AddCommand(newAPIInfoCmd(getManager))
 	apiCmd.AddCommand(newAPILogsCmd(getManager))
+	apiCmd.AddCommand(newAPIRemoveCmd(getManager))
 	apiCmd.AddCommand(newAPIRunCmd(getManager, getConfig))
+	apiCmd.AddCommand(newAPIStatusCmd(getManager))
+	apiCmd.AddCommand(newAPIStopCmd(getManager, getConfig))
+	apiCmd.AddCommand(newAPIUpdateCmd(getManager))
+	apiCmd.AddCommand(newAPIValidateCmd())
 	apiCmd.AddCommand(newAPIDaemonCmd(getDaemonConfig))
 
 	return apiCmd
