@@ -553,6 +553,11 @@ main() {
     echo "  3. View logs:"
     echo -e "     ${CYAN}eos daemon logs${NC}"
     echo ""
+    echo -e "${BOLD}Enable tab completion:${NC}"
+    echo -e "  bash:  ${CYAN}eos completion bash > /etc/bash_completion.d/eos${NC}"
+    echo -e "  zsh:   ${CYAN}eos completion zsh > \"\${fpath[1]}/_eos\"${NC}"
+    echo -e "  fish:  ${CYAN}eos completion fish > ~/.config/fish/completions/eos.fish${NC}"
+    echo ""
     dim "Database: ${HOME_DIR}/state.db"
     echo ""
 }
