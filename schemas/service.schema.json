@@ -47,8 +47,8 @@
         "type": {
           "type": "string",
           "description": "Runtime type.",
-          "enum": ["nodejs", "node", "bun", "deno"],
-          "examples": ["nodejs", "bun", "deno"]
+          "enum": ["nodejs", "node", "bun", "deno", "python", "python3"],
+          "examples": ["nodejs", "bun", "deno", "python3"]
         },
         "path": {
           "type": "string",

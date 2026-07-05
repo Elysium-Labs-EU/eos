@@ -61,6 +61,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
+	rootCmd.AddCommand(newInitCmd())
 
 	testDaemonConfig := func() (string, *config.SystemConfig, error) {
 		testBaseDir := os.TempDir()
@@ -160,6 +161,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
+	rootCmd.AddCommand(newInitCmd())
 
 	getDaemonConfig := func() (string, *config.SystemConfig, error) {
 		_, baseDir, c, err := newSystemConfig()
