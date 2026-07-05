@@ -3,6 +3,7 @@ package helpers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,7 @@ func WriteJSON(cmd *cobra.Command, v any) error {
 	if err != nil {
 		return WriteJSONErr(cmd, err)
 	}
-	cmd.Println(string(out))
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(out))
 	return nil
 }
 
