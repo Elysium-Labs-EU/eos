@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestSinkProcess_runAndStop(t *testing.T) {
 		// sh script: print READY, then drain stdin until EOF
 		Args: []string{"-c", "echo READY; while IFS= read -r line; do true; done"},
 	}
-	sp := newSinkProcess(sink, "testsvc", newTestLogger(t))
+	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -171,13 +172,114 @@ func TestSinkProcess_readyTimeout(t *testing.T) {
 		Args:           []string{"-c", "sleep 30"},
 		RestartDelayMs: 100,
 	}
-	sp := newSinkProcess(sink, "testsvc", newTestLogger(t))
+	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	// Run exits when ctx is canceled — just verify it doesn't panic.
 	sp.Run(ctx)
+}
+
+// Tier 1: defaults applied when config values are zero.
+func TestSinkProcess_defaultBufferSize(t *testing.T) {
+	sink := &types.LogSink{Type: "test", BufferSize: 0}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+	if sp.buf.cap != sinkDefaultBufferSize {
+		t.Errorf("expected default buffer size %d, got %d", sinkDefaultBufferSize, sp.buf.cap)
+	}
+}
+
+func TestSinkProcess_customBufferSize(t *testing.T) {
+	sink := &types.LogSink{Type: "test", BufferSize: 128}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+	if sp.buf.cap != 128 {
+		t.Errorf("expected buffer size 128, got %d", sp.buf.cap)
+	}
+}
+
+// Tier 1: plugin exits immediately after READY — Run should loop without panicking.
+func TestSinkProcess_pluginExitAfterReady(t *testing.T) {
+	sink := &types.LogSink{
+		Type:           "test",
+		Exec:           "sh",
+		Args:           []string{"-c", "echo READY"},
+		RestartDelayMs: 50,
+	}
+	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Run exits when ctx expires; no panic means the restart loop works.
+	sp.Run(ctx)
+}
+
+// Tier 2: records actually reach plugin stdin as valid NDJSON.
+func TestSinkProcess_recordsDelivered(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "received.ndjson")
+	sink := &types.LogSink{
+		Type: "test",
+		Exec: "sh",
+		Args: []string{"-c", `echo READY; while IFS= read -r line; do echo "$line" >> ` + outFile + `; done`},
+	}
+	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go sp.Run(ctx)
+
+	// Wait for plugin to start and send READY.
+	time.Sleep(200 * time.Millisecond)
+
+	sp.Send("hello", "stdout")
+	sp.Send("world", "stderr")
+
+	// Wait for pump to flush, then stop cleanly.
+	time.Sleep(200 * time.Millisecond)
+	sp.Stop()
+
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("output file not written: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"hello"`) {
+		t.Errorf("expected 'hello' in delivered NDJSON, got: %q", content)
+	}
+	if !strings.Contains(content, `"world"`) {
+		t.Errorf("expected 'world' in delivered NDJSON, got: %q", content)
+	}
+	if !strings.Contains(content, `"testsvc"`) {
+		t.Errorf("expected service name in delivered NDJSON, got: %q", content)
+	}
+}
+
+// Tier 2: errLog receives sink stderr when provided.
+func TestSinkProcess_stderrRoutedToErrLog(t *testing.T) {
+	var mu strings.Builder
+	handler := slog.NewTextHandler(&mu, &slog.HandlerOptions{Level: slog.LevelDebug})
+	errLog := slog.New(handler)
+
+	sink := &types.LogSink{
+		Type: "test",
+		Exec: "sh",
+		// Print a known message to stderr before signaling READY.
+		Args: []string{"-c", `echo "sink stderr message" >&2; echo READY; while IFS= read -r _; do true; done`},
+	}
+	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), errLog)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go sp.Run(ctx)
+	time.Sleep(300 * time.Millisecond)
+	sp.Stop()
+
+	if !strings.Contains(mu.String(), "sink stderr message") {
+		t.Errorf("expected errLog to receive sink stderr, got: %q", mu.String())
+	}
 }
 
 func newTestLogger(t *testing.T) *slog.Logger {
