@@ -66,7 +66,7 @@ eos status
 | `eos stop <name>` | Stop a service |
 | `eos restart <name>` | Restart a service |
 
-`eos system` covers boot startup, updates, uninstall, and version — run `eos system --help` for the full list.
+`eos system` covers boot startup, updates, uninstall, and version; run `eos system --help` for the full list.
 
 ## Service Configuration
 
@@ -131,6 +131,25 @@ log:
 ```
 
 Environment variables take precedence over defaults: `EOS_BASE_DIR`, `EOS_INSTALL_DIR`, `EOS_SYSTEMD_TARGET_DIR`, `EOS_VERBOSE`, `HEALTH_CHECK_INTERVAL_MS`, `HEALTH_MEM_SAMPLE_INTERVAL_MS`, `HEALTH_BACKOFF_BASE_MS`, `HEALTH_BACKOFF_MAX_MS`, `HEALTH_TIMEOUT_ENABLE`, `HEALTH_RESTART_COUNTER_RESET_WINDOW`, `SHUTDOWN_GRACE_PERIOD`.
+
+## Log Sinks
+
+eos can forward logs to external destinations via sink plugins. Each sink runs as a subprocess: eos pipes JSON log records to its stdin and restarts it if it crashes.
+
+Declare sinks in `service.yaml` under `log_sinks`:
+
+```yaml
+log_sinks:
+  - type: loki
+    mode: push
+    address: "http://loki:3100"
+
+  - type: sse
+    mode: serve
+    address: ":9000"
+```
+
+`type` maps to a binary on PATH named `eos-sink-<type>`. Available plugins (Loki, SSE, Logbench) are maintained at [codeberg.org/Elysium_Labs/eos-plugins](https://codeberg.org/Elysium_Labs/eos-plugins).
 
 ## License
 
