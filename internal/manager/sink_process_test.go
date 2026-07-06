@@ -142,8 +142,10 @@ func TestResolveBinary_notFound(t *testing.T) {
 
 func TestSinkProcess_runAndStop(t *testing.T) {
 	sink := &types.LogSink{
-		Type: "test",
-		Exec: "sh",
+		Type:    "test",
+		Mode:    "push",
+		Address: "http://localhost",
+		Exec:    "sh",
 		// sh script: print READY, then drain stdin until EOF
 		Args: []string{"-c", "echo READY; while IFS= read -r line; do true; done"},
 	}
@@ -168,6 +170,8 @@ func TestSinkProcess_readyTimeout(t *testing.T) {
 	// We cancel the context quickly so the test doesn't wait the full restart delay.
 	sink := &types.LogSink{
 		Type:           "test",
+		Mode:           "push",
+		Address:        "http://localhost",
 		Exec:           "sh",
 		Args:           []string{"-c", "sleep 30"},
 		RestartDelayMs: 100,
@@ -202,6 +206,8 @@ func TestSinkProcess_customBufferSize(t *testing.T) {
 func TestSinkProcess_pluginExitAfterReady(t *testing.T) {
 	sink := &types.LogSink{
 		Type:           "test",
+		Mode:           "push",
+		Address:        "http://localhost",
 		Exec:           "sh",
 		Args:           []string{"-c", "echo READY"},
 		RestartDelayMs: 50,
@@ -219,9 +225,11 @@ func TestSinkProcess_pluginExitAfterReady(t *testing.T) {
 func TestSinkProcess_recordsDelivered(t *testing.T) {
 	outFile := filepath.Join(t.TempDir(), "received.ndjson")
 	sink := &types.LogSink{
-		Type: "test",
-		Exec: "sh",
-		Args: []string{"-c", `echo READY; while IFS= read -r line; do echo "$line" >> ` + outFile + `; done`},
+		Type:    "test",
+		Mode:    "push",
+		Address: "http://localhost",
+		Exec:    "sh",
+		Args:    []string{"-c", `echo READY; while IFS= read -r line; do echo "$line" >> ` + outFile + `; done`},
 	}
 	sp := newSinkProcess(sink, "testsvc", newTestLogger(t), nil)
 
@@ -263,8 +271,10 @@ func TestSinkProcess_stderrRoutedToErrLog(t *testing.T) {
 	errLog := slog.New(handler)
 
 	sink := &types.LogSink{
-		Type: "test",
-		Exec: "sh",
+		Type:    "test",
+		Mode:    "push",
+		Address: "http://localhost",
+		Exec:    "sh",
 		// Print a known message to stderr before signaling READY.
 		Args: []string{"-c", `echo "sink stderr message" >&2; echo READY; while IFS= read -r _; do true; done`},
 	}

@@ -90,6 +90,7 @@ install: build ## Install to ~/.local/bin
 	cp $(GOBIN)/$(BINARY_NAME) $(INSTALL_PATH)/
 	@echo "Installed! Run 'eos --help' to get started"
 
+
 test: ## Run tests
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2

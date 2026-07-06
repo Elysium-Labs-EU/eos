@@ -22,11 +22,15 @@ type Runtime struct {
 }
 
 // LogSink declares an external log sink plugin for a service.
-// eos owns: Type, Exec, BufferSize, RestartDelayMs, Streams.
+// eos manages Type, Exec, BufferSize, RestartDelayMs, and Streams.
 // Options is an opaque blob passed to the plugin via EOS_SINK_OPTIONS env var.
+// Mode and Address are required: mode is "push" or "serve"; address is the
+// remote URL (push) or bind address (serve) passed to the plugin via EOS_SINK_ADDRESS.
 type LogSink struct {
 	Options        map[string]any `json:"options,omitempty"          yaml:"options,omitempty"`
 	Type           string         `json:"type"                       yaml:"type"`
+	Mode           string         `json:"mode"                       yaml:"mode"`
+	Address        string         `json:"address"                    yaml:"address"`
 	Exec           string         `json:"exec,omitempty"             yaml:"exec,omitempty"`
 	Args           []string       `json:"args,omitempty"             yaml:"args,omitempty"`
 	Streams        []string       `json:"streams,omitempty"          yaml:"streams,omitempty"`

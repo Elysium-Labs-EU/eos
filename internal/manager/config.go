@@ -108,8 +108,8 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
 		errs = append(errs, fmt.Errorf("runtime: %w", err))
 	}
-	for i, sink := range config.LogSinks {
-		if sinkErrs := ValidateLogSink(&sink); len(sinkErrs) > 0 {
+	for i := range config.LogSinks {
+		if sinkErrs := ValidateLogSink(&config.LogSinks[i]); len(sinkErrs) > 0 {
 			for _, e := range sinkErrs {
 				errs = append(errs, fmt.Errorf("log_sinks[%d]: %w", i, e))
 			}

@@ -148,6 +148,7 @@ type serviceLogEntry struct {
 	Level  string `json:"level"`
 	Msg    string `json:"msg"`
 	Source string `json:"source"`
+	Error  string `json:"error,omitempty"`
 }
 
 // streamLabel is the pre-rendered label to prepend ("out", "err", or "" for single-stream mode).
@@ -178,11 +179,16 @@ func renderServiceLogLine(line, streamLabel string) string {
 		source = strings.ToLower(entry.Level)
 	}
 
+	msg := entry.Msg
+	if entry.Error != "" {
+		msg = fmt.Sprintf("%s: %s", entry.Msg, entry.Error)
+	}
+
 	var body string
 	if entry.Level == "WARN" || entry.Level == "ERROR" {
-		body = fmt.Sprintf("%s %-6s [%s] %s", timeStr, source, entry.Level, entry.Msg)
+		body = fmt.Sprintf("%s %-6s [%s] %s", timeStr, source, entry.Level, msg)
 	} else {
-		body = fmt.Sprintf("%s %-6s %s", timeStr, source, entry.Msg)
+		body = fmt.Sprintf("%s %-6s %s", timeStr, source, msg)
 	}
 
 	if streamLabel != "" {

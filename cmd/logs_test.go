@@ -137,3 +137,36 @@ func TestRenderServiceLogLine_noSource(t *testing.T) {
 		t.Errorf("expected level-as-source fallback, got: %q", got)
 	}
 }
+
+func TestRenderServiceLogLine_errorField(t *testing.T) {
+	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"WARN","msg":"sink plugin exited (mytype/mysvc)","error":"\"eos-sink-mytype\" not found on PATH"}`
+	got := renderServiceLogLine(line, "")
+	if !strings.Contains(got, "sink plugin exited") {
+		t.Errorf("expected msg in output, got: %q", got)
+	}
+	if !strings.Contains(got, "not found on PATH") {
+		t.Errorf("expected error field appended to output, got: %q", got)
+	}
+}
+
+func TestRenderServiceLogLine_noErrorField(t *testing.T) {
+	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"WARN","msg":"something happened"}`
+	got := renderServiceLogLine(line, "")
+	if !strings.Contains(got, "something happened") {
+		t.Errorf("expected msg in output, got: %q", got)
+	}
+	if strings.Contains(got, ":") && strings.HasSuffix(got, ": ") {
+		t.Errorf("should not append colon when no error field, got: %q", got)
+	}
+}
+
+func TestRenderServiceLogLine_withStreamLabel(t *testing.T) {
+	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"WARN","msg":"sink exited","error":"binary not found"}`
+	got := renderServiceLogLine(line, "err")
+	if !strings.HasPrefix(got, "err ") {
+		t.Errorf("expected stream label prefix, got: %q", got)
+	}
+	if !strings.Contains(got, "binary not found") {
+		t.Errorf("expected error field in output, got: %q", got)
+	}
+}

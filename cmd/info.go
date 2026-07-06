@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
@@ -94,6 +95,16 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				helpers.PrintKV(cmd, "error log path", *errorLogPath)
 			} else {
 				helpers.PrintKV(cmd, "error log path", "N/A")
+			}
+			if config != nil && len(config.LogSinks) > 0 {
+				for i := range config.LogSinks {
+					sink := &config.LogSinks[i]
+					streams := "all"
+					if len(sink.Streams) > 0 {
+						streams = strings.Join(sink.Streams, ", ")
+					}
+					helpers.PrintKV(cmd, fmt.Sprintf("sink %d", i+1), fmt.Sprintf("%s (%s)", sink.Type, streams))
+				}
 			}
 
 			helpers.PrintSection(cmd, "Instance")

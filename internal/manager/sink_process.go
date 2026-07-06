@@ -26,6 +26,7 @@ const (
 // It owns the plugin's lifecycle: launch, READY handshake, record delivery, and restart on crash.
 type sinkProcess struct {
 	logger   *slog.Logger
+	errLog   *slog.Logger
 	buf      *ringBuffer
 	records  chan sinkRecord
 	stopCh   chan struct{}
@@ -40,7 +41,7 @@ type sinkRecord struct {
 	stream string
 }
 
-func newSinkProcess(sink *types.LogSink, serviceName string, logger *slog.Logger) *sinkProcess {
+func newSinkProcess(sink *types.LogSink, serviceName string, logger *slog.Logger, errLog *slog.Logger) *sinkProcess {
 	bufSize := sink.BufferSize
 	if bufSize <= 0 {
 		bufSize = sinkDefaultBufferSize
@@ -49,6 +50,7 @@ func newSinkProcess(sink *types.LogSink, serviceName string, logger *slog.Logger
 		sink:    *sink,
 		service: serviceName,
 		logger:  logger,
+		errLog:  errLog,
 		buf:     newRingBuffer(bufSize),
 		records: make(chan sinkRecord, 256),
 		stopCh:  make(chan struct{}),
@@ -69,6 +71,10 @@ func (s *sinkProcess) Send(line, stream string) {
 // Run starts the sink supervisor loop. Blocks until Stop is called.
 // Must be called in its own goroutine.
 func (s *sinkProcess) Run(ctx context.Context) {
+	if s.sink.Mode == "" || s.sink.Address == "" {
+		s.logger.Error("sink config invalid: mode and address are required", "type", s.sink.Type)
+		return
+	}
 	var innerWg sync.WaitGroup
 	innerWg.Add(1)
 	defer func() {
@@ -118,9 +124,7 @@ func (s *sinkProcess) Run(ctx context.Context) {
 		}
 
 		if err := s.runOnce(ctx); err != nil {
-			s.logger.Warn("sink plugin exited",
-				"sink", s.sink.Type,
-				"service", s.service,
+			s.logger.Warn(fmt.Sprintf("sink plugin exited (%s/%s)", s.sink.Type, s.service),
 				"error", err,
 				"restart_in_ms", restartDelayMs,
 			)
@@ -159,6 +163,7 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 	cmd.Env = append(os.Environ(), optionsEnv,
 		"EOS_SINK_SERVICE="+s.service,
 		"EOS_SINK_TYPE="+s.sink.Type,
+		"EOS_SINK_ADDRESS="+s.sink.Address,
 	)
 
 	stdin, err := cmd.StdinPipe()
@@ -178,11 +183,15 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 		return fmt.Errorf("starting plugin: %w", err)
 	}
 
-	// Drain stderr to our logger in background.
+	// Drain stderr to daemon logger and service error log in background.
 	go func() {
 		sc := bufio.NewScanner(stderrPipe)
 		for sc.Scan() {
-			s.logger.Warn("sink plugin stderr", "sink", s.sink.Type, "service", s.service, "msg", sc.Text())
+			msg := sc.Text()
+			s.logger.Warn("sink plugin stderr", "sink", s.sink.Type, "service", s.service, "msg", msg)
+			if s.errLog != nil {
+				s.errLog.Warn(msg, "source", "sink:"+s.sink.Type)
+			}
 		}
 	}()
 
@@ -225,7 +234,7 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 		return nil
 	}
 
-	s.logger.Info("sink plugin ready", "sink", s.sink.Type, "service", s.service)
+	s.logger.Info("sink:"+s.sink.Type+" ready", "address", s.sink.Address, "service", s.service)
 
 	// Pump records from the ring buffer into plugin stdin.
 	// On stop/ctx cancel we flush remaining buffered records first, then close stdin.
@@ -318,10 +327,11 @@ func (s *sinkProcess) resolveBinary() (string, error) {
 }
 
 // startSinkProcesses creates and starts a sinkProcess for each configured sink.
-func startSinkProcesses(ctx context.Context, sinkConfigs []types.LogSink, serviceName string, logger *slog.Logger) []*sinkProcess {
+// errLog is the service error log logger; sink plugin stderr is written there in addition to the daemon logger.
+func startSinkProcesses(ctx context.Context, sinkConfigs []types.LogSink, serviceName string, logger *slog.Logger, errLog *slog.Logger) []*sinkProcess {
 	procs := make([]*sinkProcess, 0, len(sinkConfigs))
 	for i := range sinkConfigs {
-		sp := newSinkProcess(&sinkConfigs[i], serviceName, logger)
+		sp := newSinkProcess(&sinkConfigs[i], serviceName, logger, errLog)
 		go sp.Run(ctx)
 		procs = append(procs, sp)
 	}
