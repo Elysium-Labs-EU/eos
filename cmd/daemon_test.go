@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
+	"github.com/spf13/cobra"
 )
 
 func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {
@@ -196,3 +199,120 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 
 // func TestForkDaemon(t *testing.T) {}
 // func TestPrintDaemonDetails(t *testing.T) {}
+
+// fakeDaemonController records Start calls and returns a configured error.
+type fakeDaemonController struct {
+	startErr    error
+	startCalled bool
+	detachArg   bool
+}
+
+func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ bool) error {
+	f.startCalled = true
+	f.detachArg = detach
+	return f.startErr
+}
+
+func (f *fakeDaemonController) Stop(_ context.Context) (bool, error) { return false, nil }
+func (f *fakeDaemonController) Remove() error                        { return nil }
+func (f *fakeDaemonController) Info(_ *cobra.Command)                {}
+func (f *fakeDaemonController) Logs(_ *cobra.Command, _ int, _ bool) {}
+func (f *fakeDaemonController) LogsHint() string                     { return "" }
+
+func newTestDaemonCmd(ctrl DaemonController) *cobra.Command {
+	parent := &cobra.Command{Use: "daemon"}
+	buildDaemonSubcmds(parent, func() DaemonController { return ctrl })
+	return parent
+}
+
+func TestDaemonStartForeground(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.startCalled {
+		t.Fatal("expected Start to be called")
+	}
+	if fake.detachArg {
+		t.Fatal("expected detach=false for foreground start")
+	}
+	if !strings.Contains(out.String(), "foreground") {
+		t.Errorf("expected 'foreground' in output, got: %s", out.String())
+	}
+}
+
+func TestDaemonStartDetachLongFlag(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "--detach"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.startCalled {
+		t.Fatal("expected Start to be called")
+	}
+	if !fake.detachArg {
+		t.Fatal("expected detach=true for --detach flag")
+	}
+	if !strings.Contains(out.String(), "background") {
+		t.Errorf("expected 'background' in output, got: %s", out.String())
+	}
+}
+
+func TestDaemonStartDetachShortFlag(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "-d"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.detachArg {
+		t.Fatal("expected detach=true for -d flag")
+	}
+}
+
+func TestDaemonStartError(t *testing.T) {
+	fake := &fakeDaemonController{startErr: errors.New("boom")}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected cobra error: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "boom") {
+		t.Errorf("expected error message in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDaemonStartDetachSuccessOutput(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "--detach"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "daemon started in background") {
+		t.Errorf("expected success message, got: %s", out.String())
+	}
+}
