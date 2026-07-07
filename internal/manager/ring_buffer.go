@@ -1,6 +1,9 @@
 package manager
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // ringBuffer is a fixed-capacity circular buffer of sinkRecords.
 // On overflow it drops the oldest record and increments a counter.
@@ -16,6 +19,9 @@ type ringBuffer struct {
 }
 
 func newRingBuffer(capacity int) *ringBuffer {
+	if capacity <= 0 {
+		panic(fmt.Sprintf("ringBuffer: capacity must be > 0, got %d", capacity))
+	}
 	return &ringBuffer{
 		buf: make([]sinkRecord, capacity),
 		cap: capacity,

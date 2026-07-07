@@ -28,7 +28,6 @@ type sinkProcess struct {
 	logger   *slog.Logger
 	errLog   *slog.Logger
 	buf      *ringBuffer
-	records  chan sinkRecord
 	stopCh   chan struct{}
 	doneCh   chan struct{}
 	service  string
@@ -52,20 +51,14 @@ func newSinkProcess(sink *types.LogSink, serviceName string, logger *slog.Logger
 		logger:  logger,
 		errLog:  errLog,
 		buf:     newRingBuffer(bufSize),
-		records: make(chan sinkRecord, 256),
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
 	}
 }
 
-// Send enqueues a log record. Called from the fan-out scanner goroutine.
-// Non-blocking: if the internal channel is full the record feeds directly to the ring buffer.
+// Send enqueues a log record. Called from the fan-out scanner goroutine. Non-blocking.
 func (s *sinkProcess) Send(line, stream string) {
-	select {
-	case s.records <- sinkRecord{line: line, stream: stream}:
-	default:
-		s.buf.push(sinkRecord{line: line, stream: stream})
-	}
+	s.buf.push(sinkRecord{line: line, stream: stream})
 }
 
 // Run starts the sink supervisor loop. Blocks until Stop is called.
@@ -73,41 +66,10 @@ func (s *sinkProcess) Send(line, stream string) {
 func (s *sinkProcess) Run(ctx context.Context) {
 	if s.sink.Mode == "" || s.sink.Address == "" {
 		s.logger.Error("sink config invalid: mode and address are required", "type", s.sink.Type)
+		close(s.doneCh)
 		return
 	}
-	var innerWg sync.WaitGroup
-	innerWg.Add(1)
-	defer func() {
-		innerWg.Wait()
-		close(s.doneCh)
-	}()
-
-	// Feed the records channel into the ring buffer.
-	// This goroutine lives for the full lifetime of Run.
-	go func() {
-		defer innerWg.Done()
-		for {
-			select {
-			case r, ok := <-s.records:
-				if !ok {
-					return
-				}
-				s.buf.push(r)
-			case <-s.stopCh:
-				// drain remaining channel entries into buffer before exit
-				for {
-					select {
-					case r := <-s.records:
-						s.buf.push(r)
-					default:
-						return
-					}
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	defer close(s.doneCh)
 
 	restartDelayMs := s.sink.RestartDelayMs
 	if restartDelayMs <= 0 {
@@ -130,12 +92,15 @@ func (s *sinkProcess) Run(ctx context.Context) {
 			)
 		}
 
+		t := time.NewTimer(time.Duration(restartDelayMs) * time.Millisecond)
 		select {
 		case <-s.stopCh:
+			t.Stop()
 			return
 		case <-ctx.Done():
+			t.Stop()
 			return
-		case <-time.After(time.Duration(restartDelayMs) * time.Millisecond):
+		case <-t.C:
 		}
 	}
 }
@@ -225,11 +190,11 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 		_ = cmd.Wait()
 		return fmt.Errorf("timed out waiting for READY from plugin %q", s.sink.Type)
 	case <-s.stopCh:
-		_ = stdin.Close()
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil
 	case <-ctx.Done():
-		_ = stdin.Close()
+		// exec.CommandContext kills the subprocess automatically on ctx cancel.
 		_ = cmd.Wait()
 		return nil
 	}
@@ -284,6 +249,7 @@ func (s *sinkProcess) pump(ctx context.Context, w *bufio.Writer) error {
 					}
 				}
 			case <-ctx.Done():
+				// subprocess killed by exec.CommandContext; no point flushing.
 				return nil
 			default:
 				// No records yet; yield briefly.
