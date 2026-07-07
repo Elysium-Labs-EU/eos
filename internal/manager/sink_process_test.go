@@ -292,6 +292,94 @@ func TestSinkProcess_stderrRoutedToErrLog(t *testing.T) {
 	}
 }
 
+// TestSinkProcess_invalidConfig covers the Run() early-return path that closes doneCh;
+// without the fix Stop() would deadlock here.
+func TestSinkProcess_invalidConfig_stopDoesNotDeadlock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sink types.LogSink
+	}{
+		{"missing mode", types.LogSink{Type: "test", Address: "http://localhost"}},
+		{"missing address", types.LogSink{Type: "test", Mode: "push"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := newSinkProcess(&tc.sink, "svc", newTestLogger(t), nil)
+			go sp.Run(context.Background())
+
+			done := make(chan struct{})
+			go func() { sp.Stop(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("Stop() deadlocked after invalid-config Run()")
+			}
+		})
+	}
+}
+
+// TestSinkProcess_stopDuringReadyHandshake covers the stopCh branch in runOnce's READY
+// select; previously cmd.Wait() could hang if the plugin ignored stdin EOF.
+func TestSinkProcess_stopDuringReadyHandshake(t *testing.T) {
+	sink := &types.LogSink{
+		Type:    "test",
+		Mode:    "push",
+		Address: "http://localhost",
+		Exec:    "sh",
+		Args:    []string{"-c", "sleep 30"},
+	}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go sp.Run(ctx)
+
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() { sp.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop() deadlocked while waiting for READY")
+	}
+}
+
+// TestSinkProcess_pluginExitsWithoutReady covers the readyCh error path in runOnce.
+func TestSinkProcess_pluginExitsWithoutReady(t *testing.T) {
+	sink := &types.LogSink{
+		Type:           "test",
+		Mode:           "push",
+		Address:        "http://localhost",
+		Exec:           "sh",
+		Args:           []string{"-c", "exit 1"},
+		RestartDelayMs: 50,
+	}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	sp.Run(ctx)
+}
+
+// TestStartStopSinkProcesses covers startSinkProcesses and stopSinkProcesses.
+func TestStartStopSinkProcesses(t *testing.T) {
+	sinks := []types.LogSink{
+		{
+			Type:    "test",
+			Mode:    "push",
+			Address: "http://localhost",
+			Exec:    "sh",
+			Args:    []string{"-c", "echo READY; while IFS= read -r _; do true; done"},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	procs := startSinkProcesses(ctx, sinks, "svc", newTestLogger(t), nil)
+	time.Sleep(200 * time.Millisecond)
+	stopSinkProcesses(procs)
+}
+
 func newTestLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 	return slog.Default()

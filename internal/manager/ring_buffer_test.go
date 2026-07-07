@@ -43,6 +43,15 @@ func TestRingBuffer_overflow_dropsOldest(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_panicOnZeroCapacity(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for capacity=0")
+		}
+	}()
+	newRingBuffer(0)
+}
+
 func TestRingBuffer_len(t *testing.T) {
 	rb := newRingBuffer(5)
 	if rb.Len() != 0 {
