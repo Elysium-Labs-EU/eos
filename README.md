@@ -132,6 +132,21 @@ log:
 
 Environment variables take precedence over defaults: `EOS_BASE_DIR`, `EOS_INSTALL_DIR`, `EOS_SYSTEMD_TARGET_DIR`, `EOS_VERBOSE`, `HEALTH_CHECK_INTERVAL_MS`, `HEALTH_MEM_SAMPLE_INTERVAL_MS`, `HEALTH_BACKOFF_BASE_MS`, `HEALTH_BACKOFF_MAX_MS`, `HEALTH_TIMEOUT_ENABLE`, `HEALTH_RESTART_COUNTER_RESET_WINDOW`, `SHUTDOWN_GRACE_PERIOD`.
 
+## Deploy with GitHub Actions
+
+The [eos-deploy-action](https://github.com/Elysium-Labs-EU/eos-deploy-action) handles SSH, binary install, and service restart in one step.
+
+```yaml
+- uses: docker://ghcr.io/elysium-labs-eu/eos-deploy-action:latest
+  with:
+    host: ${{ secrets.DEPLOY_HOST }}
+    user: ${{ secrets.DEPLOY_USER }}
+    ssh_key: ${{ secrets.DEPLOY_SSH_KEY }}
+    service: my-service
+```
+
+Add it to your release workflow and pushes to `main` deploy automatically.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE).
