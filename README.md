@@ -151,6 +151,21 @@ log_sinks:
 
 `type` maps to a binary on PATH named `eos-sink-<type>`. Available plugins (Loki, SSE, Logbench) are maintained at [codeberg.org/Elysium_Labs/eos-plugins](https://codeberg.org/Elysium_Labs/eos-plugins).
 
+## Deploy with GitHub Actions
+
+The [eos-deploy-action](https://github.com/Elysium-Labs-EU/eos-deploy-action) handles SSH, binary install, and service restart in one step.
+
+```yaml
+- uses: docker://ghcr.io/elysium-labs-eu/eos-deploy-action:latest
+  with:
+    host: ${{ secrets.DEPLOY_HOST }}
+    user: ${{ secrets.DEPLOY_USER }}
+    ssh_key: ${{ secrets.DEPLOY_SSH_KEY }}
+    service: my-service
+```
+
+Add it to your release workflow and pushes to `main` deploy automatically.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE).
