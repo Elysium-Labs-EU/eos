@@ -84,8 +84,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd.AddCommand(newDaemonCmd(testDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig, testDaemonConfig))
-
-	rootCmd.InitDefaultCompletionCmd()
+	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	return rootCmd
 }
@@ -170,7 +169,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newDaemonCmd(getDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
 
-	rootCmd.InitDefaultCompletionCmd()
+	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig, getDaemonConfig))
 
