@@ -122,6 +122,70 @@ func TestValidateRuntimeBinaryPythonNotFound(t *testing.T) {
 	}
 }
 
+func TestValidateLogSink_missingType(t *testing.T) {
+	errs := ValidateLogSink(&types.LogSink{})
+	if len(errs) == 0 {
+		t.Error("expected error for missing type")
+	}
+}
+
+func TestValidateLogSink_binaryOnPath(t *testing.T) {
+	// "sh" is guaranteed to exist; name it so eos-sink-sh would be looked up but exec overrides
+	sink := types.LogSink{Type: "test", Exec: "sh"}
+	errs := ValidateLogSink(&sink)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid exec, got: %v", errs)
+	}
+}
+
+func TestValidateLogSink_execNotFound(t *testing.T) {
+	sink := types.LogSink{Type: "test", Exec: "/nonexistent/eos-sink-test"}
+	errs := ValidateLogSink(&sink)
+	if len(errs) == 0 {
+		t.Error("expected error for non-existent exec path")
+	}
+}
+
+func TestValidateLogSink_pluginNotOnPath(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+
+	sink := types.LogSink{Type: "datadog"}
+	errs := ValidateLogSink(&sink)
+	if len(errs) == 0 {
+		t.Error("expected error when eos-sink-datadog not on PATH")
+		return
+	}
+	if !strings.Contains(errs[0].Error(), "eos-sink-datadog") {
+		t.Errorf("expected binary name in error, got: %v", errs[0])
+	}
+}
+
+func TestValidateLogSink_negativeBufferSize(t *testing.T) {
+	sink := types.LogSink{Type: "test", Exec: "sh", BufferSize: -1}
+	errs := ValidateLogSink(&sink)
+	if len(errs) == 0 {
+		t.Error("expected error for negative buffer_size")
+	}
+}
+
+func TestValidateLogSink_invalidStream(t *testing.T) {
+	sink := types.LogSink{Type: "test", Exec: "sh", Streams: []string{"stdout", "invalid"}}
+	errs := ValidateLogSink(&sink)
+	if len(errs) == 0 {
+		t.Error("expected error for invalid stream value")
+	}
+}
+
+func TestValidateLogSink_validStreams(t *testing.T) {
+	sink := types.LogSink{Type: "test", Exec: "sh", Streams: []string{"stdout", "stderr"}}
+	errs := ValidateLogSink(&sink)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid streams, got: %v", errs)
+	}
+}
+
 func TestNewServiceCatalogEntry(t *testing.T) {
 	_, err := NewServiceCatalogEntry("website", "./test-files", "service.yaml")
 	if err != nil {

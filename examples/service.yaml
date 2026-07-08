@@ -8,3 +8,25 @@ runtime:
   type: "nodejs"
   path: "~/.nvm/versions/node/v20.0.0/bin"
 memory_limit_mb: 512
+
+# Optional: route logs to external sinks.
+# Each sink runs as a child process managed by eos.
+# eos writes NDJSON records to its stdin; the plugin forwards them.
+#
+# log_sinks:
+#   # Logbench — local dev log dashboard (https://github.com/albingroen/logbench)
+#   # Install: brew install albingroen/tap/eos-sink-logbench (example)
+#   - type: logbench
+#     options:
+#       project_id: "your-project-id"
+#       endpoint: "http://localhost:1447"   # default
+#
+#   # Datadog — only stderr, with explicit binary path override
+#   - type: datadog
+#     exec: /usr/local/bin/eos-sink-datadog
+#     streams: [stderr]
+#     buffer_size: 8192
+#     restart_delay_ms: 5000
+#     options:
+#       api_key: "${DD_API_KEY}"   # expanded from eos environment at startup
+#       site: "datadoghq.com"

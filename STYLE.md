@@ -57,6 +57,55 @@ return nil, fmt.Errorf("starting daemon: %w", err)
 func newDaemonConfig(...) config.DaemonConfig  // value, not pointer
 ```
 
+## Subprocess lifecycle
+
+**Kill before Wait on every exit path.**
+Any branch that calls `Kill()` before `Wait()` means all branches must.
+`cmd.Wait()` blocks indefinitely if process ignores signal.
+```go
+// Wrong: stopCh path hangs if plugin ignores stdin close
+case <-stopCh:
+    _ = stdin.Close()
+    _ = cmd.Wait()
+
+// Right:
+case <-stopCh:
+    _ = cmd.Process.Kill()
+    _ = cmd.Wait()
+```
+
+**`defer close(doneCh)` registers after early returns → deadlock.**
+Register defer first, or close explicitly on every early exit.
+```go
+// Wrong: caller blocks forever on <-doneCh
+if bad { return }
+defer close(s.doneCh) // never reached
+
+// Right:
+if bad { close(s.doneCh); return }
+defer close(s.doneCh)
+```
+
+**One write path into ordered queue.**
+Two paths (channel + direct push) invert order under backpressure.
+Use mutex-safe container directly; no intermediate channel needed.
+
+**Concurrent drain ordering on shutdown.**
+When stopCh fires: if goroutine A feeds buffer and goroutine B drains it,
+there is no ordering — B may finish before A pushes last records.
+Solution: eliminate one goroutine, or signal A→done before B reads final pass.
+
+**`time.After` in loop select leaks timer.**
+Use `time.NewTimer` + `defer t.Stop()` or `t.Stop()` on early select exit.
+```go
+t := time.NewTimer(delay)
+select {
+case <-stopCh:
+    t.Stop(); return
+case <-t.C:
+}
+```
+
 ## Avoid
 
 | Don't | Why |

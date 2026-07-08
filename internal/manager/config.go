@@ -108,8 +108,49 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
 		errs = append(errs, fmt.Errorf("runtime: %w", err))
 	}
+	for i := range config.LogSinks {
+		if sinkErrs := ValidateLogSink(&config.LogSinks[i]); len(sinkErrs) > 0 {
+			for _, e := range sinkErrs {
+				errs = append(errs, fmt.Errorf("log_sinks[%d]: %w", i, e))
+			}
+		}
+	}
 	if len(errs) > 0 {
 		return nil, errs
 	}
 	return &config, nil
+}
+
+var validStreams = map[string]bool{"stdout": true, "stderr": true}
+
+func ValidateLogSink(sink *types.LogSink) []error {
+	var errs []error
+	if sink.Type == "" {
+		errs = append(errs, fmt.Errorf("type is required"))
+		return errs
+	}
+	if sink.Exec != "" {
+		if _, err := exec.LookPath(sink.Exec); err != nil {
+			if _, statErr := os.Stat(sink.Exec); statErr != nil {
+				errs = append(errs, fmt.Errorf("exec %q not found: %w", sink.Exec, err))
+			}
+		}
+	} else {
+		binaryName := "eos-sink-" + sink.Type
+		if _, err := exec.LookPath(binaryName); err != nil {
+			errs = append(errs, fmt.Errorf("plugin binary %q not found on PATH (set exec: to override)", binaryName))
+		}
+	}
+	if sink.BufferSize < 0 {
+		errs = append(errs, fmt.Errorf("buffer_size must be >= 0"))
+	}
+	if sink.RestartDelayMs < 0 {
+		errs = append(errs, fmt.Errorf("restart_delay_ms must be >= 0"))
+	}
+	for _, s := range sink.Streams {
+		if !validStreams[s] {
+			errs = append(errs, fmt.Errorf("streams: %q is invalid (must be stdout or stderr)", s))
+		}
+	}
+	return errs
 }

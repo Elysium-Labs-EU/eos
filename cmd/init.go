@@ -18,6 +18,8 @@ import (
 
 const initSchemaHeader = "# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json\n\n"
 
+const initLogSinkHint = "\n# Optional: route logs to a sink plugin.\n# log_sinks:\n#   - type: logbench\n#     options:\n#       project_id: \"your-project-id\"\n"
+
 // initServiceConfig mirrors types.ServiceConfig but with Runtime as a pointer
 // so yaml omitempty works; an empty Runtime struct would otherwise marshal to "runtime: {}".
 type initServiceConfig struct {
@@ -118,7 +120,7 @@ func newInitCmd() *cobra.Command {
 				return
 			}
 
-			if err := os.WriteFile(outputPath, []byte(initSchemaHeader+string(data)), 0644); err != nil { // #nosec G306 -- service.yaml is a project config file, world-readable is intentional
+			if err := os.WriteFile(outputPath, []byte(initSchemaHeader+string(data)+initLogSinkHint), 0644); err != nil { // #nosec G306 -- service.yaml is a project config file, world-readable is intentional
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing file: %v", err))
 				return
 			}
