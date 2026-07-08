@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -367,7 +368,8 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	stderr := &manager.CapturedWriter{}
+	cmd.Stderr = stderr
 
 	if os.Getuid() == 0 {
 		u, err := userutil.EffectiveUser()
@@ -395,6 +397,9 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	if output := strings.TrimSpace(stderr.String()); output != "" {
+		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
+	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 }
 

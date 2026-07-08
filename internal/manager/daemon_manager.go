@@ -2,6 +2,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,12 +15,42 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
+
+// maxCapturedStderr caps how much of a failed daemon fork's stderr we retain for error messages.
+const maxCapturedStderr = 4096
+
+// CapturedWriter is a concurrency-safe io.Writer that retains up to maxCapturedStderr bytes,
+// silently dropping anything past that (satisfies the io.Writer contract: never reports
+// short writes without an error).
+type CapturedWriter struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (c *CapturedWriter) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if remaining := maxCapturedStderr - c.buf.Len(); remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		c.buf.Write(p[:remaining])
+	}
+	return len(p), nil
+}
+
+func (c *CapturedWriter) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
 
 type DaemonManager struct {
 	ctx        context.Context
@@ -86,7 +117,8 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	stderr := &CapturedWriter{}
+	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting daemon process: %w", err)
@@ -106,6 +138,9 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 				return nil
 			}
 			if time.Now().After(deadline) {
+				if output := strings.TrimSpace(stderr.String()); output != "" {
+					return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
+				}
 				return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 			}
 		}
