@@ -336,6 +336,9 @@ func StopStandaloneDaemon(pidFile, socketPath string) (bool, error) {
 
 	err = process.Signal(syscall.Signal(0))
 	if err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return false, nil
+		}
 		return false, fmt.Errorf("checking active daemon: %w", err)
 	}
 
