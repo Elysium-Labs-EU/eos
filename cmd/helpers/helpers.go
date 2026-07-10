@@ -160,6 +160,14 @@ func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
 	return response == "y" || response == "yes"
 }
 
+// Debugf prints a debug-labeled diagnostic line to stderr when verbose is true, no-op otherwise.
+func Debugf(cmd *cobra.Command, verbose bool, format string, args ...any) {
+	if !verbose {
+		return
+	}
+	cmd.PrintErrf("%s %s\n", ui.LabelDebug.Render("debug"), fmt.Sprintf(format, args...))
+}
+
 func PrintSudoHint(cmd *cobra.Command) {
 	cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run with:"), ui.TextCommand.Render("sudo"), ui.TextMuted.Render("to try again with administrative permissions"))
 }

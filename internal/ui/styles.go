@@ -18,6 +18,7 @@ var (
 	LabelError   = lipgloss.NewStyle().Bold(true).Foreground(ColorError)
 	LabelInfo    = lipgloss.NewStyle().Bold(true).Foreground(ColorInfo)
 	LabelStep    = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent) // → arrow
+	LabelDebug   = lipgloss.NewStyle().Bold(true).Foreground(ColorMuted)
 
 	TableBorderColor = ColorMuted
 	TableHeaderStyle = lipgloss.NewStyle().
