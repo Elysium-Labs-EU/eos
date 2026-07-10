@@ -781,7 +781,8 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return
 	}
 
-	killed, killErr := ctrl.Stop(ctx)
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	killed, killErr := ctrl.Stop(ctx, cmd, verbose)
 	if killErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
 		return
@@ -1157,7 +1158,8 @@ func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, 
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-	_, err = ctrl.Stop(cmd.Context())
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	_, err = ctrl.Stop(cmd.Context(), cmd, verbose)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
 		return

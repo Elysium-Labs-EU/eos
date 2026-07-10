@@ -63,6 +63,7 @@ type DaemonLogConfig struct {
 type SystemdConfig struct {
 	SystemdTargetDir      string `json:"systemd_target_dir" yaml:"systemdTargetDir"`
 	SystemdTargetFileName string `json:"systemd_target_file_name" yaml:"systemdTargetFileName"`
+	UserUnit              bool   `json:"user_unit" yaml:"userUnit"`
 }
 
 type TimeOutConfig struct {
@@ -185,6 +186,41 @@ func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) (bo
 		return false, nil
 	}
 	return false, fmt.Errorf("checking systemd unit file: %w", err)
+}
+
+// ResolveSystemdScope finds which systemd instance (system or user) actually
+// has the eos unit installed, checking the on-disk unit file rather than the
+// invoking process's uid — a system unit installed via sudo must stay
+// discoverable to a later non-root invocation, and vice versa.
+//
+// If no unit file exists in either location (not installed yet), it falls
+// back to the caller's privilege level: root defaults to the system scope,
+// non-root defaults to the user scope.
+func ResolveSystemdScope(systemDir string) (dir string, isManaged bool, userUnit bool, err error) {
+	systemManaged, err := IsSystemdManaged(systemDir, SystemdTargetFileName)
+	if err != nil {
+		return "", false, false, err
+	}
+	if systemManaged {
+		return systemDir, true, false, nil
+	}
+
+	userDir, err := UserSystemdDir()
+	if err != nil {
+		return "", false, false, fmt.Errorf("resolving user systemd dir: %w", err)
+	}
+	userManaged, err := IsSystemdManaged(userDir, SystemdTargetFileName)
+	if err != nil {
+		return "", false, false, err
+	}
+	if userManaged {
+		return userDir, true, true, nil
+	}
+
+	if os.Getuid() != 0 {
+		return userDir, false, true, nil
+	}
+	return systemDir, false, false, nil
 }
 
 // EosConfig is the shape of ~/.eos/config.yaml.

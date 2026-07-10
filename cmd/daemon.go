@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
@@ -21,7 +22,7 @@ import (
 
 type DaemonController interface {
 	Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error
-	Stop(ctx context.Context) (bool, error)
+	Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error)
 	Remove() error
 	Info(cmd *cobra.Command)
 	Logs(cmd *cobra.Command, lines int, follow bool)
@@ -43,8 +44,17 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
 }
 
-func (c *standaloneDaemonController) Stop(_ context.Context) (bool, error) {
-	return process.StopStandaloneDaemon(c.cfg.PIDFile, c.cfg.SocketPath)
+func (c *standaloneDaemonController) Stop(_ context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
+	helpers.Debugf(cmd, verbose, "reading pid file: %s", c.cfg.PIDFile)
+	killed, err := process.StopStandaloneDaemon(c.cfg.PIDFile, c.cfg.SocketPath)
+	if err != nil {
+		helpers.Debugf(cmd, verbose, "stop failed: %v", err)
+		return killed, err
+	}
+	if killed {
+		helpers.Debugf(cmd, verbose, "sent termination signal, removing socket: %s", c.cfg.SocketPath)
+	}
+	return killed, nil
 }
 
 func (c *standaloneDaemonController) Remove() error {
@@ -134,21 +144,30 @@ type systemdDaemonController struct {
 }
 
 func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
-	if os.Getuid() != 0 {
+	if !c.cfg.UserUnit && os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
-	out, err := exec.CommandContext(ctx, "systemctl", "start", "eos").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(c.cfg.UserUnit, "start", "eos")...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input
 	if err != nil {
 		return fmt.Errorf("starting systemd service: %s", out)
 	}
 	return nil
 }
 
-func (c systemdDaemonController) Stop(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "systemctl", "stop", "eos").CombinedOutput()
+func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
+	args := systemctlArgs(c.cfg.UserUnit, "stop", "eos")
+	scope := "system"
+	if c.cfg.UserUnit {
+		scope = "user"
+	}
+	helpers.Debugf(cmd, verbose, "resolved scope: %s (unit dir: %s)", scope, c.cfg.SystemdTargetDir)
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(args, " "))
+	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input
 	if err != nil {
+		helpers.Debugf(cmd, verbose, "systemctl exited with error: %s", strings.TrimSpace(string(out)))
 		return false, fmt.Errorf("stopping systemd service: %s", out)
 	}
+	helpers.Debugf(cmd, verbose, "systemctl stop succeeded")
 	return true, nil
 }
 
@@ -157,10 +176,13 @@ func (c systemdDaemonController) Remove() error {
 }
 
 func (c systemdDaemonController) Info(cmd *cobra.Command) {
-	printSystemdDaemonDetails(cmd)
+	printSystemdDaemonDetails(cmd, c.cfg.UserUnit)
 }
 
 func (c systemdDaemonController) LogsHint() string {
+	if c.cfg.UserUnit {
+		return "journalctl --user -u eos -f"
+	}
 	return "journalctl -u eos -f"
 }
 
@@ -177,11 +199,11 @@ func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 	}
 
 	// #nosec G204 - lines is validated above
-	journalArgs := []string{"-u", "eos", "-n", fmt.Sprintf("%d", lines)}
+	journalArgs := systemctlArgs(c.cfg.UserUnit, "-u", "eos", "-n", fmt.Sprintf("%d", lines))
 	if follow {
 		journalArgs = append(journalArgs, "-f")
 	}
-	// #nosec G204 - lines is validated above; journalArgs contains only -u, eos, -n, <int>, and optionally -f
+	// #nosec G204 - lines is validated above; journalArgs contains only --user, -u, eos, -n, <int>, and optionally -f
 	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", journalArgs...)
 	journalCmd.Stdout = cmd.OutOrStdout()
 	journalCmd.Stderr = cmd.ErrOrStderr()
@@ -266,8 +288,9 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Long:  "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
 		Run: func(cmd *cobra.Command, args []string) {
 			ctrl := getCtrl()
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-			killed, err := ctrl.Stop(cmd.Context())
+			killed, err := ctrl.Stop(cmd.Context(), cmd, verbose)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
 				return
@@ -403,11 +426,17 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 }
 
-func printSystemdDaemonDetails(cmd *cobra.Command) {
+func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
+	statusCmd := "systemctl status eos.service"
+	logsCmd := "journalctl -u eos.service"
+	if userUnit {
+		statusCmd = "systemctl --user status eos.service"
+		logsCmd = "journalctl --user -u eos.service"
+	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("systemctl status eos.service") + ui.TextMuted.Render(" → check systemd service status") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("journalctl -u eos.service") + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
 	cmd.Println()
 }
 
