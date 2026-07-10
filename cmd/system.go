@@ -773,6 +773,8 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return
 	}
 
+	refreshInstalledCompletions(ctx, cmd, binaryPath)
+
 	confirmed = helpers.PromptConfirm(cmd, "restart daemon? (y/n):")
 
 	if !confirmed {
