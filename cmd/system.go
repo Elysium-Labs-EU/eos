@@ -107,9 +107,10 @@ For user units, add boot-time autostart (without login) with: loginctl enable-li
 				}
 			}
 
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 				systemdDir, config.SystemdTargetFileName,
-				userUnit, detectActiveSystemRuntime, execRunCmd)
+				userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
 
@@ -134,7 +135,8 @@ Auto-detects the unit scope based on how you invoke the command:
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
 				return
 			}
-			unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, detectActiveSystemRuntime, execRunCmd)
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
 
@@ -384,24 +386,94 @@ func systemctlArgs(userUnit bool, args ...string) []string {
 	return args
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit bool, detectRuntime func() (string, error), run runCmdFn) { //nolint:unparam // systemdFile varies in integration tests (excluded by build tag)
+// userRuntimeDir returns the systemd user runtime dir this process would use, e.g. /run/user/1000.
+func userRuntimeDir() string {
+	return fmt.Sprintf("/run/user/%d", os.Getuid())
+}
+
+func isAccessibleDir(path string) bool {
+	fileInfo, err := os.Stat(path) // #nosec G703 -- path is either the user's own XDG_RUNTIME_DIR or a derived /run/user/<uid>, never external input
+	if err != nil {
+		return false
+	}
+	return fileInfo.IsDir()
+}
+
+// ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
+// condition that causes `systemctl --user ...` to fail with "Failed to connect to bus: Permission
+// denied". This happens when XDG_RUNTIME_DIR is unset/stale (fixable by correcting the env var) or
+// when the account has no active session and no linger enabled (fixable via `loginctl enable-linger`).
+// expected is the runtime dir this process should be using (userRuntimeDir() in production; injected
+// directly in tests so they don't depend on the real /run/user/<uid>).
+func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username, expected string, run runCmdFn) error {
+	current := os.Getenv("XDG_RUNTIME_DIR")
+	helpers.Debugf(cmd, verbose, "XDG_RUNTIME_DIR=%q (expected %q)", current, expected)
+
+	if isAccessibleDir(current) {
+		return nil
+	}
+
+	if isAccessibleDir(expected) {
+		helpers.Debugf(cmd, verbose, "correcting XDG_RUNTIME_DIR to %q", expected)
+		if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
+			return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
+		}
+		return nil
+	}
+
+	cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no active systemd user session found — user bus is not running")
+	cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "this happens when the account has no login session and linger is not enabled")
+
+	confirmed := helpers.PromptConfirm(cmd, fmt.Sprintf("enable linger for %q to start a user bus now? (y/n):", username))
+	if !confirmed {
+		return fmt.Errorf("no user bus available and linger was not enabled")
+	}
+
+	out, err := run(ctx, "loginctl", "enable-linger", username)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(out)))
+		helpers.PrintSudoHint(cmd)
+		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("sudo loginctl enable-linger "+username)))
+		return fmt.Errorf("enabling linger: %w", err)
+	}
+	helpers.Debugf(cmd, verbose, "loginctl enable-linger %s succeeded", username)
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		helpers.Debugf(cmd, verbose, "checking for %q (attempt %d/5)", expected, attempt)
+		if isAccessibleDir(expected) {
+			if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
+				return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
+			}
+			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user bus is now available")
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	return fmt.Errorf("user bus still unavailable after enabling linger — a fresh login may be required")
+}
+
+func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) { //nolint:unparam // systemdFile varies in integration tests (excluded by build tag)
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
 	if runtime != "systemd" {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
 		return
 	}
 
 	fullTargetName := filepath.Join(systemdDir, systemdFile)
+	helpers.Debugf(cmd, verbose, "target unit file: %s", fullTargetName)
 
 	if userUnit {
 		if err = os.MkdirAll(strings.TrimSuffix(systemdDir, "/"), 0750); err != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating user systemd directory: %v", err))
 			return
 		}
+		helpers.Debugf(cmd, verbose, "ensured user systemd directory: %s", systemdDir)
 	} else if !prepareSystemUnitDir(cmd, systemdDir, fullTargetName) {
 		return
 	}
@@ -411,6 +483,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
 
 	unitFile, err := renderUnitFile(installDir, effectiveUser.Username, userUnit)
 	if err != nil {
@@ -433,17 +506,29 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	}
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(unitKind+" created, at:"), fullTargetName)
 
+	if userUnit {
+		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), run)
+		if err != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
+			return
+		}
+	}
+
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "daemon-reload"), " "))
 	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "daemon-reload")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "daemon-reload output: %s", strings.TrimSpace(string(out)))
 
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "enable", "eos"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "enable", "eos")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "enable output: %s", strings.TrimSpace(string(out)))
 
 	if userUnit {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user unit enabled, eos will start on login")
@@ -474,20 +559,23 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		}
 	}
 
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "start", "eos"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "start", "eos")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "start output: %s", strings.TrimSpace(string(out)))
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 }
 
-func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit bool, detectRuntime func() (string, error), run runCmdFn) {
+func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) {
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return
 	}
+	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
 	if runtime != "systemd" {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
 		return
@@ -501,6 +589,20 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		return
 	}
 
+	if userUnit {
+		effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+		if effectiveUserErr != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+			return
+		}
+		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), run)
+		if err != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
+			return
+		}
+	}
+
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "stop", "eos"), " "))
 	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "stop", "eos")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", unitKind, string(out)))
@@ -508,6 +610,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" stopped")
 
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "disable", "eos"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "disable", "eos")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", unitKind, string(out)))
@@ -522,6 +625,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "unit file removed")
 
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "daemon-reload"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "daemon-reload")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))

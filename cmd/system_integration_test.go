@@ -64,7 +64,7 @@ func TestStartupCmdIntegration(t *testing.T) {
 			PIDFile:    filepath.Join(tempDir, "eos.pid"),
 			SocketPath: filepath.Join(tempDir, "eos.sock"),
 		},
-		systemdDir, "eos-test.service", false,
+		systemdDir, "eos-test.service", false, false,
 		detectActiveSystemRuntime, execRunCmd,
 	)
 
@@ -132,7 +132,7 @@ WantedBy=multi-user.target`
 	unstartupCmd(ctx, c, config.SystemdConfig{
 		SystemdTargetDir:      systemdDir,
 		SystemdTargetFileName: "eos-test.service",
-	}, false, detectActiveSystemRuntime, execRunCmd)
+	}, false, false, detectActiveSystemRuntime, execRunCmd)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())

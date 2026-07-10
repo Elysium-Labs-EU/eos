@@ -70,7 +70,7 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false,
+	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
 		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -83,7 +83,7 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false,
+	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
 		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
@@ -100,7 +100,7 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false,
+	}, tempDir+"/", "eos.service", false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -121,11 +121,11 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false,
+	}, tempDir+"/", "eos.service", false, true,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
-	if errBuf.Len() > 0 {
-		t.Errorf("unexpected stderr: %s", errBuf.String())
+	if !strings.Contains(errBuf.String(), "debug") {
+		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
 	}
 
 	unitFilePath := filepath.Join(tempDir, "eos.service")
@@ -153,7 +153,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false,
+	}, tempDir+"/", "eos.service", false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
@@ -169,7 +169,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -184,7 +184,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -209,7 +209,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
-	}, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -225,6 +225,75 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	}
 
 	if !strings.Contains(outBuf.String(), "system unit startup removed") {
+		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+func TestEnsureUserBusAvailable_CorrectsStaleEnvVar(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+	expected := t.TempDir()
+	stale := filepath.Join(t.TempDir(), "gone")
+	t.Setenv("XDG_RUNTIME_DIR", stale)
+
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("run should not be called when the expected runtime dir already exists")
+		return nil, nil
+	}
+
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", expected, run); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
+		t.Errorf("expected XDG_RUNTIME_DIR corrected to %q, got %q", expected, got)
+	}
+	if !strings.Contains(errBuf.String(), "correcting XDG_RUNTIME_DIR") {
+		t.Errorf("expected debug output about correcting XDG_RUNTIME_DIR, got: %s", errBuf.String())
+	}
+}
+
+func TestEnsureUserBusAvailable_DeclinePrompt(t *testing.T) {
+	c, _, _ := makeTestCmd(t)
+	setStdin(c, "n\n")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	expected := filepath.Join(t.TempDir(), "missing")
+
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("run should not be called when the user declines enabling linger")
+		return nil, nil
+	}
+
+	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", expected, run)
+	if err == nil {
+		t.Fatal("expected error when user declines enabling linger")
+	}
+}
+
+func TestEnsureUserBusAvailable_EnablesLingerAndRecovers(t *testing.T) {
+	c, outBuf, _ := makeTestCmd(t)
+	setStdin(c, "y\n")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	expected := filepath.Join(t.TempDir(), "runtime")
+
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		if err := os.MkdirAll(expected, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return []byte("ok"), nil
+	}
+
+	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", expected, run); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
+		t.Errorf("expected XDG_RUNTIME_DIR set to %q, got %q", expected, got)
+	}
+	want := []string{"loginctl enable-linger testuser"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected calls %v, got %v", want, calls)
+	}
+	if !strings.Contains(outBuf.String(), "user bus is now available") {
 		t.Errorf("expected success message, got: %s", outBuf.String())
 	}
 }
