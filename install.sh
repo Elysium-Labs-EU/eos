@@ -291,6 +291,37 @@ stop_running_daemon() {
     fi
 }
 
+refresh_completions() {
+    local eos_bin="${INSTALL_DIR}/${BINARY_NAME}"
+    local target_user="${SUDO_USER:-$(whoami)}"
+    local target_home
+    target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
+
+    if [ -z "$target_home" ]; then
+        return 0
+    fi
+
+    # Keep in sync with completionTargetPath() in cmd/completion.go
+    local bash_completion="${target_home}/.local/share/bash-completion/completions/${BINARY_NAME}"
+    local zsh_completion="${target_home}/.zsh/completions/_${BINARY_NAME}"
+    local fish_completion="${target_home}/.config/fish/completions/${BINARY_NAME}.fish"
+
+    local refreshed=false
+    if [ -f "$bash_completion" ] && "$eos_bin" completion bash > "$bash_completion" 2>/dev/null; then
+        refreshed=true
+    fi
+    if [ -f "$zsh_completion" ] && "$eos_bin" completion zsh > "$zsh_completion" 2>/dev/null; then
+        refreshed=true
+    fi
+    if [ -f "$fish_completion" ] && "$eos_bin" completion fish > "$fish_completion" 2>/dev/null; then
+        refreshed=true
+    fi
+
+    if [ "$refreshed" = true ]; then
+        success "Refreshed shell completion for ${target_user}"
+    fi
+}
+
 setup_sqlite3() {
     local pkg_manager="$1"
     
@@ -530,7 +561,10 @@ main() {
     chmod +x "$tmp_binary"
     cp "$tmp_binary" "${INSTALL_DIR}/${BINARY_NAME}"
     success "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
-    
+
+    # Refresh any shell completion already installed for the invoking user
+    refresh_completions
+
     # Setup SQLite3 (auto-detects if already installed)
     setup_sqlite3 "$pkg_manager"
     

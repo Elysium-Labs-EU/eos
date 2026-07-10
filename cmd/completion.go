@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -83,6 +85,33 @@ func writeCompletionScript(root *cobra.Command, shell, path string) error {
 		return closeErr
 	}
 	return genErr
+}
+
+// refreshInstalledCompletions regenerates completion scripts for shells that already have one
+// installed, after a version upgrade replaces the eos binary on disk. It shells out to the new
+// binary (rather than using the in-process root command) because the running process still holds
+// the old CLI surface in memory; only the new binary knows about commands/flags it just added.
+func refreshInstalledCompletions(ctx context.Context, cmd *cobra.Command, binaryPath string) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		targetPath, err := completionTargetPath(shell)
+		if err != nil {
+			continue
+		}
+		if _, statErr := os.Stat(targetPath); statErr != nil {
+			continue // not installed for this shell; nothing to refresh
+		}
+
+		out, err := exec.CommandContext(ctx, binaryPath, "completion", shell).Output() // #nosec G204 -- binaryPath is the eos binary just installed by system update
+		if err != nil {
+			cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not refresh %s completion: %v", shell, err))
+			continue
+		}
+		if writeErr := os.WriteFile(targetPath, out, 0o600); writeErr != nil {
+			cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not write refreshed %s completion: %v", shell, writeErr))
+			continue
+		}
+		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("refreshed %s completion", shell))
+	}
 }
 
 func runInteractiveCompletion(cmd *cobra.Command, root *cobra.Command) error {
