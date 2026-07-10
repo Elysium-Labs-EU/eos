@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -391,12 +392,24 @@ func userRuntimeDir() string {
 	return fmt.Sprintf("/run/user/%d", os.Getuid())
 }
 
+// isAccessibleDir reports whether path is a directory owned by the calling user. Ownership
+// matters here, not just stat-ability: /run/user is world-traversable (0755), so stat succeeds
+// on any uid's runtime dir even though its 0700 permissions block everything else; a stale
+// XDG_RUNTIME_DIR pointing at another user's dir would otherwise look "accessible" and never
+// get corrected, later failing with "Failed to connect to bus: Permission denied".
 func isAccessibleDir(path string) bool {
 	fileInfo, err := os.Stat(path) // #nosec G703 -- path is either the user's own XDG_RUNTIME_DIR or a derived /run/user/<uid>, never external input
 	if err != nil {
 		return false
 	}
-	return fileInfo.IsDir()
+	if !fileInfo.IsDir() {
+		return false
+	}
+	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		return true
+	}
+	return int(stat.Uid) == os.Getuid()
 }
 
 // ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
