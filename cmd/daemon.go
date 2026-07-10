@@ -167,7 +167,11 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 		if effectiveUserErr != nil {
 			return false, fmt.Errorf("getting current user: %w", effectiveUserErr)
 		}
-		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), execRunCmd); err != nil {
+		effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+		if credErr != nil {
+			return false, fmt.Errorf("getting current user credentials: %w", credErr)
+		}
+		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd); err != nil {
 			return false, fmt.Errorf("preparing user bus: %w", err)
 		}
 	}

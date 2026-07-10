@@ -229,6 +229,110 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	}
 }
 
+func TestIsAccessibleDir_AcceptsOwnDir(t *testing.T) {
+	dir := t.TempDir()
+	if !isAccessibleDir(dir, os.Getuid()) {
+		t.Error("expected own directory to be accessible")
+	}
+}
+
+func TestIsAccessibleDir_RejectsMissingDir(t *testing.T) {
+	if isAccessibleDir(filepath.Join(t.TempDir(), "gone"), os.Getuid()) {
+		t.Error("expected missing path to be inaccessible")
+	}
+}
+
+func TestIsAccessibleDir_RejectsWrongOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to chown a directory to another uid")
+	}
+	dir := t.TempDir()
+	otherUID := os.Getuid() + 1
+	if err := os.Chown(dir, otherUID, os.Getgid()); err != nil {
+		t.Fatalf("chown: %v", err)
+	}
+	if isAccessibleDir(dir, os.Getuid()) {
+		t.Error("expected directory owned by another uid to be rejected, even though stat succeeds")
+	}
+}
+
+func TestIsAccessibleDir_AcceptsDirOwnedByPassedUIDRegardlessOfProcessUID(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to chown a directory to another uid")
+	}
+	dir := t.TempDir()
+	targetUID := os.Getuid() + 1
+	if err := os.Chown(dir, targetUID, os.Getgid()); err != nil {
+		t.Fatalf("chown: %v", err)
+	}
+	if !isAccessibleDir(dir, targetUID) {
+		t.Error("expected directory to be accessible when its owner matches the passed uid, even though the process's own uid differs")
+	}
+}
+
+func TestEnsureUserBusAvailable_CorrectsWhenCurrentOwnedByOtherUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to chown a directory to another uid")
+	}
+	c, _, errBuf := makeTestCmd(t)
+
+	stale := t.TempDir()
+	if err := os.Chown(stale, os.Getuid()+1, os.Getgid()); err != nil {
+		t.Fatalf("chown: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", stale)
+	expected := t.TempDir()
+
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("run should not be called when the expected runtime dir already exists")
+		return nil, nil
+	}
+
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
+		t.Errorf("expected XDG_RUNTIME_DIR corrected to %q, got %q", expected, got)
+	}
+	if !strings.Contains(errBuf.String(), "correcting XDG_RUNTIME_DIR") {
+		t.Errorf("expected debug output about correcting XDG_RUNTIME_DIR, got: %s", errBuf.String())
+	}
+}
+
+// TestEnsureUserBusAvailable_AcceptsExpectedOwnedByTargetUIDUnderSudo guards against regressing to
+// checking os.Getuid() internally: under `sudo`, os.Getuid() is 0 (root) while the systemd --user
+// session being managed belongs to a different, non-root target uid (resolved by the caller via
+// userutil.EffectiveUser()). ensureUserBusAvailable must trust the passed-in uid, not the process's
+// own uid, or it wrongly rejects the target user's legitimately-owned runtime dir.
+func TestEnsureUserBusAvailable_AcceptsExpectedOwnedByTargetUIDUnderSudo(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to chown a directory to another uid")
+	}
+	c, _, errBuf := makeTestCmd(t)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	targetUID := os.Getuid() + 1 // simulates the sudo-invoking user, distinct from the process's own (root) uid
+	expected := t.TempDir()
+	if err := os.Chown(expected, targetUID, os.Getgid()); err != nil {
+		t.Fatalf("chown: %v", err)
+	}
+
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("run should not be called when the expected runtime dir already exists")
+		return nil, nil
+	}
+
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", targetUID, expected, run); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
+		t.Errorf("expected XDG_RUNTIME_DIR corrected to %q, got %q", expected, got)
+	}
+	if !strings.Contains(errBuf.String(), "correcting XDG_RUNTIME_DIR") {
+		t.Errorf("expected debug output about correcting XDG_RUNTIME_DIR, got: %s", errBuf.String())
+	}
+}
+
 func TestEnsureUserBusAvailable_CorrectsStaleEnvVar(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	expected := t.TempDir()
@@ -240,7 +344,7 @@ func TestEnsureUserBusAvailable_CorrectsStaleEnvVar(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -262,7 +366,7 @@ func TestEnsureUserBusAvailable_DeclinePrompt(t *testing.T) {
 		return nil, nil
 	}
 
-	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", expected, run)
+	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run)
 	if err == nil {
 		t.Fatal("expected error when user declines enabling linger")
 	}
@@ -283,7 +387,7 @@ func TestEnsureUserBusAvailable_EnablesLingerAndRecovers(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
