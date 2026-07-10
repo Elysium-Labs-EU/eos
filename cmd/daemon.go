@@ -447,6 +447,16 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 	if userUnit {
 		statusCmd = "systemctl --user status eos.service"
 		logsCmd = "journalctl --user -u eos.service"
+
+		if effectiveUser, effectiveUserErr := userutil.EffectiveUser(); effectiveUserErr == nil {
+			if effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser); credErr == nil {
+				uid := int(effectiveUID)
+				if !isAccessibleDir(os.Getenv("XDG_RUNTIME_DIR"), uid) && !isAccessibleDir(userRuntimeDir(uid), uid) {
+					cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no active systemd user bus — the commands below will fail with \"Failed to connect to bus\"")
+					cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s, then start a fresh login session (or export XDG_RUNTIME_DIR=/run/user/%d in this shell)", ui.TextCommand.Render("sudo loginctl enable-linger "+effectiveUser.Username), uid))
+				}
+			}
+		}
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
