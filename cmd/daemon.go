@@ -161,6 +161,17 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 		scope = "user"
 	}
 	helpers.Debugf(cmd, verbose, "resolved scope: %s (unit dir: %s)", scope, c.cfg.SystemdTargetDir)
+
+	if c.cfg.UserUnit {
+		effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+		if effectiveUserErr != nil {
+			return false, fmt.Errorf("getting current user: %w", effectiveUserErr)
+		}
+		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), execRunCmd); err != nil {
+			return false, fmt.Errorf("preparing user bus: %w", err)
+		}
+	}
+
 	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input
 	if err != nil {
