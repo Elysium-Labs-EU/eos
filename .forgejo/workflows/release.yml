@@ -159,7 +159,7 @@ jobs:
           BODY=$(cat <<EOF
           ## eos ${VERSION}
 
-          Service Orchestration Tool - Manage and monitor your services with ease.
+          Service Supervisor - Manage and monitor your services with ease.
 
           ### Quick Installation
 
