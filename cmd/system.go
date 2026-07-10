@@ -387,17 +387,21 @@ func systemctlArgs(userUnit bool, args ...string) []string {
 	return args
 }
 
-// userRuntimeDir returns the systemd user runtime dir this process would use, e.g. /run/user/1000.
-func userRuntimeDir() string {
-	return fmt.Sprintf("/run/user/%d", os.Getuid())
+// userRuntimeDir returns the systemd user runtime dir for uid, e.g. /run/user/1000. uid must be
+// the target user's uid, not necessarily os.Getuid() — under sudo, os.Getuid() is 0 (root) while
+// the systemd --user session being managed belongs to userutil.EffectiveUser().
+func userRuntimeDir(uid int) string {
+	return fmt.Sprintf("/run/user/%d", uid)
 }
 
-// isAccessibleDir reports whether path is a directory owned by the calling user. Ownership
-// matters here, not just stat-ability: /run/user is world-traversable (0755), so stat succeeds
-// on any uid's runtime dir even though its 0700 permissions block everything else; a stale
-// XDG_RUNTIME_DIR pointing at another user's dir would otherwise look "accessible" and never
-// get corrected, later failing with "Failed to connect to bus: Permission denied".
-func isAccessibleDir(path string) bool {
+// isAccessibleDir reports whether path is a directory owned by uid. Ownership matters here, not
+// just stat-ability: /run/user is world-traversable (0755), so stat succeeds on any uid's runtime
+// dir even though its 0700 permissions block everything else; a stale XDG_RUNTIME_DIR pointing at
+// another user's dir would otherwise look "accessible" and never get corrected, later failing with
+// "Failed to connect to bus: Permission denied". uid is the target user's uid (see userRuntimeDir),
+// not necessarily os.Getuid() — comparing against os.Getuid() would wrongly reject a sudo-invoking
+// user's own runtime dir when root manages that user's systemd --user session.
+func isAccessibleDir(path string, uid int) bool {
 	fileInfo, err := os.Stat(path) // #nosec G703 -- path is either the user's own XDG_RUNTIME_DIR or a derived /run/user/<uid>, never external input
 	if err != nil {
 		return false
@@ -409,24 +413,26 @@ func isAccessibleDir(path string) bool {
 	if !ok {
 		return true
 	}
-	return int(stat.Uid) == os.Getuid()
+	return int(stat.Uid) == uid
 }
 
 // ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
 // condition that causes `systemctl --user ...` to fail with "Failed to connect to bus: Permission
 // denied". This happens when XDG_RUNTIME_DIR is unset/stale (fixable by correcting the env var) or
 // when the account has no active session and no linger enabled (fixable via `loginctl enable-linger`).
-// expected is the runtime dir this process should be using (userRuntimeDir() in production; injected
-// directly in tests so they don't depend on the real /run/user/<uid>).
-func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username, expected string, run runCmdFn) error {
+// expected is the runtime dir this process should be using (userRuntimeDir(uid) in production;
+// injected directly in tests so they don't depend on the real /run/user/<uid>). uid is the target
+// user's uid — the user the systemd --user session belongs to, resolved via
+// userutil.EffectiveUser() by the caller, not necessarily os.Getuid() (root under sudo).
+func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username string, uid int, expected string, run runCmdFn) error {
 	current := os.Getenv("XDG_RUNTIME_DIR")
 	helpers.Debugf(cmd, verbose, "XDG_RUNTIME_DIR=%q (expected %q)", current, expected)
 
-	if isAccessibleDir(current) {
+	if isAccessibleDir(current, uid) {
 		return nil
 	}
 
-	if isAccessibleDir(expected) {
+	if isAccessibleDir(expected, uid) {
 		helpers.Debugf(cmd, verbose, "correcting XDG_RUNTIME_DIR to %q", expected)
 		if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 			return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
@@ -453,7 +459,7 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 
 	for attempt := 1; attempt <= 5; attempt++ {
 		helpers.Debugf(cmd, verbose, "checking for %q (attempt %d/5)", expected, attempt)
-		if isAccessibleDir(expected) {
+		if isAccessibleDir(expected, uid) {
 			if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 				return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
 			}
@@ -520,7 +526,12 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(unitKind+" created, at:"), fullTargetName)
 
 	if userUnit {
-		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), run)
+		effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+		if credErr != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
+			return
+		}
+		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run)
 		if err != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
 			return
@@ -608,7 +619,12 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 			return
 		}
-		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, userRuntimeDir(), run)
+		effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+		if credErr != nil {
+			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
+			return
+		}
+		err = ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run)
 		if err != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
 			return
