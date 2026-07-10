@@ -200,7 +200,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 	}
 
-	activeRssMemoryKb, sampled := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
+	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
 	hm.logger.Debug("startup→running", "service", serviceName, "mem_kb", activeRssMemoryKb)
 	var rssPtr *int64
 	if sampled {
@@ -231,106 +231,106 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	pgid := process.PGID
 
 	if !hm.isProcessAlive(pgid) {
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] is not running", serviceName))
+		hm.handleLivenessFailure(ctx, pgid, serviceName)
 		return
 	}
 
-	if instance.RestartCount > 0 && hm.restartCounterResetWindow > 0 && process.StartedAt != nil {
-		if time.Since(*process.StartedAt) >= hm.restartCounterResetWindow {
-			zero := 0
-			if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &zero}); err != nil {
-				hm.logger.Error("failed to reset restart counter", "service", serviceName, "error", err)
-			} else {
-				hm.logger.Info(fmt.Sprintf("[%s] restart counter reset after stable uptime", serviceName))
-				hm.logger.Debug("restart counter reset", "service", serviceName, "uptime", time.Since(*process.StartedAt))
-			}
-		}
-	}
+	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
 
-	activeRssMemoryKb, sampled := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
-	var rssPtr *int64
-	if sampled {
-		rssPtr = &activeRssMemoryKb
-	}
+	rssKb, sampled := hm.measureRSS(pgid, serviceName)
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
-
 	if err != nil {
 		hm.logger.Error("loading service config", "service", serviceName, "error", err)
 		return
 	}
 
-	memoryResult := hm.evaluateMemoryThresholds(config.MemoryLimitMb, activeRssMemoryKb)
+	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
+	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled)
+}
 
-	switch memoryResult {
+// handleLivenessFailure marks a running-state process as failed because it is no longer alive.
+func (hm *HealthMonitor) handleLivenessFailure(ctx context.Context, pgid int, serviceName string) {
+	hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] is not running", serviceName))
+}
+
+// resetRestartCounterIfStable zeroes the restart counter once a service has stayed
+// up past the reset window, so a single flaky restart doesn't count against future backoff.
+func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, serviceName string, process *types.ProcessHistory, instance *types.ServiceInstance) {
+	if instance.RestartCount == 0 || hm.restartCounterResetWindow <= 0 || process.StartedAt == nil {
+		return
+	}
+	if time.Since(*process.StartedAt) < hm.restartCounterResetWindow {
+		return
+	}
+
+	zero := 0
+	if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &zero}); err != nil {
+		hm.logger.Error("failed to reset restart counter", "service", serviceName, "error", err)
+		return
+	}
+	hm.logger.Info(fmt.Sprintf("[%s] restart counter reset after stable uptime", serviceName))
+	hm.logger.Debug("restart counter reset", "service", serviceName, "uptime", time.Since(*process.StartedAt))
+}
+
+// dispatchMemoryAction acts on the outcome of evaluateMemoryThresholds: log-only for
+// warnings, a graduated restart for soft/force thresholds, or a plain history update.
+func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, pgid int, rssKb int64, sampled bool) {
+	serviceName := service.Name
+	rssPtr := rssKbPtr(rssKb, sampled)
+
+	switch action {
 	case ReasonWarning:
 		warnMsg := fmt.Sprintf("[%s] memory usage warning", serviceName)
 		hm.logger.Warn(warnMsg)
-		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", activeRssMemoryKb)
+		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", rssKb)
 		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
 			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 		}
 		hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
 	case ReasonSoftRestart:
-		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
-			return
-		}
-
-		hm.logger.Debug("memory threshold: soft restart", "service", serviceName, "mem_kb", activeRssMemoryKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
-		newPgid, err := hm.mgr.RestartService(service.Name, 5*time.Second, 200*time.Millisecond)
-		if err != nil {
-			hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
-			hm.logger.Error("restarting on soft restart threshold", "service", serviceName, "error", err)
-			return
-		}
-		softRestartMsg := fmt.Sprintf("[%s] auto soft restarted due to memory limits", serviceName)
-		hm.logger.Warn(softRestartMsg)
-		if logErr := hm.mgr.LogToServiceStderr(serviceName, softRestartMsg); logErr != nil {
-			hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
-		}
-		delete(hm.lastMemSample, serviceName)
-		newRssMemoryKb, newSampled := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
-		var newRssPtr *int64
-		if newSampled {
-			newRssPtr = &newRssMemoryKb
-		}
-		hm.updateProcessEntry(ctx, newPgid, newRssPtr, serviceName)
-
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "soft", 5*time.Second, 200*time.Millisecond)
 	case ReasonForceRestart:
-		if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
-			return
-		}
-
-		hm.logger.Debug("memory threshold: force restart", "service", serviceName, "mem_kb", activeRssMemoryKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
-		newPgid, err := hm.mgr.RestartService(service.Name, 1*time.Second, 10*time.Millisecond)
-		if err != nil {
-			hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
-			hm.logger.Error("restarting on force restart threshold", "service", serviceName, "error", err)
-			return
-		}
-		forceRestartMsg := fmt.Sprintf("[%s] auto force restarted due to memory limits", serviceName)
-		hm.logger.Warn(forceRestartMsg)
-		if logErr := hm.mgr.LogToServiceStderr(serviceName, forceRestartMsg); logErr != nil {
-			hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
-		}
-		delete(hm.lastMemSample, serviceName)
-		newRssMemoryKb, newSampled := hm.determineActiveRSSMemoryUsage(newPgid, serviceName)
-		var newRssPtr *int64
-		if newSampled {
-			newRssPtr = &newRssMemoryKb
-		}
-		hm.updateProcessEntry(ctx, newPgid, newRssPtr, serviceName)
-
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "force", 1*time.Second, 10*time.Millisecond)
 	case ReasonNone:
 		if sampled {
 			hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
 		}
-
-	default:
-		if sampled {
-			hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
-		}
 	}
+}
+
+// restartOnMemoryThreshold restarts a service that crossed a soft or force memory
+// threshold, using the grace/ticker periods appropriate to that threshold's urgency.
+func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, rssKb int64, rssPtr *int64, label string, gracePeriod, tickerPeriod time.Duration) {
+	serviceName := service.Name
+
+	if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
+		return
+	}
+
+	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
+	newPgid, err := hm.mgr.RestartService(service.Name, gracePeriod, tickerPeriod)
+	if err != nil {
+		hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
+		hm.logger.Error("restarting on "+label+" restart threshold", "service", serviceName, "error", err)
+		return
+	}
+
+	restartMsg := fmt.Sprintf("[%s] auto %s restarted due to memory limits", serviceName, label)
+	hm.logger.Warn(restartMsg)
+	if logErr := hm.mgr.LogToServiceStderr(serviceName, restartMsg); logErr != nil {
+		hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
+	}
+	delete(hm.lastMemSample, serviceName)
+	newRssKb, newSampled := hm.measureRSS(newPgid, serviceName)
+	hm.updateProcessEntry(ctx, newPgid, rssKbPtr(newRssKb, newSampled), serviceName)
+}
+
+func rssKbPtr(rssKb int64, sampled bool) *int64 {
+	if !sampled {
+		return nil
+	}
+	return &rssKb
 }
 
 func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
@@ -399,7 +399,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", err)
 	}
 
-	activeRssMemoryKb, sampled := hm.determineActiveRSSMemoryUsage(pgid, serviceName)
+	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
 	var rssPtr *int64
 	if sampled {
 		rssPtr = &activeRssMemoryKb
@@ -512,9 +512,9 @@ func scanStatusFieldBytes(contents []byte, field []byte) []byte {
 	return nil
 }
 
-// determineActiveRSSMemoryUsage returns (rssKb, true) when a sample was taken,
+// measureRSS returns (rssKb, true) when a sample was taken,
 // or (0, false) when the throttle interval has not elapsed.
-func (hm *HealthMonitor) determineActiveRSSMemoryUsage(pgid int, serviceName string) (int64, bool) {
+func (hm *HealthMonitor) measureRSS(pgid int, serviceName string) (int64, bool) {
 	if time.Since(hm.lastMemSample[serviceName]) < hm.memSampleInterval {
 		return 0, false
 	}
