@@ -153,20 +153,22 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			}
 			return helpers.ServiceNameCompletions(getManager)(cmd, args, toComplete)
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 			cfg := getConfig()
 
 			serviceFile, err := cmd.Flags().GetString("file")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing file flag: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			once, err := cmd.Flags().GetBool("once")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing once flag: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			viaServiceFile := serviceFile != ""
@@ -180,7 +182,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 					ui.TextMuted.Render("→ run from a service file"),
 				)
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if viaServiceName && viaServiceFile {
 				cmd.PrintErrf("%s %s\n\n",
@@ -197,7 +199,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 					ui.TextCommand.Render("eos run <name>"),
 					ui.TextMuted.Render("→ to run by name"),
 				)
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			var serviceName string
@@ -205,7 +207,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				parsedService, parseError := parseServiceFile(serviceFile)
 				if parseError != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
-					return
+					return helpers.ErrCommandFailed
 				}
 
 				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
@@ -213,7 +215,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				registerResult, registerErr := registerServiceIfNeeded(mgr, parsedService.YamlFile, parsedService.Config.Name)
 				if registerErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 
 				if registerResult.AlreadyExists {
@@ -231,11 +233,11 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				if errors.Is(registeredCheckErr, ErrServiceNonExistent) {
 					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
 					cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run -f <path>"))
-					return
+					return helpers.ErrCommandFailed
 				}
 				if registeredCheckErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service name: %v", registeredCheckErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 				serviceName = registeredServiceName
 			}
@@ -244,30 +246,31 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				running, runningCheckErr := isServiceRunning(mgr, serviceName)
 				if runningCheckErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 				if running {
 					cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "service is already running")
-					return
+					return nil
 				}
 			}
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if serviceRunResult.Restarted {
 				printRestartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
 			} else {
 				printStartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
 			}
+			return nil
 		},
 	}
 

@@ -21,8 +21,10 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 		Example: `  eos stop cms              # graceful stop with configurable grace period
   eos stop cms --force      # immediate kill`,
 		Args:              cobra.ExactArgs(1),
+		SilenceUsage:      true,
+		SilenceErrors:     true,
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
 			cfg := getConfig()
@@ -36,23 +38,23 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if !exists {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if forceQuit {
 				forceStopService(cmd, serviceName, mgr)
-				return
+				return nil
 			}
 
 			stopResult, err := mgr.StopService(serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			countStopped := len(stopResult.Stopped)
@@ -62,7 +64,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			if countStopped == 0 && countError == 0 {
 				cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no running processes found")
 				cleanupServiceInstance(cmd, serviceName, mgr)
-				return
+				return nil
 			}
 
 			if countStopped == 1 {
@@ -78,7 +80,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 
 			if countError == 0 {
 				cleanupServiceInstance(cmd, serviceName, mgr)
-				return
+				return nil
 			}
 
 			cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), "failed to gracefully stop", ui.TextBold.Render(serviceName))
@@ -89,9 +91,10 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			confirmed := helpers.PromptConfirm(cmd, "force quit? (y/n):")
 			if !confirmed {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "force quit aborted")
-				return
+				return helpers.ErrCommandFailed
 			}
 			forceStopService(cmd, serviceName, mgr)
+			return nil
 		}}
 
 	cmd.Flags().BoolVar(&forceQuit, "force", false, "force quit service immediately")

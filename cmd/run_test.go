@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
@@ -147,8 +149,8 @@ func TestRunWithNameUnregisteredCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -168,8 +170,8 @@ func TestRunWithAmbigiousCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -184,8 +186,8 @@ func TestRunWithEmptyCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -400,8 +402,8 @@ func TestRunWithOnceFlagServiceNameUnregisteredCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -416,8 +418,8 @@ func TestRunWithFileNotFound(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -471,8 +473,8 @@ func TestRunWithInvalidYamlFile(t *testing.T) {
 
 	err = cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -773,8 +775,8 @@ func TestRunWithFileParseError(t *testing.T) {
 
 	err = cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()

@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
@@ -206,7 +208,7 @@ func TestInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 }
 
 func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
-	cmd, _, errBuf, _ := setupCmd(t)
+	cmd, _, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"info"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -214,10 +216,8 @@ func TestInfoInvalidNumberArgumentsCommand(t *testing.T) {
 	if err == nil {
 		t.Fatalf("info command should return an error")
 	}
-	output := errBuf.String()
-
-	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
-		t.Errorf("expected info to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
+	if !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+		t.Errorf("expected error to mention 'accepts 1 arg(s), received 0', got: %v", err)
 	}
 }
 
@@ -227,8 +227,8 @@ func TestInfoNonExistentServiceCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("info command should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v\nerr output: %s", err, errBuf.String())
 	}
 	output := errBuf.String()
 

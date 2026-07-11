@@ -44,35 +44,37 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
   eos logs cms --output         # stdout stream only`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if !exists {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if processHistoryEntry == nil {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has never been started")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos start %s", serviceName)), ui.TextMuted.Render("to start it"))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if lines < 0 || lines > 10000 {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "line count must be between 0 and 10000")
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if follow {
@@ -87,25 +89,25 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 				outPath, outErr := mgr.GetServiceLogFilePath(serviceName, false)
 				if outErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 				errPath, errPathErr := mgr.GetServiceLogFilePath(serviceName, true)
 				if errPathErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 				if follow {
 					followCombinedLogs(cmd.Context(), cmd.OutOrStdout(), *outPath, *errPath)
 				} else {
 					showCombinedLogs(cmd.OutOrStdout(), cmd.ErrOrStderr(), *outPath, *errPath, lines)
 				}
-				return
+				return nil
 			}
 
 			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorOnly)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
@@ -121,16 +123,17 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 			stdout, pipeErr := tailLogCommand.StdoutPipe()
 			if pipeErr != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if startErr := tailLogCommand.Start(); startErr != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", startErr))
-				return
+				return helpers.ErrCommandFailed
 			}
 			renderServiceLogs(cmd.OutOrStdout(), stdout, "")
 			if waitErr := tailLogCommand.Wait(); waitErr != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", waitErr))
 			}
+			return nil
 		},
 	}
 

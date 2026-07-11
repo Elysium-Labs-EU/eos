@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -43,8 +44,10 @@ func newInitCmd() *cobra.Command {
 		Long:  `Interactively generate a service.yaml in the target directory. Detects runtime from project files to prefill defaults.`,
 		Example: `  eos init              # generate service.yaml in current directory
   eos init ./myproject  # generate in a specific directory`,
-		Args: cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		Args:          cobra.MaximumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) > 0 {
 				dir = args[0]
@@ -53,12 +56,12 @@ func newInitCmd() *cobra.Command {
 			absDir, err := filepath.Abs(dir)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving path: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if _, statErr := os.Stat(absDir); os.IsNotExist(statErr) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory does not exist: %s", absDir))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			outputPath := filepath.Join(absDir, "service.yaml")
@@ -75,7 +78,7 @@ func newInitCmd() *cobra.Command {
 					answer := promptLine(cmd, reader, "overwrite? (y/n)", "n")
 					if answer != "y" && answer != "yes" {
 						cmd.Printf("  init canceled\n\n")
-						return
+						return nil
 					}
 				}
 			}
@@ -117,16 +120,17 @@ func newInitCmd() *cobra.Command {
 			data, err := yaml.Marshal(cfg)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("marshaling config: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if err := os.WriteFile(outputPath, []byte(initSchemaHeader+string(data)+initLogSinkHint), 0644); err != nil { // #nosec G306 -- service.yaml is a project config file, world-readable is intentional
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing file: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			cmd.Printf("\n%s %s\n\n", ui.LabelSuccess.Render("created"), outputPath)
 			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("next:"), ui.TextCommand.Render(fmt.Sprintf("eos run -f %s", outputPath)))
+			return nil
 		},
 	}
 

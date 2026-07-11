@@ -30,16 +30,18 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Example: `  eos status
   eos status --watch
   eos status --watch --interval 5`,
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 
 			if !watch {
 				printStatusTable(cmd, mgr)
-				return
+				return nil
 			}
 			if interval < 1 {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "--interval must be at least 1 second")
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -53,7 +55,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			for {
 				select {
 				case <-ctx.Done():
-					return
+					return nil
 				case <-ticker.C:
 					renderWatchFrame(cmd, mgr, interval)
 				}

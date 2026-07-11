@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
@@ -122,24 +124,20 @@ func TestStartCommandWithAlreadyRunningProcess(t *testing.T) {
 		t.Fatalf("start command should not return an error, got:\n %v", err)
 		return
 	}
-
-	cmd.SetArgs([]string{"start", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-
-	if err != nil {
-		t.Fatalf("start command should not return an error, got:\n %v", err)
-		return
-	}
-
 	output := buf.String()
 	if !strings.Contains(output, "started with PGID:") {
 		t.Errorf("The start command didn't complete successfully, no PGID was returned")
 		return
 	}
 
-	found := strings.Contains(output, "PGID:")
-	if !found {
-		t.Fatalf("No PGID substring found")
+	// Starting an already-running service is an error: unlike `run`, `start`
+	// has no restart-if-already-running handling.
+	buf.Reset()
+	cmd.SetArgs([]string{"start", testFile.Name})
+	err = cmd.ExecuteContext(t.Context())
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed for an already-running service, got: %v", err)
 	}
 
 	result, err := manager.ForceStopService(testFile.Name)

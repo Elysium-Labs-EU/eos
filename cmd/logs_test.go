@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
@@ -73,8 +75,8 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 	}
 
 	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false"})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Logs command failed: %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := errBuf.String()
@@ -88,8 +90,8 @@ func TestLogsNonExistingServiceCommand(t *testing.T) {
 
 	cmd.SetArgs([]string{"logs", "cms", "--follow=false"})
 
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Logs command should not return an error, got : %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 	output := errBuf.String()
 
