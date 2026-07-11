@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,32 +130,42 @@ func (hm *HealthMonitor) Start(ctx context.Context) {
 // TODO: Do we want this to only do state? Or become a check for all relevant health properties, just divided per state arm?
 func (hm *HealthMonitor) checkAllServices(ctx context.Context, services []types.ServiceCatalogEntry) {
 	for i := range services {
-		service := &services[i]
-		serviceName := service.Name
-		instance, err := hm.mgr.GetServiceInstance(serviceName)
-		if err != nil || instance == nil {
-			continue
-		}
+		hm.checkService(ctx, &services[i])
+	}
+}
 
-		processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
-		if err != nil || processHistoryEntry == nil {
-			continue
+// checkService runs the health check for a single service, recovering from any panic
+// so that one misbehaving service can't stop the tick from checking the rest.
+func (hm *HealthMonitor) checkService(ctx context.Context, service *types.ServiceCatalogEntry) {
+	serviceName := service.Name
+	defer func() {
+		if r := recover(); r != nil {
+			hm.logger.Error("recovered from panic during health check", "service", serviceName, "panic", r)
 		}
+	}()
 
-		hm.logger.Debug("health tick", "service", serviceName, "state", processHistoryEntry.State)
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		return
+	}
 
-		switch processHistoryEntry.State {
-		case types.ProcessStateStarting:
-			hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
-		case types.ProcessStateRunning:
-			hm.checkRunningProcess(ctx, service, processHistoryEntry, instance)
-		case types.ProcessStateFailed:
-			hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
-		case types.ProcessStateUnknown:
-			hm.checkUnknownProcess(ctx, service, processHistoryEntry)
-		case types.ProcessStateStopped:
-			continue
-		}
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		return
+	}
+
+	hm.logger.Debug("health tick", "service", serviceName, "state", processHistoryEntry.State)
+
+	switch processHistoryEntry.State {
+	case types.ProcessStateStarting:
+		hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
+	case types.ProcessStateRunning:
+		hm.checkRunningProcess(ctx, service, processHistoryEntry, instance)
+	case types.ProcessStateFailed:
+		hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
+	case types.ProcessStateUnknown:
+		hm.checkUnknownProcess(ctx, service, processHistoryEntry)
+	case types.ProcessStateStopped:
 	}
 }
 
@@ -235,9 +246,6 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		return
 	}
 
-	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
-
-	rssKb, sampled := hm.measureRSS(pgid, serviceName)
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
@@ -245,8 +253,32 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		return
 	}
 
+	if config.Port != 0 && !hm.isPortReachable(ctx, config.Port) {
+		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] is not reachable on port %d", serviceName, config.Port))
+		return
+	}
+
+	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
+
+	rssKb, sampled := hm.measureRSS(pgid, serviceName)
+
 	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
 	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled)
+}
+
+// isPortReachable does a best-effort TCP dial to confirm the configured port still
+// accepts connections. It only catches a listener that stopped accepting entirely
+// (e.g. crashed internally without exiting the process) — a raw TCP connect can
+// still succeed against a hung app via the kernel's accept backlog, so this is not
+// a substitute for an application-level health check.
+func (hm *HealthMonitor) isPortReachable(ctx context.Context, port int) bool {
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // handleLivenessFailure marks a running-state process as failed because it is no longer alive.

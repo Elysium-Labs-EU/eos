@@ -657,132 +657,8 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	}
 }
 
-// func TestHealthMonitor_CheckRunningProcess_AliveButPortUnreachable(t *testing.T) {
-// 	tempDir := t.TempDir()
-//  daemonConfig := testutil.NewTestDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-// 	timeoutLimit := 30 * time.Second
-
-// 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-// 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-// 	logger, err := manager.NewDaemonLogger(true, tempDir, daemonLogFileName)
-// 	if err != nil {
-// 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
-// 	}
-
-// 	hm := NewHealthMonitor(mgr, db, logger, healthConfig)
-
-// 	serviceName := "port-drop-service"
-// 	serviceDir := filepath.Join(tempDir, serviceName)
-// 	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-// 		t.Fatalf("Failed to create service directory: %v", err)
-// 	}
-
-// 	// Open a port so the service can start and transition to Running
-// 	listener, err := net.Listen("tcp", "localhost:0")
-// 	if err != nil {
-// 		t.Fatalf("Failed to create listener: %v", err)
-// 	}
-// 	port := listener.Addr().(*net.TCPAddr).Port
-
-// 	testFile := testutil.NewTestServiceConfigFile(t,
-// 		testutil.WithRuntimePath(""),
-// 		testutil.WithName(serviceName),
-// 		testutil.WithPort(port),
-// 	)
-// 	yamlData, err := yaml.Marshal(testFile)
-// 	if err != nil {
-// 		t.Fatalf("Failed to marshal test config: %v", err)
-// 	}
-
-// 	fullDirPath := filepath.Join(tempDir, "port-drop-project")
-// 	err = os.MkdirAll(fullDirPath, 0755)
-// 	if err != nil {
-// 		t.Fatalf("Could not create project directory: %v", err)
-// 	}
-
-// 	fullPath := filepath.Join(fullDirPath, "service.yaml")
-// 	err = os.WriteFile(fullPath, yamlData, 0644)
-// 	if err != nil {
-// 		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
-// 	}
-
-// 	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
-// 	if err != nil {
-// 		t.Fatalf("Create service catalog entry failed: %v", err)
-// 	}
-
-// 	err = mgr.AddServiceCatalogEntry(,serviceCatalogEntry)
-// 	if err != nil {
-// 		t.Fatalf("Error registering service: %v", err)
-// 	}
-
-// 	pid, err := mgr.StartService(,serviceCatalogEntry.Name)
-// 	if err != nil {
-// 		t.Fatalf("Service unable to start, got: %v", err)
-// 	}
-// 	if pid < 1 {
-// 		t.Fatalf("Invalid PGID received: %d", pid)
-// 	}
-
-// 	// Transition to Running via checkStartProcess (port is still open)
-// 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
-// 	if err != nil || processHistoryEntry == nil {
-// 		t.Fatal("Failed to get process history entry")
-// 	}
-// 	hm.checkStartProcess(serviceCatalogEntry, processHistoryEntry, &timeoutLimit)
-
-// 	// Confirm it's Running now
-// 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
-// 	if err != nil || processHistoryEntry == nil {
-// 		t.Fatal("Failed to get updated process history")
-// 	}
-// 	if processHistoryEntry.State != types.ProcessStateRunning {
-// 		t.Fatalf("Service should be running before port-drop test, got: %s", processHistoryEntry.State)
-// 	}
-
-// 	// Now close the port to simulate the service dropping its listener
-// 	defer func() {
-// 		if err := listener.Close(); err != nil {
-// 			t.Errorf("unable to close the listener, got: %v", err)
-// 		}
-// 	}()
-// 	time.Sleep(50 * time.Millisecond) // give OS time to release the port
-
-// 	// Call checkRunningProcess - process is alive, but port is unreachable
-// 	hm.checkRunningProcess(t.Context(),serviceCatalogEntry, processHistoryEntry)
-
-// 	// Verify: state should be Failed with port-related error
-// 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(,serviceName)
-// 	if err != nil || updatedEntry == nil {
-// 		t.Fatal("Failed to get process history after check")
-// 	}
-
-// 	if updatedEntry.State != types.ProcessStateFailed {
-// 		t.Errorf("Expected ProcessStateFailed, got %v", updatedEntry.State)
-// 	}
-
-// 	if updatedEntry.Error == nil || !strings.Contains(*updatedEntry.Error, "is not running on port") {
-// 		t.Errorf("Expected port-related error, got: %v", updatedEntry.Error)
-// 	}
-
-// 	if updatedEntry.StoppedAt == nil {
-// 		t.Error("Expected StoppedAt to be set")
-// 	}
-
-// 	// Verify log output
-// 	var buf bytes.Buffer
-// 	tailLogCommand := exec.Command("tail", "-n", "10", filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
-// 	tailLogCommand.Stdout = &buf
-// 	err = tailLogCommand.Run()
-// 	if err != nil {
-// 		t.Logf("Could not read log file: %v", err)
-// 	} else {
-// 		output := buf.String()
-// 		if !strings.Contains(output, "is not running on port") {
-// 			t.Errorf("Log should contain port error, got: %s", output)
-// 		}
-// 	}
-// }
+// TODO: untested gap — process stays alive but its port becomes unreachable;
+// checkRunningProcess has no port-reachability check to catch this case.
 
 func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	tempDir := t.TempDir()
@@ -936,12 +812,24 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+	}
+	port := tcpAddr.Port
+
 	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
 	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
 	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
+		testutil.WithPort(port),
 		testutil.WithCommand("./"+testServiceScript.FileName))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -1025,12 +913,24 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 		t.Fatalf("Failed to create service directory: %v", mkdirErr)
 	}
 
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+	}
+	port := tcpAddr.Port
+
 	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
 	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
 
 	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithoutRuntime(),
 		testutil.WithName(serviceName),
+		testutil.WithPort(port),
 		testutil.WithCommand("./"+testServiceScript.FileName))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -1272,46 +1172,6 @@ func TestHealthMonitor_IsProcessAlive_NonExistent(t *testing.T) {
 		t.Fatal("Should not be able to find process in unit test")
 	}
 }
-
-// func Test_CanConnectToPort(t *testing.T) {
-// 	hm := &HealthMonitor{}
-
-// 	listener, err := net.Listen("tcp", "localhost:0")
-// 	if err != nil {
-// 		t.Fatalf("Failed to create listener: %v", err)
-// 	}
-// 	defer func() {
-// 		if err := listener.Close(); err != nil {
-// 			t.Errorf("unable to close the listener, got: %v", err)
-// 		}
-// 	}()
-
-// 	port := listener.Addr().(*net.TCPAddr).Port
-
-// 	canConnect := hm.canConnectToPort(port)
-// 	if !canConnect {
-// 		t.Fatal("Should be able to connect to open port")
-// 	}
-
-// 	if err := listener.Close(); err != nil {
-// 		t.Errorf("unable to close the listener, got: %v", err)
-// 	}
-// 	time.Sleep(10 * time.Millisecond)
-
-// 	canConnect = hm.canConnectToPort(port)
-// 	if canConnect {
-// 		t.Fatal("Should not be able to connect to closed port")
-// 	}
-// }
-
-// func Test_CanConnectToPort_NonExistent(t *testing.T) {
-// 	hm := &HealthMonitor{}
-
-// 	canConnect := hm.canConnectToPort(rand.Intn(99999))
-// 	if canConnect {
-// 		t.Fatalf("Should not be able to connect to port in unit test")
-// 	}
-// }
 
 func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 	testCases := []struct {
@@ -1682,6 +1542,173 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	if updatedInstance.RestartCount != restartCountBefore {
 		t.Errorf("RestartCount should not change on recovery: expected %d, got %d",
 			restartCountBefore, updatedInstance.RestartCount)
+	}
+}
+
+func TestHealthMonitor_CheckRunningProcess_PortUnreachable(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up daemon logger, got: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	serviceName := "port-drop-service"
+	fullDirPath := filepath.Join(tempDir, "port-drop-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create project directory: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	// Open a port, then close it before the check — the process stays alive,
+	// but the port it was supposed to be listening on is no longer reachable.
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+	}
+	port := tcpAddr.Port
+	if err = listener.Close(); err != nil {
+		t.Fatalf("Failed to close listener: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(port),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+
+	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
+
+	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updatedEntry == nil {
+		t.Fatal("Failed to get updated process history")
+	}
+	if updatedEntry.State != types.ProcessStateFailed {
+		t.Errorf("Expected ProcessStateFailed, got %v", updatedEntry.State)
+	}
+	if updatedEntry.Error == nil || !strings.Contains(*updatedEntry.Error, "not reachable on port") {
+		t.Errorf("Expected port-unreachable error, got: %v", updatedEntry.Error)
+	}
+}
+
+// panicOnServiceManager wraps a monitorManager and panics when GetServiceInstance
+// is called for a configured service name, to exercise checkService's recover().
+type panicOnServiceManager struct {
+	monitorManager
+	panicFor string
+}
+
+func (m *panicOnServiceManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
+	if name == m.panicFor {
+		panic("simulated panic during health check for " + name)
+	}
+	return m.monitorManager.GetServiceInstance(name)
+}
+
+func TestHealthMonitor_CheckAllServices_PanicInOneServiceDoesNotStopOthers(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up daemon logger, got: %v", err)
+	}
+
+	panicSvcName := "panic-svc"
+	mgr := &panicOnServiceManager{monitorManager: realMgr, panicFor: panicSvcName}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	if err = db.RegisterServiceInstance(t.Context(), panicSvcName); err != nil {
+		t.Fatalf("Failed to register panic-svc instance: %v", err)
+	}
+	healthyName := "healthy-svc"
+	if err = db.RegisterServiceInstance(t.Context(), healthyName); err != nil {
+		t.Fatalf("Failed to register healthy-svc instance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), 424243, healthyName, types.ProcessStateStopped); err != nil {
+		t.Fatalf("Failed to register healthy-svc process history: %v", err)
+	}
+
+	panicSvc := types.ServiceCatalogEntry{Name: panicSvcName}
+	healthySvc := types.ServiceCatalogEntry{Name: healthyName}
+
+	done := make(chan struct{})
+	go func() {
+		hm.checkAllServices(t.Context(), []types.ServiceCatalogEntry{panicSvc, healthySvc})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("checkAllServices did not return — a panic in one service likely escaped checkService's recover()")
+	}
+
+	var buf bytes.Buffer
+	tailLogCommand := exec.Command("tail", "-n", "20", filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
+	tailLogCommand.Stdout = &buf
+	if err = tailLogCommand.Run(); err != nil {
+		t.Fatalf("failed to read daemon log: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "recovered from panic") || !strings.Contains(output, panicSvcName) {
+		t.Errorf("expected a recovered-panic log entry mentioning %s, got: %s", panicSvcName, output)
+	}
+	// The healthy service, listed after the panicking one, must still have been reached
+	// (a "not registered" style state transition wouldn't occur if checkService bailed
+	// out of the whole loop instead of just the panicking entry).
+	if !strings.Contains(output, healthyName) {
+		t.Errorf("expected healthy-svc to have been reached and logged, got: %s", output)
 	}
 }
 
