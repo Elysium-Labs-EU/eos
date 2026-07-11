@@ -59,9 +59,10 @@ func TestRemoveCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestRemoveCommandServiceNotRegistered
+// TODO: func TestRemoveCommandServiceNotRegistered (no mock needed: just call remove without a prior add)
 // TODO: func TestRemoveCommandIsRegisteredError (requires mock manager)
-// TODO: func TestRemoveCommandWithActiveInstance
+// TODO: func TestRemoveCommandWithActiveInstance (no mock needed: start a real instance, use
+//       cmd.SetIn for the confirm/decline prompt, per the stdin-injection pattern in stop_test.go)
 // TODO: func TestRemoveCommandRemoveInstanceError (requires mock manager)
 // TODO: func TestRemoveCommandRemoveCatalogError (requires mock manager)
-// TODO: func TestRemoveCommandMissingArgs
+// TODO: func TestRemoveCommandMissingArgs (no mock needed: cobra.ExactArgs(1) rejects before RunE runs)
