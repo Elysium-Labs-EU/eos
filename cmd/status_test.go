@@ -289,3 +289,27 @@ func TestStatusHelpText(t *testing.T) {
 		t.Errorf("Expected status help to show usage, got: %s", output)
 	}
 }
+
+func TestRenderWatchFrame(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	renderWatchFrame(cmd, mgr, 5)
+
+	output := outBuf.String()
+	if !strings.Contains(output, "\033[2J\033[H") {
+		t.Errorf("expected clear-screen escape sequence, got: %q", output)
+	}
+	if !strings.Contains(output, "Every 5s: eos status") {
+		t.Errorf("expected watch header with interval, got: %q", output)
+	}
+	if !strings.Contains(errBuf.String(), "error no services are registered") {
+		t.Errorf("expected renderWatchFrame to delegate to printStatusTable, got: %q", errBuf.String())
+	}
+}
