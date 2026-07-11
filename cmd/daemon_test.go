@@ -197,9 +197,6 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 		"PID/socket paths must move to a user-writable location.", prodPidFile, err)
 }
 
-// func TestForkDaemon(t *testing.T) {}
-// func TestPrintDaemonDetails(t *testing.T) {}
-
 // fakeDaemonController records Start calls and returns a configured error.
 type fakeDaemonController struct {
 	startErr    error
