@@ -13,7 +13,7 @@ import (
 func TestRemoveCommand(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupCmd(t)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

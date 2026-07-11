@@ -3,15 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -32,16 +29,9 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return
 			}
 
-			data, err := os.ReadFile(filepath.Clean(yamlFile))
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading YAML file: %v", err))
-				return
-			}
-
-			var config types.ServiceConfig
-			err = yaml.Unmarshal(data, &config)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing YAML: %v", err))
+			config, errs := manager.ValidateServiceConfig(yamlFile)
+			if len(errs) > 0 || config == nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("invalid service config: %v", errors.Join(errs...)))
 				return
 			}
 

@@ -15,7 +15,15 @@ import (
 func TestAPIInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
+	runtimeDir := filepath.Join(tempDir, "runtime-bin")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		t.Fatalf("could not create runtime directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "node"), []byte("#!/bin/sh"), 0755); err != nil {
+		t.Fatalf("could not write fake node binary: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithRuntimePath(runtimeDir))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("failed to marshal test config: %v", err)
@@ -71,8 +79,8 @@ func TestAPIInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	if result.Config.Runtime.Type != "nodejs" {
 		t.Errorf("expected runtime type to be 'nodejs', got: %q", result.Config.Runtime.Type)
 	}
-	if result.Config.Runtime.Path != "/path/to/node" {
-		t.Errorf("expected runtime path to be '/path/to/node', got: %q", result.Config.Runtime.Path)
+	if result.Config.Runtime.Path != runtimeDir {
+		t.Errorf("expected runtime path to be %q, got: %q", runtimeDir, result.Config.Runtime.Path)
 	}
 }
 

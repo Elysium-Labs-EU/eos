@@ -18,7 +18,7 @@ func TestAddCommand(t *testing.T) {
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestAddCommand(t *testing.T) {
 	}
 }
 
-func TestAddIncompleteCommand(t *testing.T) {
+func TestAddNonexistentPathCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	cmd := newTestRootCmd(manager)
@@ -91,6 +91,51 @@ func TestAddIncompleteCommand(t *testing.T) {
 	}
 	if isRegistered {
 		t.Error("The service should not be registered")
+	}
+}
+
+func TestAddInvalidConfigRejected(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	cmd := newTestRootCmd(manager)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	testFile.Command = ""
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"add", fullPath})
+
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error (failure is printed), got: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "invalid service config") {
+		t.Errorf("expected 'invalid service config' in output, got: %s", output)
+	}
+
+	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
+	if err != nil {
+		t.Errorf("An error occurred during service registration check %s\n", err)
+	}
+	if isRegistered {
+		t.Error("The service should not be registered for a config with an empty command")
 	}
 }
 
