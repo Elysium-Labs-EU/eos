@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -218,6 +219,27 @@ func parseLogLineTime(line string) time.Time {
 	return t
 }
 
+// logLinesWithTimes attaches a timestamp to each line, in the line's own
+// stream order. Lines without a parseable timestamp (e.g. plain-text output
+// from services that don't emit the internal JSON log format) inherit the
+// last parsed timestamp from the same stream, so they sort next to the
+// output they were interleaved with instead of collapsing to the very start
+// of the merged, combined-mode output.
+func logLinesWithTimes(lines []string) []logLineWithTime {
+	result := make([]logLineWithTime, len(lines))
+	var last time.Time
+	for i, l := range lines {
+		t := parseLogLineTime(l)
+		if t.IsZero() {
+			t = last
+		} else {
+			last = t
+		}
+		result[i] = logLineWithTime{t: t, raw: l}
+	}
+	return result
+}
+
 func showCombinedLogs(out, errW io.Writer, outPath, errPath string, lines int) {
 	outLines, outErr := tailLogLines(outPath, lines)
 	errLines, errErr := tailLogLines(errPath, lines)
@@ -227,11 +249,11 @@ func showCombinedLogs(out, errW io.Writer, outPath, errPath string, lines int) {
 	}
 
 	merged := make([]logLineWithTime, 0, len(outLines)+len(errLines))
-	for _, l := range outLines {
-		merged = append(merged, logLineWithTime{t: parseLogLineTime(l), raw: l, isErr: false})
+	for _, l := range logLinesWithTimes(outLines) {
+		merged = append(merged, logLineWithTime{t: l.t, raw: l.raw, isErr: false})
 	}
-	for _, l := range errLines {
-		merged = append(merged, logLineWithTime{t: parseLogLineTime(l), raw: l, isErr: true})
+	for _, l := range logLinesWithTimes(errLines) {
+		merged = append(merged, logLineWithTime{t: l.t, raw: l.raw, isErr: true})
 	}
 
 	sort.SliceStable(merged, func(i, j int) bool {
@@ -275,12 +297,16 @@ func followCombinedLogs(ctx context.Context, out io.Writer, outPath, errPath str
 func startTailGoroutine(ctx context.Context, path string, isErr bool, ch chan<- followMsg) {
 	// #nosec G204 - path comes from manager, not user input
 	tail := exec.CommandContext(ctx, "tail", "-n", "0", "-f", path)
+	var stderr bytes.Buffer
+	tail.Stderr = &stderr
 
 	stdout, err := tail.StdoutPipe()
 	if err != nil {
+		sendFollowErr(ctx, ch, path, err)
 		return
 	}
 	if err := tail.Start(); err != nil {
+		sendFollowErr(ctx, ch, path, err)
 		return
 	}
 
@@ -294,6 +320,16 @@ func startTailGoroutine(ctx context.Context, path string, isErr bool, ch chan<- 
 			}
 		}
 		_ = scanner.Err()
-		_ = tail.Wait()
+		if waitErr := tail.Wait(); waitErr != nil && ctx.Err() == nil {
+			sendFollowErr(ctx, ch, path, errors.New(strings.TrimSpace(stderr.String())))
+		}
 	}()
+}
+
+func sendFollowErr(ctx context.Context, ch chan<- followMsg, path string, err error) {
+	msg := followMsg{text: fmt.Sprintf("failed to tail %s: %v", path, err), isErr: true}
+	select {
+	case ch <- msg:
+	case <-ctx.Done():
+	}
 }
