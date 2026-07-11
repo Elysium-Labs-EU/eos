@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func registerService(mgr manager.ServiceManager, yamlFile string, name string) error {
@@ -68,18 +66,12 @@ func parseServiceFile(serviceFile string) (ParsedService, error) {
 		return ParsedService{}, fmt.Errorf("determining YAML file: %w", err)
 	}
 
-	data, err := os.ReadFile(filepath.Clean(yamlFile))
-	if err != nil {
-		return ParsedService{}, fmt.Errorf("reading YAML file: %w", err)
+	config, errs := manager.ValidateServiceConfig(yamlFile)
+	if len(errs) > 0 || config == nil {
+		return ParsedService{}, fmt.Errorf("invalid service config: %w", errors.Join(errs...))
 	}
 
-	var config types.ServiceConfig
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return ParsedService{}, fmt.Errorf("parsing YAML: %w", err)
-	}
-
-	return ParsedService{YamlFile: yamlFile, Config: config}, nil
+	return ParsedService{YamlFile: yamlFile, Config: *config}, nil
 }
 
 type ServiceFileRequestResult struct {

@@ -39,6 +39,29 @@ func TestAPIAddValidYaml(t *testing.T) {
 	}
 }
 
+func TestAPIAddInvalidConfigRejected(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupAPICmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	testFile.Command = ""
+	yamlPath := writeServiceFiles(t, tempDir, testFile)
+
+	cmd.SetArgs([]string{"api", "add", yamlPath})
+	err := cmd.ExecuteContext(t.Context())
+
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed for a config with no command, got: %v\n%s", err, errBuf.String())
+	}
+
+	var errResult map[string]string
+	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
+	}
+	if errResult["error"] == "" {
+		t.Errorf("expected non-empty error, got: %+v", errResult)
+	}
+}
+
 func TestAPIAddAlreadyRegistered(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
