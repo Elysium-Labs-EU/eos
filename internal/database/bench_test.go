@@ -107,6 +107,8 @@ func BenchmarkGetProcessHistoryEntryByPGID(b *testing.B) {
 	testutil.SeedProcessHistory(b, b.Context(), db, "svc-0", 100)
 	b.ResetTimer()
 	for b.Loop() {
+		// 10050 is the midpoint PGID: SeedProcessHistory defaults basePGID to 10000
+		// and assigns basePGID+i for i in [0,100), so this hits the 51st seeded entry.
 		_, _ = db.GetProcessHistoryEntryByPGID(b.Context(), 10050)
 	}
 }
