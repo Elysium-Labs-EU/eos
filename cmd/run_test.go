@@ -428,7 +428,7 @@ func TestRunWithFileNotFound(t *testing.T) {
 	}
 }
 
-func TestRunWithInvalidYamlFile(t *testing.T) {
+func TestRunWithUnreadableYamlFile(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("skipping: cannot test file permission restrictions as root")
 	}
@@ -782,5 +782,120 @@ func TestRunWithFileParseError(t *testing.T) {
 	output := errBuf.String()
 	if !strings.Contains(output, "error parsing service file") {
 		t.Fatalf("expected parse error, got: %v", output)
+	}
+}
+
+func TestRunWithFileInvalidConfigRejected(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupCmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	testFile.Command = ""
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+	}
+
+	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
+
+	err = cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+
+	output := errBuf.String()
+	if !strings.Contains(output, "invalid service config") {
+		t.Errorf("expected 'invalid service config' in output, got: %s", output)
+	}
+}
+
+// When -f targets an already-registered service name, the original catalog entry
+// (path and config) is kept; the newly parsed file is only used to resolve the name.
+func TestRunWithFileAlreadyRegisteredKeepsOriginalConfig(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	originalFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	originalYaml, err := yaml.Marshal(originalFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal original config: %v", err)
+	}
+
+	originalDir := filepath.Join(tempDir, "original-project")
+	err = os.MkdirAll(originalDir, 0755)
+	if err != nil {
+		t.Fatalf("could not create original-project directory: %v\n", err)
+	}
+	originalYamlPath := filepath.Join(originalDir, "service.yaml")
+	err = os.WriteFile(originalYamlPath, originalYaml, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the original yaml file, got: %v\n", err)
+	}
+	originalScriptPath := filepath.Join(originalDir, "start-script.sh")
+	err = os.WriteFile(originalScriptPath, []byte("#!/bin/bash\necho ORIGINAL"), 0755)
+	if err != nil {
+		t.Fatalf("error occurred during writing the original start script, got: %v\n", err)
+	}
+
+	cmd.SetArgs([]string{"run", "--once", "-f", originalYamlPath})
+	err = cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("run should not return an error, got: %v\n", err)
+	}
+
+	// Second file, same service name ("cms"), different directory/config.
+	updatedFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	updatedYaml, err := yaml.Marshal(updatedFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal updated config: %v", err)
+	}
+	updatedDir := filepath.Join(tempDir, "updated-project")
+	err = os.MkdirAll(updatedDir, 0755)
+	if err != nil {
+		t.Fatalf("could not create updated-project directory: %v\n", err)
+	}
+	updatedYamlPath := filepath.Join(updatedDir, "service.yaml")
+	err = os.WriteFile(updatedYamlPath, updatedYaml, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the updated yaml file, got: %v\n", err)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd = newTestRootCmd(mgr)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"run", "--once", "-f", updatedYamlPath})
+
+	err = cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("run should not return an error, got: %v\n", err)
+	}
+
+	errOutput := errBuf.String()
+	if !strings.Contains(errOutput, "is already registered") {
+		t.Fatalf("expected 'is already registered' warning, got: %v", errOutput)
+	}
+	if !strings.Contains(errOutput, "eos update") {
+		t.Fatalf("expected warning to suggest 'eos update', got: %v", errOutput)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry("cms")
+	if err != nil {
+		t.Fatalf("failed to get catalog entry: %v", err)
+	}
+	if entry.DirectoryPath != originalDir {
+		t.Errorf("expected catalog entry to keep original dir %q, got: %q", originalDir, entry.DirectoryPath)
 	}
 }
