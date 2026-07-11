@@ -41,7 +41,7 @@ func TestAPIStatusWithOneRegisteredService(t *testing.T) {
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
-	// Register only (no start)
+	// api add only, not api run: service stays registered but never starts.
 	c := newTestRootCmd(mgr)
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
@@ -121,6 +121,9 @@ func TestAPIStatusMultipleServices(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 
+	// Hand-rolled YAML instead of testutil.NewTestServiceConfigFile: that helper
+	// pairs with writeServiceFiles, which always writes to a fixed
+	// tempDir/test-project/service.yaml, so 3 services would collide on one path.
 	names := []string{"svc-alpha", "svc-beta", "svc-gamma"}
 	for _, name := range names {
 		dir := filepath.Join(tempDir, name)
