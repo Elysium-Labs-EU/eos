@@ -238,6 +238,60 @@ func TestRotatingFileWriterRotation(t *testing.T) {
 	}
 }
 
+func TestRotatingFileWriterRotation_EnforcesMaxFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	const maxFiles = 3
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"), testutil.WithLogMaxFiles(maxFiles))
+
+	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
+	}
+
+	rw.maxSize = 100
+	for range 50 {
+		_, _ = rw.Write([]byte("This is a log message that should eventually trigger many rotations\n"))
+	}
+
+	logDir := CreateLogDirPath(tempDir)
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("Failed to read log directory: %v", err)
+	}
+	if len(entries) > maxFiles {
+		t.Errorf("expected at most %d log files under maxFiles enforcement, got %d: %v", maxFiles, len(entries), entries)
+	}
+}
+
+func TestHandleRenameExistingLogs_DeletesOldestBeyondMaxFiles(t *testing.T) {
+	tempDir := t.TempDir()
+
+	for _, name := range []string{"test.log", "test.log.1", "test.log.2"} {
+		f, err := os.Create(filepath.Join(tempDir, name))
+		if err != nil {
+			t.Fatalf("Failed to create test file %s: %v", name, err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("Closing the file errored: %v", err)
+		}
+	}
+
+	if err := handleRenameExistingLogs(tempDir, "test.log", 3); err != nil {
+		t.Fatalf("handleRenameExistingLogs should not error, got: %v", err)
+	}
+
+	// test.log.2 was the oldest; with maxFiles=3 it must be deleted, not shifted to test.log.3.
+	if _, err := os.Stat(filepath.Join(tempDir, "test.log.3")); !os.IsNotExist(err) {
+		t.Error("test.log.3 should not exist; oldest file should have been deleted, not renamed")
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "test.log.1")); os.IsNotExist(err) {
+		t.Error("test.log.1 should exist after rename")
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "test.log.2")); os.IsNotExist(err) {
+		t.Error("test.log.2 should exist after rename")
+	}
+}
+
 func TestDaemonLoggerWritesJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
@@ -279,7 +333,7 @@ func TestHandleRenameExistingLogs(t *testing.T) {
 		}
 	}
 
-	err := handleRenameExistingLogs(tempDir, "test.log")
+	err := handleRenameExistingLogs(tempDir, "test.log", 0)
 	if err != nil {
 		t.Fatalf("handleRenameExistingLogs should not error, got: %v", err)
 	}
@@ -298,7 +352,7 @@ func TestHandleRenameExistingLogs(t *testing.T) {
 func TestHandleRenameExistingLogsEmpty(t *testing.T) {
 	tempDir := t.TempDir()
 
-	err := handleRenameExistingLogs(tempDir, "test.log")
+	err := handleRenameExistingLogs(tempDir, "test.log", 0)
 	if err != nil {
 		t.Fatalf("handleRenameExistingLogs should not error on empty dir, got: %v", err)
 	}
@@ -316,7 +370,7 @@ func TestHandleRenameExistingLogsSingleFile(t *testing.T) {
 		t.Fatalf("Closing the file errored: %v", err)
 	}
 
-	err = handleRenameExistingLogs(tempDir, "test.log")
+	err = handleRenameExistingLogs(tempDir, "test.log", 0)
 	if err != nil {
 		t.Fatalf("handleRenameExistingLogs should not error, got: %v", err)
 	}
@@ -326,21 +380,4 @@ func TestHandleRenameExistingLogsSingleFile(t *testing.T) {
 	}
 }
 
-// func TestNewDaemonManager(t *testing.T) {}
-// func TestStartDaemonProcess(t *testing.T) {}
-// func TestSendRequest(t *testing.T) {}
-// func TestDaemonManager_GetServiceInstance(t *testing.T) {}
-// func TestDaemonManager_RemoveServiceInstance(t *testing.T) {}
-// func TestDaemonManager_StartService(t *testing.T) {}
-// func TestDaemonManager_RestartService(t *testing.T) {}
-// func TestDaemonManager_StopService(t *testing.T) {}
-// func TestDaemonManager_ForceStopService(t *testing.T) {}
-// func TestDaemonManager_AddServiceCatalogEntry(t *testing.T) {}
-// func TestDaemonManager_GetAllServiceCatalogEntries(t *testing.T) {}
-// func TestDaemonManager_GetServiceCatalogEntry(t *testing.T) {}
-// func TestDaemonManager_IsServiceRegistered(t *testing.T) {}
-// func TestDaemonManager_RemoveServiceCatalogEntry(t *testing.T) {}
-// func TestDaemonManager_UpdateServiceCatalogEntry(t *testing.T) {}
-// func TestDaemonManager_GetMostRecentProcessHistoryEntry(t *testing.T) {}
-// func TestDaemonManager_NewServiceLogFiles(t *testing.T) {}
-// func TestDaemonManager_GetServiceLogFilePath(t *testing.T) {}
+// TODO: startDaemonProcess (daemon_manager.go) has no test; it spawns the daemon subprocess.

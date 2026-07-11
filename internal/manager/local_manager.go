@@ -495,7 +495,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
 	if len(stopResult.Errored) > 0 {
-		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
+		return 0, fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
 	}
 
 	restartCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config

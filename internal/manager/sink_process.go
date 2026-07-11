@@ -69,7 +69,12 @@ func (s *sinkProcess) Run(ctx context.Context) {
 		close(s.doneCh)
 		return
 	}
-	defer close(s.doneCh)
+	defer func() {
+		if dropped := s.buf.Dropped(); dropped > 0 {
+			s.logger.Warn("sink buffer dropped records", "sink", s.sink.Type, "dropped", dropped)
+		}
+		close(s.doneCh)
+	}()
 
 	restartDelayMs := s.sink.RestartDelayMs
 	if restartDelayMs <= 0 {

@@ -426,7 +426,11 @@ func (dm *DaemonManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 }
 
 func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error {
-	args, err := json.Marshal(types.UpdateServiceCatalogEntryArgs{Name: name})
+	args, err := json.Marshal(types.UpdateServiceCatalogEntryArgs{
+		Name:              name,
+		NewDirectoryPath:  newDirectoryPath,
+		NewConfigFileName: newConfigFileName,
+	})
 	if err != nil {
 		return fmt.Errorf("UpdateServiceCatalogEntry: marshaling args: %w", err)
 	}
@@ -510,6 +514,7 @@ type RotatingFileWriter struct {
 	fileName    string
 	currentSize int64
 	maxSize     int64
+	mu          sync.Mutex
 	maxFiles    int
 }
 
@@ -543,11 +548,13 @@ func newRotatingFileWriter(logDir, fileName string, maxFiles int, fileSizeLimit 
 }
 
 func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.currentSize+int64(len(p)) >= w.maxSize {
 		if rotateErr := w.rotate(); rotateErr != nil {
-			fmt.Printf("error rotating logs: %v\n", rotateErr)
+			return 0, fmt.Errorf("rotating logs: %w", rotateErr)
 		}
-		w.currentSize = 0
 	}
 	n, err = w.file.Write(p)
 	w.currentSize += int64(n)
@@ -559,7 +566,7 @@ func (w *RotatingFileWriter) rotate() error {
 		return fmt.Errorf("closing file: %w", err)
 	}
 
-	if err := handleRenameExistingLogs(w.logDir, w.fileName); err != nil {
+	if err := handleRenameExistingLogs(w.logDir, w.fileName, w.maxFiles); err != nil {
 		return fmt.Errorf("renaming log files: %w", err)
 	}
 
@@ -590,8 +597,11 @@ func NewDaemonLogger(logToFileAndConsole bool, verbose bool, logDir string, file
 	return logutil.NewJSONLogger(w, verbose), nil
 }
 
-// TODO: Add max file rotation in here.
-func handleRenameExistingLogs(logDir string, defaultFileName string) error {
+// handleRenameExistingLogs shifts each existing rotated log file's suffix up by
+// one (e.g. defaultFileName.1 -> defaultFileName.2) to free up defaultFileName
+// for the new active log file. If maxFiles > 0, the oldest files are deleted
+// first so the total file count after rotation never exceeds maxFiles.
+func handleRenameExistingLogs(logDir string, defaultFileName string, maxFiles int) error {
 	dirEntries, err := os.ReadDir(logDir)
 	if err != nil {
 		return fmt.Errorf("read dir %q: %w", logDir, err)
@@ -602,6 +612,20 @@ func handleRenameExistingLogs(logDir string, defaultFileName string) error {
 		if strings.HasPrefix(entry.Name(), defaultFileName) {
 			validatedDirEntries = append(validatedDirEntries, entry)
 		}
+	}
+
+	if maxFiles > 0 && len(validatedDirEntries) >= maxFiles {
+		// validatedDirEntries is sorted ascending by name (defaultFileName, .1, .2, ...),
+		// so the oldest files sit at the end; delete enough of them to leave room for
+		// the renamed survivors plus the new active file within maxFiles total.
+		excess := len(validatedDirEntries) - maxFiles + 1
+		oldest := validatedDirEntries[len(validatedDirEntries)-excess:]
+		for _, v := range oldest {
+			if removeErr := os.Remove(filepath.Join(logDir, v.Name())); removeErr != nil {
+				return fmt.Errorf("removing old log file %q: %w", v.Name(), removeErr)
+			}
+		}
+		validatedDirEntries = validatedDirEntries[:len(validatedDirEntries)-excess]
 	}
 
 	for i, v := range slices.Backward(validatedDirEntries) {
