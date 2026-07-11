@@ -24,6 +24,9 @@ func TestGetBaseDir_EnvOverride(t *testing.T) {
 func TestGetBaseDir_SudoUser(t *testing.T) {
 	t.Setenv("EOS_BASE_DIR", "")
 
+	// Uses the current user as its own SUDO_USER, so this only proves the
+	// SUDO_USER branch is taken and resolves via user.Lookup; it cannot
+	// verify resolution to a different user's home directory.
 	u, err := user.Current()
 	if err != nil {
 		t.Skip("cannot determine current user")
