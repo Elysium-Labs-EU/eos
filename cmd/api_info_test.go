@@ -136,17 +136,22 @@ func TestAPIInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 
 func TestAPIInfoInvalidNumberArgumentsCommand(t *testing.T) {
 	cmd, _, errBuf, _ := setupAPICmd(t)
-	cmd.SetArgs([]string{"info"})
+	cmd.SetArgs([]string{"api", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
 
 	if err == nil {
 		t.Fatalf("expected error, got: %v\nerr output: %s", err, errBuf.String())
 	}
-	output := errBuf.String()
 
-	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
-		t.Errorf("expected info to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
+	// api info has SilenceErrors/SilenceUsage set and RunE never runs on an
+	// arg-count failure, so cobra's error is only returned, never written to
+	// stderr (unlike the JSON error contract used for runtime errors).
+	if !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+		t.Errorf("expected error to be 'accepts 1 arg(s), received 0', got: %v", err)
+	}
+	if errBuf.String() != "" {
+		t.Errorf("expected no stderr output, got: %s", errBuf.String())
 	}
 }
 
@@ -166,7 +171,7 @@ func TestAPIInfoNonExistentServiceCommand(t *testing.T) {
 	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(errBuf.String())), &errResp); jsonErr != nil {
 		t.Fatalf("failed to unmarshal error output: %v\noutput: %s", jsonErr, errBuf.String())
 	}
-	if !strings.Contains(errResp.Error, "service not registered") {
-		t.Errorf("expected error to contain 'service not registered', got: %q", errResp.Error)
+	if !strings.Contains(errResp.Error, "not found") {
+		t.Errorf("expected error to contain 'not found', got: %q", errResp.Error)
 	}
 }
