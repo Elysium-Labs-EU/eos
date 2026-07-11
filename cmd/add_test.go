@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
@@ -77,8 +79,8 @@ func TestAddNonexistentPathCommand(t *testing.T) {
 
 	err := cmd.ExecuteContext(t.Context())
 
-	if err != nil {
-		t.Fatalf("add should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 	output := buf.String()
 
@@ -122,8 +124,9 @@ func TestAddInvalidConfigRejected(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"add", fullPath})
 
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("add should not return an error (failure is printed), got: %v", err)
+	err = cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 	output := buf.String()
 	if !strings.Contains(output, "invalid service config") {
@@ -155,10 +158,11 @@ func TestAddInvalidYamlCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("add should return an error")
 	}
-	output := buf.String()
-
-	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
-		t.Errorf("Expected add to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
+	if !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+		t.Errorf("expected error to mention 'accepts 1 arg(s), received 0', got: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for a cobra-level arg validation error, got: %s", buf.String())
 	}
 	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
 	if err != nil {
