@@ -63,6 +63,8 @@ func TestTimestampWriter_Write(t *testing.T) {
 	var buf bytes.Buffer
 	tw := &TimestampWriter{W: &buf}
 
+	// A single Write call with two newline-terminated lines should flush both
+	// lines separately, each with its own timestamp, not one timestamp for the whole call.
 	n, err := tw.Write([]byte("line one\nline two\n"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
