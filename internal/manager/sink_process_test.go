@@ -43,6 +43,8 @@ func TestBuildOptionsEnv_stringValues(t *testing.T) {
 	}
 }
 
+// TestBuildOptionsEnv_varExpansion verifies ${VAR} in string option values is expanded
+// against the process environment before being JSON-encoded.
 func TestBuildOptionsEnv_varExpansion(t *testing.T) {
 	t.Setenv("TEST_SINK_TOKEN", "secret123")
 	opts := map[string]any{"token": "${TEST_SINK_TOKEN}"}
@@ -166,8 +168,9 @@ func TestSinkProcess_runAndStop(t *testing.T) {
 }
 
 func TestSinkProcess_readyTimeout(t *testing.T) {
-	// Plugin that never prints READY — should time out and restart.
-	// We cancel the context quickly so the test doesn't wait the full restart delay.
+	// Plugin that never prints READY. The 500ms ctx timeout fires well before
+	// sinkReadyTimeout (10s), so this exercises the ctx.Done() branch of the
+	// READY select in runOnce, not the readyTimer.C branch.
 	sink := &types.LogSink{
 		Type:           "test",
 		Mode:           "push",
@@ -292,8 +295,8 @@ func TestSinkProcess_stderrRoutedToErrLog(t *testing.T) {
 	}
 }
 
-// TestSinkProcess_invalidConfig covers the Run() early-return path that closes doneCh;
-// without the fix Stop() would deadlock here.
+// TestSinkProcess_invalidConfig_stopDoesNotDeadlock covers the Run() early-return path
+// that closes doneCh; without the fix Stop() would deadlock here.
 func TestSinkProcess_invalidConfig_stopDoesNotDeadlock(t *testing.T) {
 	for _, tc := range []struct {
 		name string

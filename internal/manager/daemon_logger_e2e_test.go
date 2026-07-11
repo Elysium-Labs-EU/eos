@@ -29,6 +29,8 @@ func newE2ELogger(t *testing.T, verbose bool) (logger interface {
 	return l, filepath.Join(lc.LogDir, lc.LogFileName)
 }
 
+// readJSONLines reads path and unmarshals each line, validating that every
+// line the logger wrote is well-formed JSON (not just readable text).
 func readJSONLines(t *testing.T, path string) []map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(path)

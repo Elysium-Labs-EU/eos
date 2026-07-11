@@ -17,6 +17,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Several tests below use large, arbitrary PGID constants (e.g. 999990-999993,
+// 71001-74001, 1001-1002) as stand-ins for a "dead" process group: real PGIDs on
+// a typical dev/CI machine stay well below these values, so they're unlikely to
+// collide with a live process. Since this isn't guaranteed, each such test guards
+// itself with an isProcessAlive(pgid) check and skips if the guess turned out to
+// be wrong (i.e. the PGID is actually alive).
+
 // fakeExecutor satisfies Executor without requiring runtime binaries in PATH.
 // LookPath always succeeds; CommandContext delegates to the real os/exec.
 type fakeExecutor struct{}
@@ -38,7 +45,7 @@ func TestNewManager(t *testing.T) {
 	}
 	services, err := manager.GetAllServiceCatalogEntries()
 	if err != nil {
-		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v\n", err)
+		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v", err)
 	}
 	if len(services) != 0 {
 		t.Errorf("Expected 0 services, got %d", len(services))
@@ -92,7 +99,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 		t.Fatalf("Expected error on adding the same service catalog entry twice")
 	}
 	if strings.Contains(err.Error(), "service name cannot be empty") {
-		t.Errorf("Test failed due to invalid test input, got: %v\n", err)
+		t.Errorf("Expected a duplicate-entry error, got the unrelated empty-name error: %v", err)
 	}
 
 }
@@ -155,14 +162,14 @@ func TestStartService(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
@@ -178,10 +185,10 @@ func TestStartService(t *testing.T) {
 	pgid, err := manager.StartService("test-service")
 
 	if err != nil {
-		t.Fatalf("Starting service should not error: %v\n", err)
+		t.Fatalf("Starting service should not error: %v", err)
 	}
 	if pgid == 0 {
-		t.Fatalf("Starting service should have a failed PGID, got: %v\n", err)
+		t.Fatal("Starting service should return a non-zero PGID, got 0")
 	}
 }
 
@@ -208,18 +215,18 @@ func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	err = os.WriteFile(filepath.Join(fullDirPath, ".env"), nil, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the env file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the env file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
@@ -260,14 +267,14 @@ func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")

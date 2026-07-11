@@ -68,6 +68,9 @@ func TestRingBuffer_len(t *testing.T) {
 	}
 }
 
+// TestRingBuffer_wrapsAround fills the buffer, pops one, then pushes again so
+// tail wraps to index 0 while head has not; it verifies pop still returns
+// records in FIFO order across the wrap.
 func TestRingBuffer_wrapsAround(t *testing.T) {
 	rb := newRingBuffer(3)
 	rb.push(sinkRecord{line: "1"})

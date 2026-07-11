@@ -172,6 +172,7 @@ func TestDaemonManager_RestartService(t *testing.T) {
 	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
 		var args types.RestartServiceArgs
 		_ = json.Unmarshal(req.Args, &args)
+		// Durations must survive wire encoding as non-empty strings.
 		if args.GracePeriod == "" || args.TickerPeriod == "" {
 			return types.DaemonResponse{Success: false, Error: "missing duration args"}
 		}
@@ -347,6 +348,8 @@ func TestDaemonManager_GetServiceLogFilePath(t *testing.T) {
 	}
 }
 
+// TestNewDaemonManager_daemonAlreadyRunning verifies NewDaemonManager succeeds
+// (does not error) when a live daemon is already listening on the socket.
 func TestNewDaemonManager_daemonAlreadyRunning(t *testing.T) {
 	dir, mkdirErr := os.MkdirTemp("", "eos-dm-nr-*")
 	if mkdirErr != nil {

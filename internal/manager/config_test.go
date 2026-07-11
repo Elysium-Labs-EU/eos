@@ -10,7 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TODO: Rewrite
+// TODO: Rewrite: marshals a ServiceConfig then unmarshals it via LoadServiceConfig,
+// which mostly round-trips yaml.v3 rather than parsing a hand-written YAML file;
+// replace with a literal YAML fixture string.
 func TestLoadServiceConfig(t *testing.T) {
 	runtime := types.Runtime{
 		Type: "nodejs",
@@ -31,7 +33,7 @@ func TestLoadServiceConfig(t *testing.T) {
 
 	err = os.WriteFile(configFile, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("LoadingProjectCofnig should not error: %v", err)
+		t.Fatalf("writing test config file should not error: %v", err)
 	}
 
 	config, err := LoadServiceConfig(configFile)
@@ -49,7 +51,8 @@ func TestLoadServiceConfig(t *testing.T) {
 	}
 }
 
-// TODO: Rewrite
+// TODO: Rewrite: name promises optional fields but only sets Name/Command/Port,
+// same as TestLoadServiceConfig; should exercise EnvFile, LogSinks, MemoryLimitMb instead.
 func TestLoadServiceConfigWithOptionalFields(t *testing.T) {
 	runtime := types.Runtime{
 		Type: "nodejs",
