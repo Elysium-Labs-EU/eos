@@ -79,6 +79,7 @@ func TestAPIRemoveRunningService(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 
+	// reuses api_stop_test.go's helper since starting a service needs the same setup
 	serviceName := startServiceForStopTest(t, mgr, tempDir)
 
 	// Remove without stopping first — should still succeed (no prompt in API mode)
