@@ -12,6 +12,8 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
+// startServiceForStopTest registers and starts a service via "api run" so
+// tests have a running process to stop. Shared with cmd/api_remove_test.go.
 func startServiceForStopTest(t *testing.T, mgr manager.ServiceManager, tempDir string) string {
 	t.Helper()
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -101,7 +103,8 @@ func TestAPIStopForceFlag(t *testing.T) {
 	if result.Name != serviceName {
 		t.Errorf("expected name %q, got %q", serviceName, result.Name)
 	}
-	// stopped+failed should account for at least 1 process attempt
+	// Failed is only ever set on the --force path, so check both counters
+	// for the one process the test started.
 	if result.Stopped+result.Failed == 0 {
 		t.Errorf("expected at least 1 process attempt, got stopped=%d failed=%d", result.Stopped, result.Failed)
 	}
@@ -115,7 +118,6 @@ func TestAPIStopNotRunningService(t *testing.T) {
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
-	// Register without starting
 	c := newTestRootCmd(mgr)
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
@@ -125,7 +127,6 @@ func TestAPIStopNotRunningService(t *testing.T) {
 		t.Fatalf("failed to register service: %v\n%s", err, errBuf.String())
 	}
 
-	// Stop a service that was never started
 	outBuf.Reset()
 	errBuf.Reset()
 	c = newTestRootCmd(mgr)
