@@ -15,7 +15,7 @@ func TestMigrations(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	db, rawDBConn, err := database.NewTestDB(t.Context(), dbPath, database.MigrationsFS, database.MigrationsPath)
 	if err != nil {
-		t.Fatalf("Unable to create test database 3: %v", err)
+		t.Fatalf("Unable to create test database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.CloseDBConnection() })
 
@@ -313,7 +313,9 @@ func testSchemaConstraints(t *testing.T, db *sql.DB) {
 
 	// Test foreign key constraint on process_history
 	t.Run("process_history_fk_constraint", func(t *testing.T) {
-		// Enable foreign keys for this test
+		// Enabled only on this raw test connection to verify the schema can enforce
+		// the FK relationship; openDB() in database.go never sets this pragma, so
+		// production connections do not actually enforce it at runtime.
 		_, err := db.Exec(`PRAGMA foreign_keys = ON`)
 		if err != nil {
 			t.Fatalf("Failed to enable foreign keys: %v", err)
