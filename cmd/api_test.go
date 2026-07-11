@@ -14,6 +14,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// setupAPICmd is a shared fixture for api_*_test.go: it wires a fresh test
+// DB and manager into the root cobra command and returns it with captured
+// stdout/stderr buffers and the manager's temp working dir.
 func setupAPICmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string) {
 	t.Helper()
 	db, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -27,6 +30,8 @@ func setupAPICmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf
 	return c, &ob, &eb, td
 }
 
+// writeServiceFiles is a shared fixture for api_*_test.go: it marshals cfg
+// into a service.yaml under dir/test-project and returns the yaml path.
 func writeServiceFiles(t *testing.T, dir string, cfg any) (yamlPath string) {
 	t.Helper()
 
@@ -44,11 +49,6 @@ func writeServiceFiles(t *testing.T, dir string, cfg any) (yamlPath string) {
 	if err = os.WriteFile(yamlPath, yamlData, 0644); err != nil {
 		t.Fatalf("could not write yaml: %v", err)
 	}
-
-	// scriptPath = filepath.Join(fullDir, "start-script.sh")
-	// if err = os.WriteFile(scriptPath, []byte("#!/bin/bash\necho BOOTED"), 0755); err != nil {
-	// 	t.Fatalf("could not write script: %v", err)
-	// }
 
 	return yamlPath
 }
