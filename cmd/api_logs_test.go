@@ -13,6 +13,9 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
+// startServiceForLogsTest is a shared fixture for this file: it runs a real
+// service via "api run -f" so its stdout/stderr log files exist and have
+// content for the logs command to read, and returns the service name.
 func startServiceForLogsTest(t *testing.T, mgr manager.ServiceManager, tempDir string) string {
 	t.Helper()
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
