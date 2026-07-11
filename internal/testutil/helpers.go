@@ -81,6 +81,12 @@ func WithEnvFile(envFile string) ServiceConfigOption {
 	}
 }
 
+func WithLogSinks(sinks ...types.LogSink) ServiceConfigOption {
+	return func(sc *types.ServiceConfig) {
+		sc.LogSinks = sinks
+	}
+}
+
 func NewTestServiceConfigFile(t *testing.T, opts ...ServiceConfigOption) *types.ServiceConfig {
 	t.Helper()
 
