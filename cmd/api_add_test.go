@@ -46,7 +46,6 @@ func TestAPIAddAlreadyRegistered(t *testing.T) {
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
-	// First add
 	c := newTestRootCmd(mgr)
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
@@ -56,7 +55,6 @@ func TestAPIAddAlreadyRegistered(t *testing.T) {
 		t.Fatalf("first add failed: %v\n%s", err, errBuf.String())
 	}
 
-	// Second add — same service on same manager
 	c = newTestRootCmd(mgr)
 	outBuf.Reset()
 	errBuf.Reset()
@@ -97,6 +95,9 @@ func TestAPIAddBadPath(t *testing.T) {
 	}
 }
 
+// TestAPIAddDirectory covers the path where the argument resolves to a
+// directory rather than a yaml file directly; parseServiceFile must locate
+// service.yaml inside it.
 func TestAPIAddDirectory(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
 
