@@ -48,9 +48,8 @@ func TestUpdateCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestUpdateCommandServiceNotRegistered
+// TestUpdateCommandServiceNotRegistered, TestUpdateCommandInvalidPath,
+// TestUpdateCommandMissingArgs, and TestUpdateCommandTooManyArgs live in update_gaps_test.go.
+//
 // TODO: func TestUpdateCommandIsRegisteredError (requires mock manager)
-// TODO: func TestUpdateCommandInvalidPath
 // TODO: func TestUpdateCommandUpdateCatalogError (requires mock manager)
-// TODO: func TestUpdateCommandMissingArgs
-// TODO: func TestUpdateCommandTooManyArgs
