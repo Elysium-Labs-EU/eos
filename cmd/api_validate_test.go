@@ -64,7 +64,7 @@ func TestAPIValidateDirectory(t *testing.T) {
 func TestAPIValidateInvalidYaml(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
 
-	// Write yaml missing required fields
+	// Write yaml with required fields present but empty, which fails validation
 	dir := filepath.Join(tempDir, "invalid-project")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -74,6 +74,8 @@ func TestAPIValidateInvalidYaml(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
+	// An invalid config is a validation outcome, not a command failure: it still
+	// exits 0 and reports errors inside the JSON result's "errors" field.
 	cmd.SetArgs([]string{"api", "validate", yamlPath})
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("expected no error (validation result in JSON), got: %v\n%s", err, errBuf.String())
