@@ -14,7 +14,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		}
 	})
 
-	t.Run("stopped process has empty uptime but keeps last known memory", func(t *testing.T) {
+	t.Run("stopped process has empty uptime and no memory", func(t *testing.T) {
 		got := compileProcessInfoObject(&types.ProcessHistory{
 			State:       types.ProcessStateStopped,
 			PGID:        123,
@@ -32,8 +32,8 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		if got.Uptime != "" {
 			t.Errorf("expected empty uptime for stopped process, got %q", got.Uptime)
 		}
-		if got.MemoryMb != "4.0 MB" {
-			t.Errorf("expected memory 4.0 MB (DetermineProcessMemoryInMbAPI ignores status), got %q", got.MemoryMb)
+		if got.MemoryMb != "" {
+			t.Errorf("expected no memory reported for stopped process, got %q", got.MemoryMb)
 		}
 		if got.Error != nil {
 			t.Errorf("expected nil error, got %v", got.Error)

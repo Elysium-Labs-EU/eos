@@ -36,6 +36,23 @@ func TestPromptConfirm(t *testing.T) {
 		})
 	}
 
+	t.Run("back-to-back prompts against piped stdin each get their own answer", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		errBuf := &bytes.Buffer{}
+		cmd := newTestCmd(out, errBuf)
+		cmd.SetIn(strings.NewReader("y\nn\n"))
+
+		first := PromptConfirm(cmd, "first?")
+		second := PromptConfirm(cmd, "second?")
+
+		if !first {
+			t.Errorf("expected first prompt to read 'y' as true, got %v", first)
+		}
+		if second {
+			t.Errorf("expected second prompt to read 'n' as false, got %v", second)
+		}
+	})
+
 	t.Run("empty input prints read error", func(t *testing.T) {
 		out := &bytes.Buffer{}
 		errBuf := &bytes.Buffer{}

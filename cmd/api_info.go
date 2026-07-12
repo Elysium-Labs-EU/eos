@@ -153,7 +153,7 @@ func compileProcessInfoObject(processEntry *types.ProcessHistory) *apiInfoProces
 		processInfo.Uptime = *uptime
 	}
 
-	memory := helpers.DetermineProcessMemoryInMbAPI(processEntry.RssMemoryKb)
+	memory := helpers.DetermineProcessMemoryInMbAPI(processEntry.RssMemoryKb, processInfo.Status)
 	if memory != nil {
 		processInfo.MemoryMb = *memory
 	}

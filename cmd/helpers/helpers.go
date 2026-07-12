@@ -2,7 +2,7 @@
 package helpers
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,7 +83,10 @@ func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStat
 	return fmt.Sprintf("%.1f MB", float64(rssMemoryKb)/1024)
 }
 
-func DetermineProcessMemoryInMbAPI(rssMemoryKb int64) *string {
+func DetermineProcessMemoryInMbAPI(rssMemoryKb int64, status types.ServiceStatus) *string {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+		return nil
+	}
 	if rssMemoryKb <= 0 {
 		return nil
 	}
@@ -143,12 +146,16 @@ func DetermineYamlFile(projectPath string) (string, error) {
 func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
 	cmd.Printf("  %s ", ui.TextMuted.Render(prompt))
 
-	reader := bufio.NewReader(cmd.InOrStdin())
-	response, err := reader.ReadString('\n')
+	// Read one byte at a time rather than through a bufio.Reader: a bufio.Reader
+	// created fresh on every call can read ahead past the newline and buffer
+	// bytes belonging to a *later* prompt's answer, which are then discarded
+	// when this function returns. Over a piped (non-tty) stdin that silently
+	// drops the next prompt's answer; a manual byte read never reads past '\n'.
+	response, err := readLine(cmd.InOrStdin())
 
 	if err != nil {
 		// If we got io.EOF but have a response, process it anyway
-		if err == io.EOF && len(strings.TrimSpace(response)) > 0 {
+		if errors.Is(err, io.EOF) && len(strings.TrimSpace(response)) > 0 {
 			response = strings.TrimSpace(strings.ToLower(response))
 			return response == "y" || response == "yes"
 		}
@@ -158,6 +165,23 @@ func PromptConfirm(cmd *cobra.Command, prompt string) (confirmed bool) {
 
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes"
+}
+
+func readLine(r io.Reader) (string, error) {
+	var sb strings.Builder
+	buf := make([]byte, 1)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			sb.WriteByte(buf[0])
+			if buf[0] == '\n' {
+				return sb.String(), nil
+			}
+		}
+		if err != nil {
+			return sb.String(), err
+		}
+	}
 }
 
 // Debugf prints a debug-labeled diagnostic line to stderr when verbose is true, no-op otherwise.

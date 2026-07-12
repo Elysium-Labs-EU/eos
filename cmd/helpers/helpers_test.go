@@ -110,13 +110,19 @@ func TestDetermineProcessMemoryInMbHuman(t *testing.T) {
 }
 
 func TestDetermineProcessMemoryInMbAPI(t *testing.T) {
-	if got := DetermineProcessMemoryInMbAPI(0); got != nil {
+	if got := DetermineProcessMemoryInMbAPI(0, types.ServiceStatusRunning); got != nil {
 		t.Errorf("expected nil for 0 kb, got %v", got)
 	}
-	if got := DetermineProcessMemoryInMbAPI(-1); got != nil {
+	if got := DetermineProcessMemoryInMbAPI(-1, types.ServiceStatusRunning); got != nil {
 		t.Errorf("expected nil for negative kb, got %v", got)
 	}
-	got := DetermineProcessMemoryInMbAPI(1024)
+	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusStopped); got != nil {
+		t.Errorf("expected nil for stopped status, got %v", got)
+	}
+	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusFailed); got != nil {
+		t.Errorf("expected nil for failed status, got %v", got)
+	}
+	got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusRunning)
 	if got == nil {
 		t.Fatal("expected non-nil for 1024 kb")
 	}

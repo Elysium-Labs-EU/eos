@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -21,25 +20,6 @@ type stopErrDaemonController struct{ fakeDaemonController }
 
 func (s *stopErrDaemonController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
 	return false, errors.New("stop failed")
-}
-
-// lineReader hands one line to each Read call, mimicking a real (canonical-mode) tty. This
-// matters because PromptConfirm builds a fresh bufio.Reader per call over cmd.InOrStdin();
-// with a plain strings.Reader, the first bufio.Reader's fill() slurps all remaining input
-// (including the answer to a later prompt) into a buffer that's discarded once that call
-// returns, silently losing the second prompt's answer. A real tty in canonical mode never
-// over-reads past the pressed line, so this only bites piped/non-interactive input.
-type lineReader struct {
-	lines []string
-}
-
-func (r *lineReader) Read(p []byte) (int, error) {
-	if len(r.lines) == 0 {
-		return 0, io.EOF
-	}
-	line := r.lines[0]
-	r.lines = r.lines[1:]
-	return copy(p, line), nil
 }
 
 func TestUserRuntimeDir(t *testing.T) {
@@ -112,7 +92,7 @@ func TestHandleStoppingServices(t *testing.T) {
 		cmd := newTestRootCmd(nil)
 		cmd.SetOut(&out)
 		cmd.SetErr(&errBuf)
-		cmd.SetIn(&lineReader{lines: []string{"y\n", "n\n"}})
+		cmd.SetIn(strings.NewReader("y\nn\n"))
 
 		ok := handleStoppingServices(cmd, mgr, cfg, []types.ServiceInstance{svc}, false)
 
@@ -137,7 +117,7 @@ func TestHandleStoppingServices(t *testing.T) {
 		cmd := newTestRootCmd(nil)
 		cmd.SetOut(&out)
 		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetIn(&lineReader{lines: []string{"y\n", "y\n"}})
+		cmd.SetIn(strings.NewReader("y\ny\n"))
 
 		ok := handleStoppingServices(cmd, mgr, cfg, []types.ServiceInstance{svc}, false)
 
