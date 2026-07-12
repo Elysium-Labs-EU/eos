@@ -2030,6 +2030,111 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 	}
 }
 
+func TestEvaluateMemoryThresholds(t *testing.T) {
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(nil, nil, nil, healthConfig, *shutdownConfig)
+
+	const limitMb = 100
+	limitKb := int64(limitMb) * 1024
+
+	tests := []struct {
+		name       string
+		rssKb      int64
+		wantReason RestartReason
+	}{
+		{"disabled limit", 0, ReasonNone},
+		{"well under threshold", limitKb / 10, ReasonNone},
+		{"at warning threshold", int64(float64(limitKb) * healthConfig.Memory.WarningThreshold), ReasonWarning},
+		{"at soft restart threshold", int64(float64(limitKb) * healthConfig.Memory.SoftRestartThreshold), ReasonSoftRestart},
+		{"at force restart threshold", int64(float64(limitKb) * healthConfig.Memory.ForceRestartThreshold), ReasonForceRestart},
+		{"far above force threshold", limitKb * 10, ReasonForceRestart},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configLimitMb := limitMb
+			if tt.name == "disabled limit" {
+				configLimitMb = 0
+			}
+			got := hm.evaluateMemoryThresholds(configLimitMb, tt.rssKb)
+			if got != tt.wantReason {
+				t.Errorf("evaluateMemoryThresholds(%d, %d) = %v, want %v", configLimitMb, tt.rssKb, got, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "dispatch-memory-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+	const pgid = 999900
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("failed to register process history: %v", err)
+	}
+
+	service := &types.ServiceCatalogEntry{Name: serviceName}
+	process, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || process == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+
+	hm.dispatchMemoryAction(t.Context(), service, process, instance, ReasonWarning, pgid, 5000, true)
+
+	logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
+	if err != nil {
+		t.Fatalf("failed to get log file path: %v", err)
+	}
+	content, err := os.ReadFile(*logPath) // #nosec G304 -- test-controlled path
+	if err != nil {
+		t.Fatalf("reading log file: %v", err)
+	}
+	if !strings.Contains(string(content), "memory usage warning") {
+		t.Errorf("expected warning message in log, got: %s", content)
+	}
+
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updated == nil {
+		t.Fatalf("failed to get updated process history: %v", err)
+	}
+	if updated.RssMemoryKb != 5000 {
+		t.Errorf("expected RssMemoryKb 5000 after warning dispatch, got %v", updated.RssMemoryKb)
+	}
+
+	hm.dispatchMemoryAction(t.Context(), service, updated, instance, ReasonNone, pgid, 6000, true)
+
+	afterNone, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || afterNone == nil {
+		t.Fatalf("failed to get process history after ReasonNone dispatch: %v", err)
+	}
+	if afterNone.RssMemoryKb != 6000 {
+		t.Errorf("expected RssMemoryKb 6000 after sampled ReasonNone dispatch, got %v", afterNone.RssMemoryKb)
+	}
+}
+
 func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
