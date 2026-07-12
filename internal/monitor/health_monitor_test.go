@@ -2029,3 +2029,144 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 		t.Errorf("expected default checkInterval 2s, got %v", hm.checkInterval)
 	}
 }
+
+func TestRestartOnMemoryThreshold_soft(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	fullDirPath := filepath.Join(tempDir, "restart-threshold-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("failed to create project dir: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	const serviceName = "restart-threshold-svc"
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(serviceName)
+	if err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+
+	// Backdate StartedAt so canRestart's backoff window has already elapsed.
+	if updateErr := db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
+		StartedAt: new(time.Now().Add(-5 * time.Minute)),
+	}); updateErr != nil {
+		t.Fatalf("failed to backdate StartedAt: %v", updateErr)
+	}
+
+	process, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || process == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+
+	rssKb := int64(1024)
+	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, pgid, rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
+
+	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updatedInstance == nil {
+		t.Fatalf("failed to get updated service instance: %v", err)
+	}
+	if updatedInstance.RestartCount != instance.RestartCount+1 {
+		t.Errorf("expected RestartCount %d, got %d", instance.RestartCount+1, updatedInstance.RestartCount)
+	}
+
+	newProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || newProcess == nil {
+		t.Fatalf("failed to get new process history: %v", err)
+	}
+	if newProcess.PGID == pgid {
+		t.Error("expected a new PGID after restart")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-newProcess.PGID, syscall.SIGKILL) })
+}
+
+func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithMaxRestart(1))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "restart-threshold-maxed-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+	if updateErr := db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{RestartCount: new(1)}); updateErr != nil {
+		t.Fatalf("failed to set restart count: %v", updateErr)
+	}
+
+	fakePGID := 999998
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("failed to register process history: %v", err)
+	}
+
+	process, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || process == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if instance.RestartCount < healthConfig.MaxRestart {
+		t.Fatalf("test setup invalid: RestartCount %d must be >= MaxRestart %d", instance.RestartCount, healthConfig.MaxRestart)
+	}
+
+	entry := &types.ServiceCatalogEntry{Name: serviceName}
+	rssKb := int64(1024)
+	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, fakePGID, rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
+
+	// canRestart should have short-circuited: no restart attempted, PGID unchanged.
+	unchanged, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || unchanged == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	if unchanged.PGID != fakePGID {
+		t.Errorf("expected no restart (PGID unchanged), got new PGID %d", unchanged.PGID)
+	}
+}
