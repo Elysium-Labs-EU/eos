@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -380,4 +381,66 @@ func TestHandleRenameExistingLogsSingleFile(t *testing.T) {
 	}
 }
 
-// TODO: startDaemonProcess (daemon_manager.go) has no test; it spawns the daemon subprocess.
+func TestStartDaemonProcess_AlreadyRunning(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+
+	pid := os.Getpid()
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d", pid), 0644); err != nil {
+		t.Fatalf("Failed to write pid file: %v", err)
+	}
+
+	err := startDaemonProcess(context.Background(), pidFile, false)
+	if err == nil {
+		t.Fatal("expected error when daemon is already running")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' error, got: %v", err)
+	}
+}
+
+// The stale-pidfile-then-exec success path spawns a real subprocess via os.Executable();
+// same Linux+root/e2e-territory exclusion as forkDaemon's success path, skip.
+
+func TestCapturedWriter_WriteAndString(t *testing.T) {
+	var cw CapturedWriter
+	n, err := cw.Write([]byte("hello"))
+	if err != nil {
+		t.Fatalf("Write should not error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected n=5, got %d", n)
+	}
+	if cw.String() != "hello" {
+		t.Errorf("expected 'hello', got %q", cw.String())
+	}
+}
+
+func TestCapturedWriter_TruncatesPastMax(t *testing.T) {
+	var cw CapturedWriter
+	big := strings.Repeat("a", maxCapturedStderr+100)
+	n, err := cw.Write([]byte(big))
+	if err != nil {
+		t.Fatalf("Write should not error: %v", err)
+	}
+	if n != len(big) {
+		t.Errorf("Write should report full length written (io.Writer contract), got %d want %d", n, len(big))
+	}
+	if len(cw.String()) != maxCapturedStderr {
+		t.Errorf("expected buffer capped at %d bytes, got %d", maxCapturedStderr, len(cw.String()))
+	}
+}
+
+func TestCapturedWriter_MultipleWritesRespectCap(t *testing.T) {
+	var cw CapturedWriter
+	half := strings.Repeat("b", maxCapturedStderr/2+10)
+	if _, err := cw.Write([]byte(half)); err != nil {
+		t.Fatalf("first Write should not error: %v", err)
+	}
+	if _, err := cw.Write([]byte(half)); err != nil {
+		t.Fatalf("second Write should not error: %v", err)
+	}
+	if len(cw.String()) != maxCapturedStderr {
+		t.Errorf("expected buffer capped at %d bytes across writes, got %d", maxCapturedStderr, len(cw.String()))
+	}
+}
