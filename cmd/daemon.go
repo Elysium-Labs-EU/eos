@@ -391,6 +391,18 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra
 	return daemonCmd
 }
 
+// envWithout returns env with any entries for key removed.
+func envWithout(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Stay in sync with "startDaemonProcess"
 func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	exePath, err := os.Executable()
@@ -419,6 +431,12 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 			return fmt.Errorf("resolving user credentials: %w", err)
 		}
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+
+		// The child drops to u's uid/gid, but without this it would inherit
+		// root's HOME from the parent's environment (sudo sets HOME=/root).
+		// os.UserHomeDir() and friends would then resolve paths under /root,
+		// which the dropped-privilege child can't even stat (root's home is 0700).
+		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+u.HomeDir)
 	}
 
 	if err := cmd.Start(); err != nil {

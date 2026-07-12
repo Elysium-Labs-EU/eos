@@ -31,10 +31,18 @@ func e2eTempDir(t *testing.T) string {
 // buildEosBinary compiles the eos binary into /tmp and returns its path.
 func buildEosBinary(t *testing.T) string {
 	t.Helper()
-	binPath := filepath.Join(e2eTempDir(t), "eos")
+	dir := e2eTempDir(t)
+	binPath := filepath.Join(dir, "eos")
 	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, "codeberg.org/Elysium_Labs/eos").CombinedOutput()
 	if err != nil {
 		t.Fatalf("build eos binary: %v\n%s", err, out)
+	}
+	// os.MkdirTemp defaults to 0700. When this test runs as root (integration
+	// tests on Linux), the daemon child drops to a non-root uid before exec —
+	// it needs traversal into dir to run the binary, same as a real install
+	// path (e.g. /usr/local/bin) that's world-executable.
+	if err := os.Chmod(dir, 0755); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("chmod bin dir: %v", err)
 	}
 	return binPath
 }
@@ -116,9 +124,16 @@ func killDaemonPID(baseDir string) {
 }
 
 // writeTestService creates a service dir with a minimal service.yaml and returns the dir path.
+// The dir is made world-traversable: the daemon child (started as root here) drops to a
+// non-root uid before reading service.yaml, same as it would reading a real user's service dir.
 func writeTestService(t *testing.T, name string) string {
 	t.Helper()
-	dir := t.TempDir()
+	// e2eTempDir (not t.TempDir()) so chmod below only needs to cover one
+	// level: t.TempDir() nests under an also-0700 per-test parent dir.
+	dir := e2eTempDir(t)
+	if err := os.Chmod(dir, 0755); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("chmod service dir: %v", err)
+	}
 	yaml := fmt.Sprintf("name: %q\ncommand: \"/bin/sleep 3600\"\n", name)
 	if err := os.WriteFile(filepath.Join(dir, "service.yaml"), []byte(yaml), 0644); err != nil { //nolint:gosec // test fixture
 		t.Fatalf("write service.yaml: %v", err)
