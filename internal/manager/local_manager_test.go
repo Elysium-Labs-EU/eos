@@ -670,3 +670,121 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 		t.Errorf("expected PGID 1002 (newer), got %d", entry.PGID)
 	}
 }
+
+func TestUpdateServiceCatalogEntry(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := db.RegisterService(t.Context(), "update-catalog-svc", tempDir, "service.yaml"); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	newDir := filepath.Join(tempDir, "moved")
+	if err := mgr.UpdateServiceCatalogEntry("update-catalog-svc", newDir, "new-service.yaml"); err != nil {
+		t.Fatalf("UpdateServiceCatalogEntry: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry("update-catalog-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.DirectoryPath != newDir {
+		t.Errorf("expected DirectoryPath %q, got %q", newDir, entry.DirectoryPath)
+	}
+	if entry.ConfigFileName != "new-service.yaml" {
+		t.Errorf("expected ConfigFileName 'new-service.yaml', got %q", entry.ConfigFileName)
+	}
+}
+
+func TestUpdateServiceCatalogEntry_unregisteredService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := mgr.UpdateServiceCatalogEntry("no-such-service", tempDir, "service.yaml"); err == nil {
+		t.Fatal("expected error updating an unregistered service")
+	}
+}
+
+func TestWaitPipes(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	// No pipes started: WaitPipes must return immediately rather than block.
+	done := make(chan struct{})
+	go func() {
+		mgr.WaitPipes()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitPipes blocked with no pending pipes")
+	}
+}
+
+func TestRestartService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "sleep 30",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("could not create test-files directory: %v", mkdirErr)
+	}
+
+	if writeErr := os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); writeErr != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", writeErr)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("restart-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if addErr := manager.AddServiceCatalogEntry(serviceCatalogEntry); addErr != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", addErr)
+	}
+
+	originalPGID, err := manager.StartService("restart-service")
+	if err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+	if originalPGID == 0 {
+		t.Fatal("Starting service should return a non-zero PGID, got 0")
+	}
+
+	newPGID, err := manager.RestartService("restart-service", time.Second, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("RestartService should not error: %v", err)
+	}
+	if newPGID == 0 {
+		t.Fatal("RestartService should return a non-zero PGID, got 0")
+	}
+	if !isProcessAlive(newPGID) {
+		t.Errorf("expected restarted process group %d to be alive", newPGID)
+	}
+	_ = syscall.Kill(-newPGID, syscall.SIGKILL)
+}
+
+func TestRestartService_notRegistered(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	_, err := manager.RestartService("no-such-service", time.Second, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error restarting an unregistered service")
+	}
+}
