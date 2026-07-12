@@ -52,6 +52,30 @@ jobs:
       #   env:
       #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  integration-test:
+    name: Integration Test (root + systemd)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      # Root + systemd as PID 1 are required: these tests fork/exec with a
+      # dropped-privilege child and manage real systemd units (under an
+      # isolated unit name, never the real "eos" unit — see
+      # cmd/system_integration_test.go). GitHub-hosted ubuntu-latest runners
+      # are full VMs with systemd, so this replicates a real install target;
+      # `go test` itself isn't run as root by default, hence the sudo.
+      - name: Run integration tests
+        run: sudo env "PATH=$PATH" go test ./cmd/... -tags integration -v -count=1
+
   verify-build:
     name: Verify Build
     runs-on: ubuntu-latest

@@ -352,6 +352,14 @@ func unitScope(userUnit bool) string {
 	return "system unit"
 }
 
+// unitName derives the systemctl unit name (e.g. "eos") from a unit filename
+// (e.g. "eos.service"). Production always uses config.SystemdTargetFileName
+// ("eos.service" -> "eos"); tests pass an isolated name so systemctl
+// enable/disable/stop calls target a throwaway unit instead of the real one.
+func unitName(systemdFile string) string {
+	return strings.TrimSuffix(systemdFile, ".service")
+}
+
 func prepareSystemUnitDir(cmd *cobra.Command, systemdDir, fullTargetName string) bool {
 	fileInfo, err := os.Stat(systemdDir)
 	if err != nil || !fileInfo.IsDir() {
@@ -472,7 +480,7 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 	return fmt.Errorf("user bus still unavailable after enabling linger — a fresh login may be required")
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) { //nolint:unparam // systemdFile varies in integration tests (excluded by build tag)
+func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -546,8 +554,9 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	}
 	helpers.Debugf(cmd, verbose, "daemon-reload output: %s", strings.TrimSpace(string(out)))
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "enable", "eos"), " "))
-	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "enable", "eos")...)
+	unit := unitName(systemdFile)
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "enable", unit), " "))
+	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "enable", unit)...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return
@@ -583,8 +592,8 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		}
 	}
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "start", "eos"), " "))
-	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "start", "eos")...)
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "start", unit), " "))
+	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "start", unit)...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
 		return
@@ -631,16 +640,17 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		}
 	}
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "stop", "eos"), " "))
-	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "stop", "eos")...)
+	unit := unitName(daemonConfig.SystemdTargetFileName)
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "stop", unit), " "))
+	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "stop", unit)...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", unitKind, string(out)))
 		return
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" stopped")
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "disable", "eos"), " "))
-	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "disable", "eos")...)
+	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "disable", unit), " "))
+	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "disable", unit)...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", unitKind, string(out)))
 		return

@@ -38,6 +38,29 @@ jobs:
       - name: Run tests
         run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
+  integration-test:
+    name: Integration Test (root + systemd)
+    runs-on: codeberg-small
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      # codeberg-small runs jobs as root already, so no sudo needed here.
+      # Tests that also require systemd as PID 1 (cmd/system_integration_test.go,
+      # cmd/daemon_e2e_test.go) self-skip via requireSystemd() if this runner's
+      # container doesn't have it — safe either way.
+      - name: Run integration tests
+        run: go test ./cmd/... -tags integration -v -count=1
+
   bench:
     name: Benchmarks
     runs-on: codeberg-small

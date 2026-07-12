@@ -30,6 +30,12 @@ func requireSystemd(t *testing.T) {
 	}
 }
 
+// testUnitName is a throwaway systemd unit name distinct from the real "eos"
+// unit these tests must not touch. The unit file must live in a real systemd
+// search path (config.SystemdTargetDir) for "systemctl enable/stop <name>" to
+// find it by name — a tempdir doesn't work, systemd doesn't search it.
+const testUnitName = "eos-integration-test"
+
 func TestStartupCmdIntegration(t *testing.T) {
 	requireSystemd(t)
 
@@ -47,62 +53,56 @@ func TestStartupCmdIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(binPath) })
 
-	systemdDir := filepath.Join(tempDir, "systemd") + "/"
-	if err := os.MkdirAll(systemdDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	unitFile := systemdDir + "eos-test.service"
+	systemdDir := config.SystemdTargetDir
+	systemdFile := testUnitName + ".service"
+	unitFile := filepath.Join(systemdDir, systemdFile)
 
 	c, outBuf, errBuf := makeTestCmd(t)
 	// confirm unit file, decline restart (so we don't actually switch daemon mode)
 	setStdin(c, "y\nn\n")
 
-	var calls []string
 	startupCmd(
 		t.Context(), c, installDir,
 		&config.StandaloneDaemonConfig{
 			PIDFile:    filepath.Join(tempDir, "eos.pid"),
 			SocketPath: filepath.Join(tempDir, "eos.sock"),
 		},
-		systemdDir, "eos-test.service", false, false,
+		systemdDir, systemdFile, false, false,
 		detectActiveSystemRuntime, execRunCmd,
 	)
+
+	// Cleanup: disable and remove the test unit, regardless of assertion outcome.
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = execRunCmd(ctx, "systemctl", "disable", testUnitName)
+		_ = os.Remove(unitFile)
+		_, _ = execRunCmd(ctx, "systemctl", "daemon-reload")
+	})
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())
 	}
-	if !strings.Contains(outBuf.String(), "eos enabled, will start on boot") {
+	if !strings.Contains(outBuf.String(), "system unit enabled, eos will start on boot") {
 		t.Errorf("expected enabled message, got:\n%s", outBuf.String())
 	}
-
-	_ = calls // real systemctl was used
 
 	// Verify the unit file was written and enabled.
 	if _, err := os.Stat(unitFile); os.IsNotExist(err) {
 		t.Error("unit file was not written")
 	}
-
-	// Cleanup: disable and remove the test unit.
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = execRunCmd(ctx, "systemctl", "disable", "eos-test")
-		_ = os.Remove(unitFile)
-		_, _ = execRunCmd(ctx, "systemctl", "daemon-reload")
-	})
+	if out, err := execRunCmd(context.Background(), "systemctl", "is-enabled", testUnitName); err != nil || strings.TrimSpace(string(out)) != "enabled" {
+		t.Errorf("expected %s to be enabled, got %q (err: %v)", testUnitName, out, err)
+	}
 }
 
 func TestUnstartupCmdIntegration(t *testing.T) {
 	requireSystemd(t)
 
-	tempDir := t.TempDir()
-	systemdDir := filepath.Join(tempDir, "systemd") + "/"
-	if err := os.MkdirAll(systemdDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	unitFile := systemdDir + "eos-test.service"
+	systemdDir := config.SystemdTargetDir
+	systemdFile := testUnitName + ".service"
+	unitFile := filepath.Join(systemdDir, systemdFile)
 	unitContent := `[Unit]
-Description=eos test integration service
+Description=eos integration test unit (throwaway, safe to remove)
 [Service]
 Type=simple
 ExecStart=/bin/sleep 3600
@@ -116,11 +116,11 @@ WantedBy=multi-user.target`
 	if out, err := execRunCmd(ctx, "systemctl", "daemon-reload"); err != nil {
 		t.Fatalf("daemon-reload: %v\n%s", err, out)
 	}
-	if out, err := execRunCmd(ctx, "systemctl", "enable", "eos-test"); err != nil {
-		t.Fatalf("enable eos-test: %v\n%s", err, out)
+	if out, err := execRunCmd(ctx, "systemctl", "enable", testUnitName); err != nil {
+		t.Fatalf("enable %s: %v\n%s", testUnitName, err, out)
 	}
 	t.Cleanup(func() {
-		_, _ = execRunCmd(context.Background(), "systemctl", "disable", "eos-test")
+		_, _ = execRunCmd(context.Background(), "systemctl", "disable", testUnitName)
 		_ = os.Remove(unitFile)
 		_, _ = execRunCmd(context.Background(), "systemctl", "daemon-reload")
 	})
@@ -131,7 +131,7 @@ WantedBy=multi-user.target`
 
 	unstartupCmd(ctx, c, config.SystemdConfig{
 		SystemdTargetDir:      systemdDir,
-		SystemdTargetFileName: "eos-test.service",
+		SystemdTargetFileName: systemdFile,
 	}, false, false, detectActiveSystemRuntime, execRunCmd)
 
 	if errBuf.Len() > 0 {
