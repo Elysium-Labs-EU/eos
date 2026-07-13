@@ -265,6 +265,9 @@ func (s *sinkProcess) pump(ctx context.Context, w *bufio.Writer) error {
 		if err := writeRecord(w, r, s.service); err != nil {
 			return fmt.Errorf("writing record to plugin stdin: %w", err)
 		}
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("flushing record to plugin stdin: %w", err)
+		}
 	}
 }
 
