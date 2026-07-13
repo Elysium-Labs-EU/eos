@@ -140,7 +140,7 @@ func TestUninstallCmd(t *testing.T) {
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&errBuf)
 
-		uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, &fakeDaemonController{}, t.TempDir(), t.TempDir(), true)
+		_ = uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, &fakeDaemonController{}, t.TempDir(), t.TempDir(), true)
 
 		if !strings.Contains(errBuf.String(), "getting all service instances") {
 			t.Errorf("expected instance-fetch error, got: %s", errBuf.String())
@@ -157,7 +157,7 @@ func TestUninstallCmd(t *testing.T) {
 		cmd.SetErr(&errBuf)
 		cmd.Flags().Bool("verbose", false, "")
 
-		uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, t.TempDir(), t.TempDir(), true)
+		_ = uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, t.TempDir(), t.TempDir(), true)
 
 		if !strings.Contains(errBuf.String(), "stopping daemon: stop failed") {
 			t.Errorf("expected daemon stop error, got: %s", errBuf.String())
@@ -179,7 +179,7 @@ func TestUninstallCmd(t *testing.T) {
 		cmd.SetErr(&bytes.Buffer{})
 		cmd.Flags().Bool("verbose", false, "")
 
-		uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, installDir, baseDir, true)
+		_ = uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, installDir, baseDir, true)
 
 		if !strings.Contains(out.String(), "uninstall complete") {
 			t.Errorf("expected uninstall to complete, got: %s", out.String())
@@ -201,7 +201,7 @@ func TestUninstallCmd(t *testing.T) {
 		cmd.SetIn(strings.NewReader("n\n"))
 		cmd.Flags().Bool("verbose", false, "")
 
-		uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, t.TempDir(), t.TempDir(), false)
+		_ = uninstallCmd(cmd, func() manager.ServiceManager { return mgr }, func() *config.SystemConfig { return &config.SystemConfig{} }, fake, t.TempDir(), t.TempDir(), false)
 
 		if strings.Contains(out.String(), "uninstall complete") {
 			t.Errorf("expected uninstall to abort, got: %s", out.String())

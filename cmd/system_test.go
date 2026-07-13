@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
@@ -70,7 +72,7 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
 		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -83,7 +85,7 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
 		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
@@ -97,7 +99,7 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
 	}, tempDir+"/", "eos.service", false, false,
@@ -118,7 +120,7 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
-	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
 	}, tempDir+"/", "eos.service", false, true,
@@ -150,7 +152,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	setStdin(c, "y\ny\n")
 
 	var calls []string
-	startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
 	}, tempDir+"/", "eos.service", false, false,
@@ -169,7 +171,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -184,7 +186,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -206,7 +208,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
-	unstartupCmd(t.Context(), c, config.SystemdConfig{
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
 	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
@@ -430,8 +432,8 @@ func TestSystemUpdateCommand(t *testing.T) {
 	cmd.SetArgs([]string{"system", "update"})
 
 	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v\n", err)
 	}
 
 	output := errBuf.String()
@@ -511,8 +513,8 @@ func TestSystemUpdateWithInvalidVersionCommand(t *testing.T) {
 	cmd.SetArgs([]string{"system", "update"})
 
 	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("preparing update test - should not return an error, got: %v\n", err)
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v\n", err)
 	}
 
 	output := errBuf.String()
@@ -551,7 +553,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		}, nil
 	}
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
+	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
 
 	output := errBuf.String()
 
@@ -622,7 +624,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	setStdin(cmd, "y\ny\n")
 
-	updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
+	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 
 	output := outBuf.String()
 

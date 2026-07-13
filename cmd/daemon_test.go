@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
@@ -292,8 +293,8 @@ func TestDaemonStartError(t *testing.T) {
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"start"})
 
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("unexpected cobra error: %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "boom") {
 		t.Errorf("expected error message in stderr, got: %s", errOut.String())
