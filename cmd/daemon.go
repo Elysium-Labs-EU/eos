@@ -288,7 +288,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 
 			if detach {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("-> check daemon service status"))
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("to check daemon service status"))
 			}
 			return nil
 		},
@@ -338,7 +338,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 				return helpers.ErrCommandFailed
 			}
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon removed")
-			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("-> undo systemd startup"))
+			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("to undo systemd startup"))
 			return nil
 		},
 	}

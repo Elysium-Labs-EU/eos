@@ -31,7 +31,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s\n\n", ui.TextBold.Render("eos - Test version"))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
 		},
 	}
 
@@ -138,7 +138,7 @@ func newRootCmd() *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s %s\n\n", ui.TextBold.Render("eos"), ui.TextMuted.Render(buildinfo.GetVersionOnly()))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
 		},
 
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
