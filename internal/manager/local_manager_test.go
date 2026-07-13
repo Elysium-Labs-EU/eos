@@ -192,6 +192,82 @@ func TestStartService(t *testing.T) {
 	}
 }
 
+func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	const deadPGID = 999994
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Starting cleanup", deadPGID)
+	}
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	err = os.MkdirAll(fullDirPath, 0755)
+	if err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	// Simulate a daemon crash mid-start: a Starting entry whose PGID is dead.
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, "test-service", types.ProcessStateStarting)
+	if err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	pgid, err := manager.StartService("test-service")
+	if err != nil {
+		t.Fatalf("StartService should ignore a stale Starting entry with a dead PGID, got error: %v", err)
+	}
+	if pgid == 0 {
+		t.Fatal("StartService should return a non-zero PGID, got 0")
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	var staleEntry *types.ProcessHistory
+	for i := range entries {
+		if entries[i].PGID == deadPGID {
+			staleEntry = &entries[i]
+		}
+	}
+	if staleEntry == nil {
+		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+	}
+	if staleEntry.State != types.ProcessStateFailed {
+		t.Errorf("expected stale entry to be marked Failed, got state %q", staleEntry.State)
+	}
+}
+
 func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
