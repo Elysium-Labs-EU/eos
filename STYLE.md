@@ -36,6 +36,24 @@ isManaged := config.IsSystemdManaged(...)   // I/O at boundary
 cfg := newDaemonConfig(baseDir, isManaged)  // pure builder, no I/O inside
 ```
 
+**One fact, one derivation site — ambient lookups are hidden dependencies.**
+`os.Getenv`, `os.Getuid`, `time.Now()`: callable from anywhere, no signature
+forces callers through a single path. Same danger as a package-level var
+(see Avoid below), just easier to miss because it looks like "just calling
+stdlib," not "reading shared state." Two independently-correct-looking
+derivations of the same fact can still silently diverge from each other —
+being at the boundary isn't enough if there's more than one boundary doing it.
+```go
+// Wrong: two call sites each derive "who is this process" themselves
+func GetBaseDir() string    { if os.Getuid() == 0 { ... } }   // site A
+func EffectiveUser() *User  { if os.Geteuid() == 0 { ... } }  // site B, drifted
+
+// Right: one resolver; everyone else takes the resolved value
+u, err := userutil.EffectiveUser()
+baseDir := filepath.Join(u.HomeDir, ".eos")
+```
+Real instance: [Elysium_Labs/eos#97](https://codeberg.org/Elysium_Labs/eos/issues/97).
+
 **Explicit composition, not embedding.**
 ```go
 type DaemonConfig struct {
@@ -116,3 +134,4 @@ case <-t.C:
 | `*SmallStruct` with no nil case | use value |
 | Deep embedding | obscures data origin |
 | Nil pointer as "empty" config | use zero value |
+| Ambient lookup (env, uid, time.Now) re-derived at multiple sites | each copy can silently diverge |
