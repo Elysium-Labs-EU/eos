@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"errors"
+
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
@@ -49,6 +51,10 @@ Exit codes:
 
 			serviceFile, _ := cmd.Flags().GetString("file")
 			once, _ := cmd.Flags().GetBool("once")
+
+			if serviceFile == "" && len(args) == 0 {
+				return helpers.WriteJSONErr(cmd, errors.New("must specify either -f <file> or a service name"))
+			}
 
 			var serviceName string
 

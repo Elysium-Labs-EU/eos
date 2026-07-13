@@ -4,7 +4,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
 
@@ -117,21 +116,17 @@ func GetBaseDir() (string, error) {
 		return override, nil
 	}
 
-	// When invoked via sudo, use the original user's home directory
-	// instead of root's, so data always lives in the invoking user's home.
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		u, err := user.Lookup(sudoUser)
-		if err == nil {
-			return filepath.Join(u.HomeDir, fmt.Sprintf(".%s", Name)), nil
-		}
-	}
-
-	homeDir, err := os.UserHomeDir()
+	// Delegate the sudo/root distinction to userutil.EffectiveUser(), the
+	// single authority for this check. It already handles the case that broke
+	// GetBaseDir before: `sudo -u <non-root-user>` also sets SUDO_USER even
+	// though the process isn't running as root, and honoring it there would
+	// redirect data to the invoking user's home instead of the target user's.
+	u, err := userutil.EffectiveUser()
 	if err != nil {
 		return "", fmt.Errorf("could not determine base directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, fmt.Sprintf(".%s", Name)), nil
+	return filepath.Join(u.HomeDir, fmt.Sprintf(".%s", Name)), nil
 }
 
 func CreateBaseDir() (string, error) {

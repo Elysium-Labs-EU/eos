@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"github.com/spf13/cobra"
@@ -77,7 +76,7 @@ Exit codes:
 			mgr := getManager()
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
-			if errors.Is(err, database.ErrServiceNotFound) {
+			if errors.Is(err, manager.ErrServiceNotRegistered) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
 			}
 			if err != nil {
@@ -154,7 +153,7 @@ func compileProcessInfoObject(processEntry *types.ProcessHistory) *apiInfoProces
 		processInfo.Uptime = *uptime
 	}
 
-	memory := helpers.DetermineProcessMemoryInMbAPI(processEntry.RssMemoryKb)
+	memory := helpers.DetermineProcessMemoryInMbAPI(processEntry.RssMemoryKb, processInfo.Status)
 	if memory != nil {
 		processInfo.MemoryMb = *memory
 	}

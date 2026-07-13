@@ -24,6 +24,9 @@ func TestGetBaseDir_EnvOverride(t *testing.T) {
 func TestGetBaseDir_SudoUser(t *testing.T) {
 	t.Setenv("EOS_BASE_DIR", "")
 
+	// Uses the current user as its own SUDO_USER, so this only proves the
+	// SUDO_USER branch is taken and resolves via user.Lookup; it cannot
+	// verify resolution to a different user's home directory.
 	u, err := user.Current()
 	if err != nil {
 		t.Skip("cannot determine current user")
@@ -37,6 +40,32 @@ func TestGetBaseDir_SudoUser(t *testing.T) {
 	want := filepath.Join(u.HomeDir, "."+Name)
 	if got != want {
 		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestGetBaseDir_SudoUserIgnoredWhenNotRoot(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("cannot test non-root SUDO_USER guard when actually running as root")
+	}
+	t.Setenv("EOS_BASE_DIR", "")
+
+	// `sudo -u <non-root-user>` also sets SUDO_USER to the invoking user, even
+	// though the process is not running as root. GetBaseDir must ignore
+	// SUDO_USER in that case and resolve to the current process's own home,
+	// not the invoking user's — otherwise data lands in the wrong home dir.
+	t.Setenv("SUDO_USER", "someone-else")
+
+	got, err := GetBaseDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("cannot determine home dir: %v", err)
+	}
+	want := filepath.Join(homeDir, "."+Name)
+	if got != want {
+		t.Errorf("expected %q (own home, SUDO_USER ignored), got %q", want, got)
 	}
 }
 

@@ -91,10 +91,6 @@ func TestServiceCatalogCRUD(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when getting deleted service, got nil")
 	}
-	_, err = db.GetServiceCatalogEntry(t.Context(), serviceName)
-	if err == nil {
-		t.Error("Expected error when getting deleted service, got nil")
-	}
 	if !errors.Is(err, database.ErrServiceNotFound) {
 		t.Errorf("Expected ErrServiceNotFound, got: %v", err)
 	}

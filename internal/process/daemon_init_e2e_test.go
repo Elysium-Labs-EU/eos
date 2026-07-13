@@ -64,9 +64,6 @@ func readDaemonLog(t *testing.T, standalone *config.StandaloneDaemonConfig) []ma
 	return entries
 }
 
-// TestNewStandaloneDaemon_E2E_VerboseOn verifies that debug-level lifecycle entries
-// (PID written, socket listening, database connected) appear in the log file when
-// verbose=true.
 func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T) {
 	sockDir := shortTempDir(t)
 	_, _, dbDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -76,7 +73,7 @@ func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false, true /* verbose */, dbDir, standalone)
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, true /* verbose */, dbDir, standalone)
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}
@@ -113,8 +110,6 @@ func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T
 	}
 }
 
-// TestNewStandaloneDaemon_E2E_VerboseOff verifies no DEBUG entries appear when
-// verbose=false.
 func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 	sockDir := shortTempDir(t)
 	_, _, dbDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -124,7 +119,7 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false, false /* verbose */, dbDir, standalone)
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone)
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}

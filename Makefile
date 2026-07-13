@@ -1,5 +1,7 @@
 .PHONY: help dev build install test test-linux test-linux-single test-install-orb test-integration lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
+.DEFAULT_GOAL := help
+
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BENCHMARKS_DIR := __benchmarks__

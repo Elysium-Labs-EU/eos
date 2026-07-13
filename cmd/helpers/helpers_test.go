@@ -59,6 +59,33 @@ func TestDetermineUptimeHuman(t *testing.T) {
 	}
 }
 
+func TestDetermineUptimeAPI(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		input *types.ProcessHistory
+		name  string
+		nilOk bool
+	}{
+		{name: "nil", input: nil, nilOk: true},
+		{name: "stopped", input: &types.ProcessHistory{State: types.ProcessStateStopped}, nilOk: true},
+		{name: "failed", input: &types.ProcessHistory{State: types.ProcessStateFailed}, nilOk: true},
+		{name: "unknown", input: &types.ProcessHistory{State: types.ProcessStateUnknown}, nilOk: true},
+		{name: "running no startedAt", input: &types.ProcessHistory{State: types.ProcessStateRunning}, nilOk: true},
+		{name: "running with startedAt", input: &types.ProcessHistory{State: types.ProcessStateRunning, StartedAt: &now}, nilOk: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetermineUptimeAPI(tt.input)
+			if tt.nilOk && got != nil {
+				t.Errorf("expected nil, got %q", *got)
+			}
+			if !tt.nilOk && got == nil {
+				t.Error("expected non-nil uptime string, got nil")
+			}
+		})
+	}
+}
+
 func TestDetermineProcessMemoryInMbHuman(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -83,13 +110,19 @@ func TestDetermineProcessMemoryInMbHuman(t *testing.T) {
 }
 
 func TestDetermineProcessMemoryInMbAPI(t *testing.T) {
-	if got := DetermineProcessMemoryInMbAPI(0); got != nil {
+	if got := DetermineProcessMemoryInMbAPI(0, types.ServiceStatusRunning); got != nil {
 		t.Errorf("expected nil for 0 kb, got %v", got)
 	}
-	if got := DetermineProcessMemoryInMbAPI(-1); got != nil {
+	if got := DetermineProcessMemoryInMbAPI(-1, types.ServiceStatusRunning); got != nil {
 		t.Errorf("expected nil for negative kb, got %v", got)
 	}
-	got := DetermineProcessMemoryInMbAPI(1024)
+	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusStopped); got != nil {
+		t.Errorf("expected nil for stopped status, got %v", got)
+	}
+	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusFailed); got != nil {
+		t.Errorf("expected nil for failed status, got %v", got)
+	}
+	got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusRunning)
 	if got == nil {
 		t.Fatal("expected non-nil for 1024 kb")
 	}

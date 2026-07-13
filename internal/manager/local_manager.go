@@ -283,7 +283,23 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 			return 0, fmt.Errorf("service already running with PGID %d", processPGID)
 		}
 		if state == types.ProcessStateStarting {
-			return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
+			if isProcessAlive(processPGID) {
+				return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
+			}
+			// Stale Starting entry: the daemon likely crashed or the machine
+			// rebooted mid-start, so the process behind this PGID is gone but the
+			// row was never transitioned out of Starting (normally the health
+			// monitor's checkStartProcess/markProcessFailed does this, but it
+			// never got the chance to run). Mark it Failed so status displays
+			// don't report this service as perpetually "starting", then proceed
+			// as if this entry didn't exist.
+			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, processPGID, database.ProcessHistoryUpdate{
+				State:     new(types.ProcessStateFailed),
+				StoppedAt: new(time.Now()),
+			}); updateErr != nil {
+				m.logger.Error("failed to mark stale starting entry as failed", "service", name, "pgid", processPGID, "error", updateErr)
+			}
+			continue
 		}
 	}
 
@@ -495,7 +511,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
 	if len(stopResult.Errored) > 0 {
-		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
+		return 0, fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
 	}
 
 	restartCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config

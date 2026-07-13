@@ -29,7 +29,7 @@ func TestAPIUpdateRegisteredService(t *testing.T) {
 		t.Fatalf("failed to register: %v\n%s", err, errBuf.String())
 	}
 
-	// Update with same path (simulates moving service.yaml — valid path)
+	// Update pointing at the same path; exercises the success path, not a move
 	outBuf.Reset()
 	errBuf.Reset()
 	c = newTestRootCmd(mgr)

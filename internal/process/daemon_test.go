@@ -20,7 +20,8 @@ func TestAllMethodsHandled(t *testing.T) {
 			req := types.DaemonRequest{Method: method, Args: nil}
 			resp := executeRequest(manager, req)
 
-			// Should NOT get "unknown method" error
+			// Every method in ValidMethods must be a case in executeRequest's
+			// switch; falling through to the default returns this error string.
 			if !resp.Success && strings.Contains(resp.Error, "unknown method") {
 				t.Errorf("Method %s not handled in switch", method)
 			}
@@ -101,6 +102,9 @@ func TestReconcileOrphans_ActiveStates(t *testing.T) {
 	}
 }
 
+// TestReconcileOrphans_Mixed runs terminal and active states side by side to
+// confirm reconcileOrphans only touches the active ones, not just each state
+// in isolation.
 func TestReconcileOrphans_Mixed(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
@@ -143,9 +147,6 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 	}
 }
 
-// func TestStartDaemon(t *testing.T) {}
-// func TestStopDaemon(t *testing.T) {}
-// func TestStatusDaemon(t *testing.T) {}
-// func TestHandleIncomingCommands(t *testing.T) {}
-// func TestHandleConnection(t *testing.T) {}
-// func TestSendErrorResponse(t *testing.T) {}
+// TODO: no test coverage for handleIncomingCommands, handleConnection, or
+// sendErrorResponse (all in daemon.go) — they need a real net.Listener/net.Conn
+// and aren't exercised elsewhere.

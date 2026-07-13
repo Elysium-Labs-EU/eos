@@ -21,18 +21,20 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Example:           `  eos info cms`,
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Args:              cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if errors.Is(err, database.ErrServiceNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
@@ -153,5 +155,6 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			cmd.Println("")
+			return nil
 		}}
 }

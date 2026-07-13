@@ -39,6 +39,29 @@ func TestAPIAddValidYaml(t *testing.T) {
 	}
 }
 
+func TestAPIAddInvalidConfigRejected(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupAPICmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	testFile.Command = ""
+	yamlPath := writeServiceFiles(t, tempDir, testFile)
+
+	cmd.SetArgs([]string{"api", "add", yamlPath})
+	err := cmd.ExecuteContext(t.Context())
+
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed for a config with no command, got: %v\n%s", err, errBuf.String())
+	}
+
+	var errResult map[string]string
+	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
+	}
+	if errResult["error"] == "" {
+		t.Errorf("expected non-empty error, got: %+v", errResult)
+	}
+}
+
 func TestAPIAddAlreadyRegistered(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -46,7 +69,6 @@ func TestAPIAddAlreadyRegistered(t *testing.T) {
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
-	// First add
 	c := newTestRootCmd(mgr)
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
@@ -56,7 +78,6 @@ func TestAPIAddAlreadyRegistered(t *testing.T) {
 		t.Fatalf("first add failed: %v\n%s", err, errBuf.String())
 	}
 
-	// Second add — same service on same manager
 	c = newTestRootCmd(mgr)
 	outBuf.Reset()
 	errBuf.Reset()
@@ -97,6 +118,9 @@ func TestAPIAddBadPath(t *testing.T) {
 	}
 }
 
+// TestAPIAddDirectory covers the path where the argument resolves to a
+// directory rather than a yaml file directly; parseServiceFile must locate
+// service.yaml inside it.
 func TestAPIAddDirectory(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
 

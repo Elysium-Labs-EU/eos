@@ -19,39 +19,42 @@ func newStartCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Deprecated:        "use the new run command instead. This command will be removed in v0.0.12.",
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
 		Args:              cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if !exists {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
-				return
+				return helpers.ErrCommandFailed
 			}
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if errors.Is(err, database.ErrServiceNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			pgid, err := mgr.StartService(registeredService.Name)
 
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
 			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 			cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
+			return nil
 		}}
 }

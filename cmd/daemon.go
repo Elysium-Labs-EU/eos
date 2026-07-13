@@ -263,12 +263,14 @@ func buildDaemonSubcmds(daemonCmd *cobra.Command, getCtrl func() DaemonControlle
 If a systemd unit file is installed, delegates to "systemctl start eos" (requires root).
 
 Otherwise, starts the daemon directly. By default runs in the foreground and streams output to the console. Pass --detach (-d) to fork the process into a new session in the background; control returns once the PID file is written (timeout: 5s).`,
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
 			detach, err := cmd.Flags().GetBool("detach")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
 
@@ -281,13 +283,14 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole, verbose); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if detach {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("-> check daemon service status"))
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("to check daemon service status"))
 			}
+			return nil
 		},
 	}
 	startCmd.Flags().BoolP("detach", "d", false, "run daemon in background")
@@ -298,39 +301,45 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 	}
 
 	stopCmd := &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the running daemon",
-		Long:  "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
-		Run: func(cmd *cobra.Command, args []string) {
+		Use:           "stop",
+		Short:         "Stop the running daemon",
+		Long:          "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
 			killed, err := ctrl.Stop(cmd.Context(), cmd, verbose)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if !killed {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
-				return
+				return nil
 			}
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+			return nil
 		},
 	}
 
 	removeCmd := &cobra.Command{
-		Use:   "remove",
-		Short: "Remove a stopped daemon",
-		Long:  "Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.",
-		Run: func(cmd *cobra.Command, args []string) {
+		Use:           "remove",
+		Short:         "Remove a stopped daemon",
+		Long:          "Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
 			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "removing daemon...")
 			if err := ctrl.Remove(); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing daemon: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon removed")
-			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("-> undo systemd startup"))
+			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("to undo systemd startup"))
+			return nil
 		},
 	}
 
@@ -338,9 +347,10 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Use:   "info",
 		Short: "Show daemon status and configuration",
 		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
 			ctrl.Info(cmd)
+			return nil
 		},
 	}
 
@@ -350,9 +360,10 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		Use:   "logs",
 		Short: "View daemon log output",
 		Long:  "Display or stream the daemon's log file. Defaults to the last 300 lines. Use --follow to tail in real time, --lines to control history depth. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
 			ctrl.Logs(cmd, lines, follow)
+			return nil
 		},
 	}
 	logsCmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
@@ -391,6 +402,18 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra
 	return daemonCmd
 }
 
+// envWithout returns env with any entries for key removed.
+func envWithout(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Stay in sync with "startDaemonProcess"
 func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	exePath, err := os.Executable()
@@ -419,6 +442,12 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 			return fmt.Errorf("resolving user credentials: %w", err)
 		}
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+
+		// The child drops to u's uid/gid, but without this it would inherit
+		// root's HOME from the parent's environment (sudo sets HOME=/root).
+		// os.UserHomeDir() and friends would then resolve paths under /root,
+		// which the dropped-privilege child can't even stat (root's home is 0700).
+		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+u.HomeDir)
 	}
 
 	if err := cmd.Start(); err != nil {

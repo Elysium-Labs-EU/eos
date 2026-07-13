@@ -30,16 +30,18 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Example: `  eos status
   eos status --watch
   eos status --watch --interval 5`,
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 
 			if !watch {
 				printStatusTable(cmd, mgr)
-				return
+				return nil
 			}
 			if interval < 1 {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "--interval must be at least 1 second")
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -53,7 +55,7 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			for {
 				select {
 				case <-ctx.Done():
-					return
+					return nil
 				case <-ticker.C:
 					renderWatchFrame(cmd, mgr, interval)
 				}
@@ -68,8 +70,8 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 }
 
 func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval int) {
-	fmt.Print("\033[2J\033[H")
-	fmt.Printf("Every %ds: eos status    %s\n\n", interval, time.Now().Format("15:04:05"))
+	cmd.Print("\033[2J\033[H")
+	cmd.Printf("Every %ds: eos status    %s\n\n", interval, time.Now().Format("15:04:05"))
 	printStatusTable(cmd, mgr)
 }
 
@@ -183,5 +185,5 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 		Headers("name", "status", "pgid", "memory", "uptime", "restarts", "started", "error").
 		Rows(rows...)
 
-	fmt.Println(t)
+	cmd.Println(t)
 }

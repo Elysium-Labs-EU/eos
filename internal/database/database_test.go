@@ -445,6 +445,9 @@ func TestGetProcessHistoryEntriesByServiceName_Empty(t *testing.T) {
 	}
 }
 
+// TestUpdateProcessHistoryEntry_RoundTrip guards against a regression where
+// stopped_at was added to a SELECT query without a matching field in the
+// Scan call, silently shifting every column after it (fixed in 6dbf0e4).
 func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
@@ -496,7 +499,7 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 		t.Errorf("StartedAt: expected %v, got %v", startedAt, *entry.StartedAt)
 	}
 	if entry.StoppedAt == nil {
-		t.Error("StoppedAt: expected non-nil - this catches the column/scan mismatch bug")
+		t.Error("StoppedAt: expected non-nil")
 	} else if !entry.StoppedAt.Truncate(time.Second).Equal(stoppedAt) {
 		t.Errorf("StoppedAt: expected %v, got %v", stoppedAt, *entry.StoppedAt)
 	}
@@ -572,6 +575,9 @@ func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 	}
 }
 
+// TestUpdateProcessHistoryEntry_ConcurrentWrites verifies concurrent writers
+// don't hit SQLITE_BUSY; the connection is opened with WAL mode and a
+// busy_timeout, so writers should queue instead of failing.
 func TestUpdateProcessHistoryEntry_ConcurrentWrites(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 

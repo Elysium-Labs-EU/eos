@@ -18,27 +18,29 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		Long:              `Unregisters a service and removes its instance if one exists. Does not stop the service process if it is currently running.`,
 		Example:           `  eos remove cms    # unregisters cms; does not stop a running process`,
 		Args:              cobra.ExactArgs(1),
+		SilenceUsage:      true,
+		SilenceErrors:     true,
 		ValidArgsFunction: helpers.ServiceNameCompletions(getManager),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if !exists {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			history, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service state: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if history != nil && history.State != types.ProcessStateStopped && history.State != types.ProcessStateUnknown {
@@ -46,7 +48,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf("eos stop %s", serviceName)), ui.TextMuted.Render("→ stop it first"))
 				if !helpers.PromptConfirm(cmd, "remove anyway? (y/n):") {
 					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "remove aborted")
-					return
+					return helpers.ErrCommandFailed
 				}
 			}
 
@@ -55,18 +57,18 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service instance: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if serviceInstance != nil {
 				removedInstance, removeInstanceErr := mgr.RemoveServiceInstance(serviceName)
 				if removeInstanceErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service instance: %v", removeInstanceErr))
-					return
+					return helpers.ErrCommandFailed
 				}
 				if !removedInstance {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "unable to remove service instance")
-					return
+					return helpers.ErrCommandFailed
 				}
 				cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "service instance removed")
 			}
@@ -74,15 +76,17 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			removed, err := mgr.RemoveServiceCatalogEntry(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			if !removed {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "could not be removed")
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), "unregistered")
 			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos list"), ui.TextMuted.Render("→ view registered services"))
-		}}
+			return nil
+		},
+	}
 }

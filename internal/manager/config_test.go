@@ -10,7 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TODO: Rewrite
+// TODO: Rewrite: marshals a ServiceConfig then unmarshals it via LoadServiceConfig,
+// which mostly round-trips yaml.v3 rather than parsing a hand-written YAML file;
+// replace with a literal YAML fixture string.
 func TestLoadServiceConfig(t *testing.T) {
 	runtime := types.Runtime{
 		Type: "nodejs",
@@ -31,7 +33,7 @@ func TestLoadServiceConfig(t *testing.T) {
 
 	err = os.WriteFile(configFile, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("LoadingProjectCofnig should not error: %v", err)
+		t.Fatalf("writing test config file should not error: %v", err)
 	}
 
 	config, err := LoadServiceConfig(configFile)
@@ -49,7 +51,8 @@ func TestLoadServiceConfig(t *testing.T) {
 	}
 }
 
-// TODO: Rewrite
+// TODO: Rewrite: name promises optional fields but only sets Name/Command/Port,
+// same as TestLoadServiceConfig; should exercise EnvFile, LogSinks, MemoryLimitMb instead.
 func TestLoadServiceConfigWithOptionalFields(t *testing.T) {
 	runtime := types.Runtime{
 		Type: "nodejs",
@@ -211,5 +214,113 @@ func TestNewServiceCatalogEntryWithEmptyConfigFile(t *testing.T) {
 	_, err := NewServiceCatalogEntry("website", "./test-files", "")
 	if err == nil {
 		t.Errorf("TestNewServiceCatalogEntry should error on empty configFile")
+	}
+}
+
+func TestValidateServiceConfig_emptyPath(t *testing.T) {
+	_, errs := ValidateServiceConfig("")
+	if len(errs) == 0 {
+		t.Fatal("expected error for empty configFilePath")
+	}
+}
+
+func TestValidateServiceConfig_fileNotFound(t *testing.T) {
+	_, errs := ValidateServiceConfig("non-existent-file.yaml")
+	if len(errs) == 0 {
+		t.Fatal("expected error for non-existent file")
+	}
+}
+
+func TestValidateServiceConfig_invalidYaml(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	if err := os.WriteFile(configFile, []byte("not: valid: yaml: [["), 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	_, errs := ValidateServiceConfig(configFile)
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid yaml")
+	}
+}
+
+func TestValidateServiceConfig_missingRequiredFields(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	if err := os.WriteFile(configFile, []byte("port: 3000\n"), 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	_, errs := ValidateServiceConfig(configFile)
+	if len(errs) < 2 {
+		t.Fatalf("expected errors for missing name and command, got: %v", errs)
+	}
+}
+
+func TestValidateServiceConfig_badRuntimeAndLogSink(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	config := &types.ServiceConfig{
+		Name:    "svc",
+		Command: "./start.sh",
+		Runtime: types.Runtime{Type: "node"},
+		LogSinks: []types.LogSink{
+			{},
+		},
+	}
+	yamlData, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	if err := os.WriteFile(configFile, yamlData, 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	_, errs := ValidateServiceConfig(configFile)
+	if len(errs) < 2 {
+		t.Fatalf("expected errors for runtime and log sink, got: %v", errs)
+	}
+	foundRuntime, foundLogSink := false, false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "runtime:") {
+			foundRuntime = true
+		}
+		if strings.Contains(e.Error(), "log_sinks[0]:") {
+			foundLogSink = true
+		}
+	}
+	if !foundRuntime {
+		t.Errorf("expected a runtime error, got: %v", errs)
+	}
+	if !foundLogSink {
+		t.Errorf("expected a log_sinks[0] error, got: %v", errs)
+	}
+}
+
+func TestValidateServiceConfig_valid(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	config := &types.ServiceConfig{
+		Name:    "svc",
+		Command: "./start.sh",
+	}
+	yamlData, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	if err := os.WriteFile(configFile, yamlData, 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	cfg, errs := ValidateServiceConfig(configFile)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if cfg == nil || cfg.Name != "svc" {
+		t.Errorf("expected loaded config with name 'svc', got: %+v", cfg)
 	}
 }

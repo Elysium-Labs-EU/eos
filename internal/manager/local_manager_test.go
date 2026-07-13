@@ -17,6 +17,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Several tests below use large, arbitrary PGID constants (e.g. 999990-999993,
+// 71001-74001, 1001-1002) as stand-ins for a "dead" process group: real PGIDs on
+// a typical dev/CI machine stay well below these values, so they're unlikely to
+// collide with a live process. Since this isn't guaranteed, each such test guards
+// itself with an isProcessAlive(pgid) check and skips if the guess turned out to
+// be wrong (i.e. the PGID is actually alive).
+
 // fakeExecutor satisfies Executor without requiring runtime binaries in PATH.
 // LookPath always succeeds; CommandContext delegates to the real os/exec.
 type fakeExecutor struct{}
@@ -38,7 +45,7 @@ func TestNewManager(t *testing.T) {
 	}
 	services, err := manager.GetAllServiceCatalogEntries()
 	if err != nil {
-		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v\n", err)
+		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v", err)
 	}
 	if len(services) != 0 {
 		t.Errorf("Expected 0 services, got %d", len(services))
@@ -92,7 +99,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 		t.Fatalf("Expected error on adding the same service catalog entry twice")
 	}
 	if strings.Contains(err.Error(), "service name cannot be empty") {
-		t.Errorf("Test failed due to invalid test input, got: %v\n", err)
+		t.Errorf("Expected a duplicate-entry error, got the unrelated empty-name error: %v", err)
 	}
 
 }
@@ -155,14 +162,14 @@ func TestStartService(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
@@ -178,10 +185,86 @@ func TestStartService(t *testing.T) {
 	pgid, err := manager.StartService("test-service")
 
 	if err != nil {
-		t.Fatalf("Starting service should not error: %v\n", err)
+		t.Fatalf("Starting service should not error: %v", err)
 	}
 	if pgid == 0 {
-		t.Fatalf("Starting service should have a failed PGID, got: %v\n", err)
+		t.Fatal("Starting service should return a non-zero PGID, got 0")
+	}
+}
+
+func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	const deadPGID = 999994
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Starting cleanup", deadPGID)
+	}
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	err = os.MkdirAll(fullDirPath, 0755)
+	if err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644)
+	if err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+
+	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	if err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	// Simulate a daemon crash mid-start: a Starting entry whose PGID is dead.
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, "test-service", types.ProcessStateStarting)
+	if err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	pgid, err := manager.StartService("test-service")
+	if err != nil {
+		t.Fatalf("StartService should ignore a stale Starting entry with a dead PGID, got error: %v", err)
+	}
+	if pgid == 0 {
+		t.Fatal("StartService should return a non-zero PGID, got 0")
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	var staleEntry *types.ProcessHistory
+	for i := range entries {
+		if entries[i].PGID == deadPGID {
+			staleEntry = &entries[i]
+		}
+	}
+	if staleEntry == nil {
+		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+	}
+	if staleEntry.State != types.ProcessStateFailed {
+		t.Errorf("expected stale entry to be marked Failed, got state %q", staleEntry.State)
 	}
 }
 
@@ -208,18 +291,18 @@ func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	err = os.WriteFile(filepath.Join(fullDirPath, ".env"), nil, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the env file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the env file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
@@ -260,14 +343,14 @@ func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
 	err = os.MkdirAll(fullDirPath, 0755)
 
 	if err != nil {
-		t.Fatalf("could not create test-files directory: %v\n", err)
+		t.Fatalf("could not create test-files directory: %v", err)
 		return
 	}
 
 	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
 	err = os.WriteFile(fullPathYaml, yamlData, 0644)
 	if err != nil {
-		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
 	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
@@ -661,5 +744,123 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 	}
 	if entry.PGID != 1002 {
 		t.Errorf("expected PGID 1002 (newer), got %d", entry.PGID)
+	}
+}
+
+func TestUpdateServiceCatalogEntry(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := db.RegisterService(t.Context(), "update-catalog-svc", tempDir, "service.yaml"); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	newDir := filepath.Join(tempDir, "moved")
+	if err := mgr.UpdateServiceCatalogEntry("update-catalog-svc", newDir, "new-service.yaml"); err != nil {
+		t.Fatalf("UpdateServiceCatalogEntry: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry("update-catalog-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.DirectoryPath != newDir {
+		t.Errorf("expected DirectoryPath %q, got %q", newDir, entry.DirectoryPath)
+	}
+	if entry.ConfigFileName != "new-service.yaml" {
+		t.Errorf("expected ConfigFileName 'new-service.yaml', got %q", entry.ConfigFileName)
+	}
+}
+
+func TestUpdateServiceCatalogEntry_unregisteredService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := mgr.UpdateServiceCatalogEntry("no-such-service", tempDir, "service.yaml"); err == nil {
+		t.Fatal("expected error updating an unregistered service")
+	}
+}
+
+func TestWaitPipes(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	// No pipes started: WaitPipes must return immediately rather than block.
+	done := make(chan struct{})
+	go func() {
+		mgr.WaitPipes()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitPipes blocked with no pending pipes")
+	}
+}
+
+func TestRestartService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "sleep 30",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("could not create test-files directory: %v", mkdirErr)
+	}
+
+	if writeErr := os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); writeErr != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", writeErr)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("restart-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if addErr := manager.AddServiceCatalogEntry(serviceCatalogEntry); addErr != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", addErr)
+	}
+
+	originalPGID, err := manager.StartService("restart-service")
+	if err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+	if originalPGID == 0 {
+		t.Fatal("Starting service should return a non-zero PGID, got 0")
+	}
+
+	newPGID, err := manager.RestartService("restart-service", time.Second, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("RestartService should not error: %v", err)
+	}
+	if newPGID == 0 {
+		t.Fatal("RestartService should return a non-zero PGID, got 0")
+	}
+	if !isProcessAlive(newPGID) {
+		t.Errorf("expected restarted process group %d to be alive", newPGID)
+	}
+	_ = syscall.Kill(-newPGID, syscall.SIGKILL)
+}
+
+func TestRestartService_notRegistered(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	_, err := manager.RestartService("no-such-service", time.Second, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error restarting an unregistered service")
 	}
 }

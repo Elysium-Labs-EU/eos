@@ -23,7 +23,9 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveDefault // second arg → file path
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			newProjectPath := args[1]
 			mgr := getManager()
@@ -33,7 +35,7 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			if !exists {
 				cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "service isn't registered.")
@@ -47,26 +49,27 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 					ui.TextCommand.Render("eos status"),
 					ui.TextMuted.Render("→ view registered services"),
 				)
-				return
+				return helpers.ErrCommandFailed
 			}
 			yamlFile, err := helpers.DetermineYamlFile(newProjectPath)
 
 			if err != nil {
 				cmd.PrintErrf("%s %s: %v\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(newProjectPath), err)
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting absolute path: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("updating service: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 			cmd.Printf("%s %s\n", ui.LabelSuccess.Render("updated"), ui.TextBold.Render(serviceName))
+			return nil
 		}}
 }

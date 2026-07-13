@@ -16,14 +16,16 @@ func newValidateCmd() *cobra.Command {
 		Long:  `Validate a service.yaml without registering it or requiring the daemon to run.`,
 		Example: `  eos validate ./path/to/project            # find service.yaml automatically in the directory
   eos validate ./path/to/project/service.yaml  # point directly to the config file`,
-		Args: cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			projectPath := args[0]
 
 			yamlFile, err := helpers.DetermineYamlFile(projectPath)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("determining YAML file: %v", err))
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			config, errs := manager.ValidateServiceConfig(yamlFile)
@@ -33,11 +35,12 @@ func newValidateCmd() *cobra.Command {
 					cmd.PrintErrf("  %s %s\n", ui.TextMuted.Render("·"), e)
 				}
 				cmd.PrintErrf("\n")
-				return
+				return helpers.ErrCommandFailed
 			}
 
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("valid"), ui.TextBold.Render(config.Name), "configuration is valid")
 			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("file:"), yamlFile)
+			return nil
 		},
 	}
 }

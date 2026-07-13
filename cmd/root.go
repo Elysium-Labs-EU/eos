@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
@@ -29,7 +31,7 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s\n\n", ui.TextBold.Render("eos - Test version"))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
 		},
 	}
 
@@ -136,7 +138,7 @@ func newRootCmd() *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Printf("%s %s\n\n", ui.TextBold.Render("eos"), ui.TextMuted.Render(buildinfo.GetVersionOnly()))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("→ see available commands"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
 		},
 
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
@@ -388,7 +390,12 @@ func Execute() {
 	rootCmd := newRootCmd()
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// Commands that already printed a human-readable error return
+		// helpers.ErrCommandFailed/ErrAPICommandFailed purely to signal a
+		// non-zero exit; printing err here would just repeat "command failed".
+		if !errors.Is(err, helpers.ErrCommandFailed) && !errors.Is(err, helpers.ErrAPICommandFailed) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }

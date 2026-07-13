@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
@@ -57,8 +59,8 @@ func TestValidateCommandMissingFile(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"validate", "nonexistent-path"})
 
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate should not return cobra error, got: %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := buf.String()
@@ -92,8 +94,8 @@ func TestValidateCommandCollectsAllErrors(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"validate", fullPath})
 
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate should not return cobra error, got: %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := buf.String()
@@ -145,8 +147,8 @@ func TestValidateCommandInvalidRuntimePath(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"validate", fullPath})
 
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("validate should not return cobra error, got: %v", err)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 
 	output := buf.String()

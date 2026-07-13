@@ -15,7 +15,15 @@ import (
 func TestAPIInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
+	runtimeDir := filepath.Join(tempDir, "runtime-bin")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		t.Fatalf("could not create runtime directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "node"), []byte("#!/bin/sh"), 0755); err != nil {
+		t.Fatalf("could not write fake node binary: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithRuntimePath(runtimeDir))
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
 		t.Fatalf("failed to marshal test config: %v", err)
@@ -71,8 +79,8 @@ func TestAPIInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	if result.Config.Runtime.Type != "nodejs" {
 		t.Errorf("expected runtime type to be 'nodejs', got: %q", result.Config.Runtime.Type)
 	}
-	if result.Config.Runtime.Path != "/path/to/node" {
-		t.Errorf("expected runtime path to be '/path/to/node', got: %q", result.Config.Runtime.Path)
+	if result.Config.Runtime.Path != runtimeDir {
+		t.Errorf("expected runtime path to be %q, got: %q", runtimeDir, result.Config.Runtime.Path)
 	}
 }
 
@@ -136,17 +144,22 @@ func TestAPIInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 
 func TestAPIInfoInvalidNumberArgumentsCommand(t *testing.T) {
 	cmd, _, errBuf, _ := setupAPICmd(t)
-	cmd.SetArgs([]string{"info"})
+	cmd.SetArgs([]string{"api", "info"})
 
 	err := cmd.ExecuteContext(t.Context())
 
 	if err == nil {
 		t.Fatalf("expected error, got: %v\nerr output: %s", err, errBuf.String())
 	}
-	output := errBuf.String()
 
-	if !strings.Contains(output, "Error: accepts 1 arg(s), received 0") {
-		t.Errorf("expected info to show 'Error: accepts 1 arg(s), received 0', got: %s", output)
+	// api info has SilenceErrors/SilenceUsage set and RunE never runs on an
+	// arg-count failure, so cobra's error is only returned, never written to
+	// stderr (unlike the JSON error contract used for runtime errors).
+	if !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+		t.Errorf("expected error to be 'accepts 1 arg(s), received 0', got: %v", err)
+	}
+	if errBuf.String() != "" {
+		t.Errorf("expected no stderr output, got: %s", errBuf.String())
 	}
 }
 
@@ -166,7 +179,7 @@ func TestAPIInfoNonExistentServiceCommand(t *testing.T) {
 	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(errBuf.String())), &errResp); jsonErr != nil {
 		t.Fatalf("failed to unmarshal error output: %v\noutput: %s", jsonErr, errBuf.String())
 	}
-	if !strings.Contains(errResp.Error, "service not registered") {
-		t.Errorf("expected error to contain 'service not registered', got: %q", errResp.Error)
+	if !strings.Contains(errResp.Error, "not found") {
+		t.Errorf("expected error to contain 'not found', got: %q", errResp.Error)
 	}
 }

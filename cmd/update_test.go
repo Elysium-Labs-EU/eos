@@ -16,7 +16,7 @@ func newYamlServiceFile(t *testing.T, dir string) string {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("could not create dir %s: %v", dir, err)
 	}
-	data, err := yaml.Marshal(testutil.NewTestServiceConfigFile(t))
+	data, err := yaml.Marshal(testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime()))
 	if err != nil {
 		t.Fatalf("failed to marshal service config: %v", err)
 	}
@@ -48,9 +48,8 @@ func TestUpdateCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestUpdateCommandServiceNotRegistered
+// TestUpdateCommandServiceNotRegistered, TestUpdateCommandInvalidPath,
+// TestUpdateCommandMissingArgs, and TestUpdateCommandTooManyArgs live in update_gaps_test.go.
+//
 // TODO: func TestUpdateCommandIsRegisteredError (requires mock manager)
-// TODO: func TestUpdateCommandInvalidPath
 // TODO: func TestUpdateCommandUpdateCatalogError (requires mock manager)
-// TODO: func TestUpdateCommandMissingArgs
-// TODO: func TestUpdateCommandTooManyArgs

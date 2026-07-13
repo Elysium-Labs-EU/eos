@@ -12,6 +12,9 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
+// -f <path> registers the service from a service.yaml (if not already registered) and starts it;
+// a bare <name> looks up an already-registered service and starts or restarts it. Both paths
+// converge on the same start/restart logic once the service name is resolved.
 func TestAPIRunWithServiceFile(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
 
@@ -140,6 +143,25 @@ func TestAPIRunWithOnceFlag_NotRunning(t *testing.T) {
 	}
 	if result.PGID <= 0 {
 		t.Errorf("expected pgid > 0, got %d", result.PGID)
+	}
+}
+
+func TestAPIRunNoArgsNoFile(t *testing.T) {
+	cmd, _, errBuf, _ := setupAPICmd(t)
+
+	cmd.SetArgs([]string{"api", "run"})
+	err := cmd.ExecuteContext(t.Context())
+
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed, got: %v", err)
+	}
+
+	var errResult map[string]string
+	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
+	}
+	if errResult["error"] == "" {
+		t.Errorf("expected non-empty error message in JSON, got: %+v", errResult)
 	}
 }
 

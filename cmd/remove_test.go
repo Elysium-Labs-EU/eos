@@ -13,7 +13,7 @@ import (
 func TestRemoveCommand(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupCmd(t)
 
-	testFile := testutil.NewTestServiceConfigFile(t)
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {
@@ -59,9 +59,9 @@ func TestRemoveCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestRemoveCommandServiceNotRegistered
+// TestRemoveCommandServiceNotRegistered, TestRemoveCommandMissingArgs, and
+// TestRemoveCommandWithActiveInstance_{Decline,Confirm} live in remove_gaps_test.go.
+//
 // TODO: func TestRemoveCommandIsRegisteredError (requires mock manager)
-// TODO: func TestRemoveCommandWithActiveInstance
 // TODO: func TestRemoveCommandRemoveInstanceError (requires mock manager)
 // TODO: func TestRemoveCommandRemoveCatalogError (requires mock manager)
-// TODO: func TestRemoveCommandMissingArgs
