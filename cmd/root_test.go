@@ -55,7 +55,7 @@ func TestHelpCommand(t *testing.T) {
 	}
 	output := outBuf.String()
 
-	if !strings.Contains(output, "eos is a modern deployment") {
+	if !strings.Contains(output, "eos is a service supervisor") {
 		t.Errorf("Expected help to contain description, got: '%s'", output)
 	}
 }

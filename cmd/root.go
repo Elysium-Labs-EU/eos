@@ -24,10 +24,10 @@ import (
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "eos",
-		Short: "A deployment orchestration CLI tool",
+		Short: "A service supervisor CLI tool",
 		Long: `eos - Test version
 
-eos is a modern deployment orchestration tool.
+eos is a service supervisor.
 			It manages services, handles deployments, and provides monitoring
 			capabilities for your VPS infrastructure.`,
 	}
@@ -128,10 +128,10 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd = &cobra.Command{
 		Use:   "eos",
-		Short: "A deployment orchestration CLI tool",
+		Short: "A service supervisor CLI tool",
 		Long: fmt.Sprintf(`eos %s
 
-eos is a modern deployment orchestration tool.
+eos is a service supervisor.
 	It manages services, handles deployments, and provides monitoring
 	capabilities for your VPS infrastructure.`, buildinfo.GetVersionOnly()),
 
