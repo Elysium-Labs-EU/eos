@@ -152,8 +152,13 @@ jobs:
 
       - name: Install git-cliff
         run: |
-          curl -sL https://github.com/orhun/git-cliff/releases/download/v2.13.1/git-cliff-2.13.1-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          sudo mv git-cliff-2.13.1/git-cliff /usr/local/bin/git-cliff
+          case "$(uname -m)" in
+            x86_64) ARCH=x86_64-unknown-linux-gnu ;;
+            aarch64|arm64) ARCH=aarch64-unknown-linux-gnu ;;
+            *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -sL "https://github.com/orhun/git-cliff/releases/download/v2.13.1/git-cliff-2.13.1-${ARCH}.tar.gz" | tar xz
+          sudo mv "git-cliff-2.13.1/git-cliff" /usr/local/bin/git-cliff
           git-cliff --version
 
       - name: Generate changelog section
