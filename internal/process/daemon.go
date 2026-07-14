@@ -22,6 +22,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/monitor"
+	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
@@ -84,6 +85,13 @@ func bootPersistedServices(mgr *manager.LocalManager, logger *slog.Logger) error
 	return nil
 }
 
+// reconcileOrphans runs once at daemon startup and checks every known PGID
+// for every service against the real OS process table, regardless of what
+// the DB's last-known state for that row says. A row recorded Stopped/Failed
+// can still point at a live process (e.g. a SIGCHLD race lost the real exit
+// event), and a row recorded Running/Starting can point at a process that's
+// actually dead (e.g. after an out-of-band kill or crash) — both cases are
+// corrected here instead of trusting the single most-recent row's state.
 func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger) {
 	entries, err := db.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
@@ -92,36 +100,44 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 	}
 
 	for _, entry := range entries {
-		hist, err := db.GetMostRecentProcessHistoryEntryByName(ctx, entry.Name)
+		history, err := db.GetProcessHistoryEntriesByServiceName(ctx, entry.Name)
 		if err != nil {
-			if !errors.Is(err, database.ErrProcessHistoryNotFound) {
-				logger.Error("reconcile orphans: fetching history", "service", entry.Name, "error", err)
-			}
+			logger.Error("reconcile orphans: fetching history", "service", entry.Name, "error", err)
 			continue
 		}
 
-		switch hist.State {
-		case types.ProcessStateRunning, types.ProcessStateStarting, types.ProcessStateUnknown:
-			// fall through to kill
-		case types.ProcessStateStopped, types.ProcessStateFailed:
-			continue
-		}
+		for _, hist := range history {
+			if hist.PGID <= 0 {
+				continue
+			}
 
-		if hist.PGID > 0 {
-			if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
-				logger.Info("reconcile orphans: kill PGID", "service", entry.Name, "pgid", hist.PGID, "error", killErr)
+			if procutil.IsAlive(hist.PGID) {
+				if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
+					logger.Info("reconcile orphans: kill PGID", "service", entry.Name, "pgid", hist.PGID, "error", killErr)
+				}
+				reconcileMarkStopped(ctx, db, logger, entry.Name, hist.PGID)
+				continue
+			}
+
+			switch hist.State {
+			case types.ProcessStateRunning, types.ProcessStateStarting, types.ProcessStateUnknown:
+				reconcileMarkStopped(ctx, db, logger, entry.Name, hist.PGID)
+			case types.ProcessStateStopped, types.ProcessStateFailed:
+				// already terminal and confirmed dead above — no-op
 			}
 		}
+	}
+}
 
-		now := time.Now()
-		if updateErr := db.UpdateProcessHistoryEntry(ctx, hist.PGID, database.ProcessHistoryUpdate{
-			State:     new(types.ProcessStateStopped),
-			StoppedAt: &now,
-		}); updateErr != nil {
-			logger.Error("reconcile orphans: updating state", "service", entry.Name, "error", updateErr)
-		} else {
-			logger.Info("reconcile orphans: orphan stopped", "pgid", hist.PGID, "service", entry.Name)
-		}
+func reconcileMarkStopped(ctx context.Context, db *database.DB, logger *slog.Logger, serviceName string, pgid int) {
+	now := time.Now()
+	if updateErr := db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+		State:     new(types.ProcessStateStopped),
+		StoppedAt: &now,
+	}); updateErr != nil {
+		logger.Error("reconcile orphans: updating state", "service", serviceName, "error", updateErr)
+	} else {
+		logger.Info("reconcile orphans: orphan stopped", "pgid", pgid, "service", serviceName)
 	}
 }
 

@@ -52,7 +52,12 @@ func TestAPIRunWithServiceName(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 
-	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	// Needs a genuinely long-lived process: StartService now verifies OS
+	// liveness before reporting "already running" (#96), so a command that
+	// exits immediately (like the other tests' "./start-script.sh", which
+	// doesn't exist) would already be dead by the second run and get
+	// self-healed into a fresh start instead of a restart.
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
 	// First run: register and start via file
