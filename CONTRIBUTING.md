@@ -30,7 +30,7 @@ make ci
 
 This runs the full lint and test suite. It must pass before opening a PR. If lint reports violations, `make fix` resolves most of them automatically; run `make ci` again after.
 
-Some tests require a Linux environment. Use `make test-linux` to run them in the OrbStack Debian VM, or open your PR and let CI handle it.
+`make ci` runs on your local OS only. If your change touches OS-facing code (process groups, signals, `/proc`, systemd — e.g. `internal/procutil`, `internal/process`, `internal/manager`), also run `make ci-full` (or at least `make test-linux`) before opening a PR: some behavior (like zombie-process signal semantics) only diverges on Linux and won't fail on macOS. Don't rely on CI to catch it first.
 
 ## Commit Format
 

@@ -151,6 +151,9 @@ sg-rules: ## List all ast-grep rules
 ci: test lint sg nilcheck test-coverage-check ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
+ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
+	@echo "All CI checks + Linux parity passed!"
+
 test-linux: ## Run tests on OrbStack $(ORB_MACHINE) Linux (mirrors CI)
 	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd ./internal/... -race -count=2"
 
