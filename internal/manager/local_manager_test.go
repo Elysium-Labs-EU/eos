@@ -268,6 +268,143 @@ func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 	}
 }
 
+// TestStartServiceSelfHealsStaleServiceInstance is the direct regression test
+// for #96's comment: a service_instances row can survive a daemon restart
+// that wasn't preceded by a clean `eos stop` (e.g. the daemon itself was
+// killed out-of-band). Before the fix, GetServiceInstance returning non-nil
+// alone was enough to block StartService with ErrAlreadyRunning, even though
+// nothing in process history is actually alive. StartService must self-heal
+// instead of refusing to start.
+func TestStartServiceSelfHealsStaleServiceInstance(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	const deadPGID = 999995
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale service_instances self-heal", deadPGID)
+	}
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	// Simulate an out-of-band daemon kill: service_instances row is present
+	// (never cleaned up by an `eos stop`), and the last process history row
+	// still says Running, but the PGID is actually dead.
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, "test-service", types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	pgid, err := manager.StartService("test-service")
+	if err != nil {
+		t.Fatalf("StartService should self-heal a stale service_instances row with a dead PGID, got error: %v", err)
+	}
+	if pgid == 0 {
+		t.Fatal("StartService should return a non-zero PGID, got 0")
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	var staleEntry *types.ProcessHistory
+	for i := range entries {
+		if entries[i].PGID == deadPGID {
+			staleEntry = &entries[i]
+		}
+	}
+	if staleEntry == nil {
+		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+	}
+	if staleEntry.State != types.ProcessStateStopped {
+		t.Errorf("expected stale entry to be marked Stopped, got state %q", staleEntry.State)
+	}
+}
+
+// TestStartServiceBlocksWhenServiceInstanceLive confirms the fix didn't
+// weaken the already-running guard: a live PGID in process history must still
+// block StartService with ErrAlreadyRunning.
+func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	livePGID, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, "test-service", types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	_, err = manager.StartService("test-service")
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("expected ErrAlreadyRunning for a live PGID, got: %v", err)
+	}
+}
+
 func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))

@@ -2,7 +2,9 @@ package process
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 
 	"codeberg.org/Elysium_Labs/eos/internal/database"
@@ -69,6 +71,53 @@ func TestReconcileOrphans_TerminalStates(t *testing.T) {
 			}
 			if hist.State != state {
 				t.Errorf("state should be unchanged: want %s, got %s", state, hist.State)
+			}
+		})
+	}
+}
+
+// TestReconcileOrphans_TerminalStateButAlive is the direct regression test
+// for #96: a history row recorded Stopped/Failed (e.g. a lost SIGCHLD race)
+// must not be trusted blindly — if the PGID it points at is still alive,
+// reconcileOrphans must kill it and correct the row, not skip it.
+func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
+	for _, state := range []types.ProcessState{types.ProcessStateStopped, types.ProcessStateFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+			if err := db.RegisterService(t.Context(), "svc", "/opt/svc", "service.yaml"); err != nil {
+				t.Fatalf("RegisterService: %v", err)
+			}
+
+			cmd := exec.Command("sleep", "30")
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("starting live test process: %v", err)
+			}
+			pgid := cmd.Process.Pid
+			t.Cleanup(func() {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+				_ = cmd.Wait()
+			})
+
+			if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, "svc", state); err != nil {
+				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+			}
+
+			reconcileOrphans(t.Context(), db, testutil.NewTestLogger(t))
+
+			hist, err := db.GetMostRecentProcessHistoryEntryByName(t.Context(), "svc")
+			if err != nil {
+				t.Fatalf("GetMostRecentProcessHistoryEntryByName: %v", err)
+			}
+			if hist.State != types.ProcessStateStopped {
+				t.Errorf("want Stopped after killing live orphan, got %s", hist.State)
+			}
+			if hist.StoppedAt == nil {
+				t.Error("want StoppedAt set")
+			}
+			if syscall.Kill(-pgid, 0) == nil {
+				t.Error("process should have been killed")
 			}
 		})
 	}

@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,6 +16,7 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
+	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
@@ -240,6 +240,20 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, errFileLogger 
 	}
 }
 
+// livePGIDInHistory returns the PGID of the first Running or Starting history
+// entry that still has a live OS process, or 0 if none do.
+func livePGIDInHistory(history []types.ProcessHistory) int {
+	for _, p := range history {
+		if p.State != types.ProcessStateRunning && p.State != types.ProcessStateStarting {
+			continue
+		}
+		if procutil.IsAlive(p.PGID) {
+			return p.PGID
+		}
+	}
+	return 0
+}
+
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotRegistered) {
@@ -260,14 +274,22 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	if err != nil && !errors.Is(err, ErrServiceNotRunning) {
 		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
 	}
-	if serviceInstance != nil {
-		// TODO: return found PGID somehow instead?
-		return 0, ErrAlreadyRunning
-	}
 
 	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
 	if err != nil {
 		return 0, fmt.Errorf("get process history for %s: %w", name, err)
+	}
+
+	if serviceInstance != nil {
+		if livePGID := livePGIDInHistory(processHistory); livePGID > 0 {
+			// TODO: return found PGID somehow instead?
+			return 0, ErrAlreadyRunning
+		}
+		// service_instances row is stale: nothing in process history is
+		// actually alive (e.g. the daemon was killed out-of-band without a
+		// clean `eos stop`, which never got the chance to remove this row).
+		// Self-heal by proceeding — RegisterServiceInstance below replaces
+		// this row on a successful start.
 	}
 
 	for _, p := range processHistory {
@@ -275,15 +297,24 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		processPGID := p.PGID
 
 		if state == types.ProcessStateRunning {
-			signalErr := syscall.Kill(-processPGID, 0)
-			// TODO: Update the process history after failing this?
-			if signalErr != nil {
-				return 0, fmt.Errorf("service either has no active process or is inaccessible with PGID %d", processPGID)
+			if procutil.IsAlive(processPGID) {
+				return 0, fmt.Errorf("service already running with PGID %d", processPGID)
 			}
-			return 0, fmt.Errorf("service already running with PGID %d", processPGID)
+			// Stale Running entry: the real process is dead (killed
+			// out-of-band, crashed, or the daemon restarted before the
+			// health monitor's checkRunningProcess could catch it), but the
+			// row was never transitioned out of Running. Self-heal, then
+			// proceed as if this entry didn't exist.
+			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, processPGID, database.ProcessHistoryUpdate{
+				State:     new(types.ProcessStateStopped),
+				StoppedAt: new(time.Now()),
+			}); updateErr != nil {
+				m.logger.Error("failed to mark stale running entry as stopped", "service", name, "pgid", processPGID, "error", updateErr)
+			}
+			continue
 		}
 		if state == types.ProcessStateStarting {
-			if isProcessAlive(processPGID) {
+			if procutil.IsAlive(processPGID) {
 				return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
 			}
 			// Stale Starting entry: the daemon likely crashed or the machine
@@ -722,33 +753,8 @@ OuterLoop:
 }
 
 // isProcessAlive reports whether any live process exists in the given process group.
-//
-// On Linux, kill(-pgid, 0) returns nil even when the only remaining process is
-// a zombie — a process that has exited but has not yet been reaped by its
-// parent's Wait call. A zombie is not running, so we read /proc/<pgid>/stat and
-// treat state 'Z' as dead.
-//
-// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught by the err != nil
-// check below), so the /proc path is not needed there.
 func isProcessAlive(pgid int) bool {
-	if pgid <= 1 {
-		return false
-	}
-	if err := syscall.Kill(-pgid, 0); err != nil {
-		return false
-	}
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
-		if err != nil {
-			return false
-		}
-		statStr := string(data)
-		// Format: pid (comm) state ... — find state char after the last ')' in comm
-		if i := strings.LastIndex(statStr, ")"); i >= 0 && i+2 < len(statStr) {
-			return statStr[i+2] != 'Z'
-		}
-	}
-	return true
+	return procutil.IsAlive(pgid)
 }
 
 func (m *LocalManager) ForceStopService(name string) (StopServiceResult, error) {
