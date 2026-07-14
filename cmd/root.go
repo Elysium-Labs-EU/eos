@@ -25,14 +25,11 @@ func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
-		Long: `eos is a modern deployment orchestration tool.
+		Long: `eos - Test version
+
+eos is a modern deployment orchestration tool.
 			It manages services, handles deployments, and provides monitoring
 			capabilities for your VPS infrastructure.`,
-
-		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Printf("%s\n\n", ui.TextBold.Render("eos - Test version"))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
-		},
 	}
 
 	getManager := func() manager.ServiceManager {
@@ -132,14 +129,11 @@ func newRootCmd() *cobra.Command {
 	rootCmd = &cobra.Command{
 		Use:   "eos",
 		Short: "A deployment orchestration CLI tool",
-		Long: `eos is a modern deployment orchestration tool.
-	It manages services, handles deployments, and provides monitoring
-	capabilities for your VPS infrastructure.`,
+		Long: fmt.Sprintf(`eos %s
 
-		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Printf("%s %s\n\n", ui.TextBold.Render("eos"), ui.TextMuted.Render(buildinfo.GetVersionOnly()))
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos help"), ui.TextMuted.Render("to see available commands"))
-		},
+eos is a modern deployment orchestration tool.
+	It manages services, handles deployments, and provides monitoring
+	capabilities for your VPS infrastructure.`, buildinfo.GetVersionOnly()),
 
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if cleanup != nil {
