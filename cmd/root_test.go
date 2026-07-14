@@ -40,8 +40,8 @@ func TestRootCommand(t *testing.T) {
 	if !strings.Contains(output, "eos - Test version") {
 		t.Errorf("Expected output to contain 'eos - Test version', got %s", output)
 	}
-	if !strings.Contains(output, "eos help") {
-		t.Errorf("Expected output to contain help text, got: %s", output)
+	if !strings.Contains(output, "Available Commands") {
+		t.Errorf("Expected bare invocation to fall back to full help output, got: %s", output)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestHelpCommand(t *testing.T) {
 	}
 	output := outBuf.String()
 
-	if !strings.Contains(output, "eos is a modern deployment") {
+	if !strings.Contains(output, "eos is a service supervisor") {
 		t.Errorf("Expected help to contain description, got: '%s'", output)
 	}
 }
