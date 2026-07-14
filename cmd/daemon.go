@@ -343,16 +343,21 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 		},
 	}
 
+	var allUsers bool
 	infoCmd := &cobra.Command{
 		Use:   "info",
 		Short: "Show daemon status and configuration",
-		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.",
+		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.\n\nPass --all (root only) to enumerate every user's standalone daemon on the host instead of just the invoking user's, flagging any still running against a since-replaced binary.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if allUsers {
+				return printAllDaemons(cmd)
+			}
 			ctrl := getCtrl()
 			ctrl.Info(cmd)
 			return nil
 		},
 	}
+	infoCmd.Flags().BoolVar(&allUsers, "all", false, "list every user's standalone daemon on this host (root only)")
 
 	var lines int
 	var follow bool
@@ -468,6 +473,56 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
 	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
+}
+
+func printAllDaemons(cmd *cobra.Command) error {
+	if os.Getuid() != 0 {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "--all requires root — run with sudo")
+		return helpers.ErrCommandFailed
+	}
+
+	daemons, err := process.DiscoverDaemons()
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("discovering daemons: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	renderDaemonSummaries(cmd, daemons)
+	return nil
+}
+
+// renderDaemonSummaries prints one line per discovered daemon plus a trailing restart hint
+// if any are stale. Split out from printAllDaemons so it can be tested without root.
+func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) {
+	if len(daemons) == 0 {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("no standalone daemons found on this host"))
+		return
+	}
+
+	staleCount := 0
+	for _, d := range daemons {
+		if d.Err != nil {
+			cmd.Printf("%s %s\n", ui.LabelError.Render("✗"), d.Username)
+			cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("error:"), d.Err)
+			continue
+		}
+		if !d.Status.Running {
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("○"), d.Username, ui.TextMuted.Render("not running"))
+			continue
+		}
+		if d.StaleBinary {
+			staleCount++
+			cmd.Printf("%s %s %s\n", ui.LabelWarning.Render("⚠"), d.Username, ui.TextMuted.Render(fmt.Sprintf("running (pid %d) — on a since-replaced binary, restart needed", *d.Status.Pid)))
+			continue
+		}
+		cmd.Printf("%s %s %s\n", ui.LabelSuccess.Render("✓"), d.Username, ui.TextMuted.Render(fmt.Sprintf("running (pid %d)", *d.Status.Pid)))
+	}
+	cmd.Println()
+
+	if staleCount > 0 {
+		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("%d daemon(s) still running the pre-update binary", staleCount))
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start --detach") + ui.TextMuted.Render(" → restart each") + "\n\n")
+	}
 }
 
 func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {

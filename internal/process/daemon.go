@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -412,6 +414,101 @@ func StatusStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (*Daemo
 		Pid:     &activePid,
 		Process: process,
 	}, nil
+}
+
+// DaemonSummary describes one user's standalone daemon, as discovered by DiscoverDaemons.
+type DaemonSummary struct {
+	Status      *DaemonStatus
+	Err         error
+	Username    string
+	PIDFile     string
+	StaleBinary bool
+}
+
+// DiscoverDaemons scans /home/*/.eos and /root/.eos for standalone daemon PID files and
+// reports the status of each. It is Linux-only: it relies on /home as the convention for
+// user home directories and /proc/<pid>/exe to detect a daemon still running against a
+// binary that has since been replaced on disk (see issue #98 — the "who's still on the
+// old binary after an update" gap). Requires root to observe other users' processes.
+func DiscoverDaemons() ([]DaemonSummary, error) {
+	if runtime.GOOS != "linux" {
+		return nil, fmt.Errorf("discovering daemons across users is only supported on linux")
+	}
+
+	var homeDirs []string
+	entries, err := os.ReadDir("/home")
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading /home: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			homeDirs = append(homeDirs, filepath.Join("/home", e.Name()))
+		}
+	}
+	if _, err := os.Stat("/root"); err == nil {
+		homeDirs = append(homeDirs, "/root")
+	}
+
+	return discoverDaemonsIn(homeDirs, currentExecutableInode()), nil
+}
+
+// discoverDaemonsIn is the testable core of DiscoverDaemons: given a set of candidate home
+// directories and the inode of the currently installed binary, it reports the standalone
+// daemon status found under each home's .eos directory, if any.
+func discoverDaemonsIn(homeDirs []string, currentIno uint64) []DaemonSummary {
+	var summaries []DaemonSummary
+	for _, home := range homeDirs {
+		baseDir := filepath.Join(home, "."+config.Name)
+		if _, err := os.Stat(baseDir); err != nil {
+			continue
+		}
+
+		pidFile := filepath.Join(baseDir, config.DaemonPIDFile)
+		status, statusErr := StatusStandaloneDaemon(&config.StandaloneDaemonConfig{PIDFile: pidFile})
+		summary := DaemonSummary{
+			Username: filepath.Base(home),
+			PIDFile:  pidFile,
+			Status:   status,
+			Err:      statusErr,
+		}
+		if statusErr == nil && status.Running && status.Pid != nil && currentIno != 0 {
+			summary.StaleBinary = runningExeInode(*status.Pid) != currentIno
+		}
+		summaries = append(summaries, summary)
+	}
+
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Username < summaries[j].Username })
+	return summaries
+}
+
+// currentExecutableInode returns the inode of the currently running eos binary, or 0 if
+// it can't be determined.
+func currentExecutableInode() uint64 {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0
+	}
+	return inodeOf(exe)
+}
+
+// runningExeInode returns the inode backing pid's executable, resolved via /proc/<pid>/exe.
+// This magic symlink stats the original inode a process exec'd, even after that path has
+// been renamed or overwritten on disk — so it differs from currentExecutableInode() exactly
+// when the process is still running the pre-update binary.
+func runningExeInode(pid int) uint64 {
+	return inodeOf(fmt.Sprintf("/proc/%d/exe", pid))
+}
+
+func inodeOf(path string) uint64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	sys, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0
+	}
+	return sys.Ino
 }
 
 func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, error) {
