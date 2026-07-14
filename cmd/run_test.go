@@ -75,7 +75,12 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 	t.Cleanup(manager.WaitPipes)
 	cmd := newTestRootCmd(manager)
 
-	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	// Needs a genuinely long-lived process: StartService now verifies OS
+	// liveness before reporting "already running" (#96), so a command that
+	// exits immediately (like "./start-script.sh") would already be dead by
+	// the second run and get self-healed into a fresh start instead of a
+	// restart.
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
 
 	yamlData, err := yaml.Marshal(testFile)
 	if err != nil {

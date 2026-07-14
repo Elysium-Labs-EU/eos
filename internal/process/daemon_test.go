@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
@@ -116,7 +117,7 @@ func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
 			if hist.StoppedAt == nil {
 				t.Error("want StoppedAt set")
 			}
-			if syscall.Kill(-pgid, 0) == nil {
+			if procutil.IsAlive(pgid) {
 				t.Error("process should have been killed")
 			}
 		})
