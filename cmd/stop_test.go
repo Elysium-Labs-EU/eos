@@ -58,7 +58,7 @@ exec sleep 3600`
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"start", testFile.Name})
+	cmd.SetArgs([]string{"run", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
@@ -125,7 +125,7 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"start", testFile.Name})
+	cmd.SetArgs([]string{"run", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
@@ -197,7 +197,7 @@ done`
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"start", testFile.Name})
+	cmd.SetArgs([]string{"run", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 
 	if err != nil {
@@ -252,7 +252,7 @@ func TestStopCommandForceFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
-	cmd.SetArgs([]string{"start", testFile.Name})
+	cmd.SetArgs([]string{"run", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Start command should not return an error, got : %v", err)
@@ -384,7 +384,7 @@ func TestStopCommandMultipleProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
-	cmd.SetArgs([]string{"start", testFile.Name})
+	cmd.SetArgs([]string{"run", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
 	if err != nil {
 		t.Fatalf("Start command should not return an error, got : %v", err)

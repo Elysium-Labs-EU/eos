@@ -64,7 +64,6 @@ eos status
 | `eos logs --error <name>` | View error logs |
 | `eos logs --follow <name>` | Tail logs in real time |
 | `eos stop <name>` | Stop a service |
-| `eos restart <name>` | Restart a service |
 
 `eos system` covers boot startup, updates, uninstall, and version; run `eos system --help` for the full list.
 
