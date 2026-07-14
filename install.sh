@@ -559,8 +559,11 @@ main() {
     step "Installing binary..."
     mkdir -p "$INSTALL_DIR"
     chmod +x "$tmp_binary"
-    cp "$tmp_binary" "${INSTALL_DIR}/${BINARY_NAME}"
-    success "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    final_binary="${INSTALL_DIR}/${BINARY_NAME}"
+    tmp_install="${final_binary}.tmp.$$"
+    cp "$tmp_binary" "$tmp_install"
+    mv -f "$tmp_install" "$final_binary"
+    success "Installed to ${final_binary}"
 
     # Refresh any shell completion already installed for the invoking user
     refresh_completions
