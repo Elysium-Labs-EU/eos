@@ -153,6 +153,62 @@ func TestDaemonInfoCommandOutput(t *testing.T) {
 	}
 }
 
+func TestDaemonInfoAllRequiresRoot(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("Skipping: running as root, this test exercises the non-root rejection path")
+	}
+
+	cmd, _, errBuf, _ := setupCmd(t)
+	cmd.SetArgs([]string{"daemon", "info", "--all"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if err == nil {
+		t.Fatal("daemon info --all should error when not run as root")
+	}
+
+	if !strings.Contains(errBuf.String(), "requires root") {
+		t.Errorf("expected error output to mention 'requires root', got: %s", errBuf.String())
+	}
+}
+
+func TestRenderDaemonSummaries(t *testing.T) {
+	pidRunning := 111
+	pidStale := 222
+
+	daemons := []process.DaemonSummary{
+		{Username: "alice", Err: errors.New("reading pid file: permission denied")},
+		{Username: "bob", Status: &process.DaemonStatus{Running: false}},
+		{Username: "carol", Status: &process.DaemonStatus{Running: true, Pid: &pidRunning}},
+		{Username: "dave", Status: &process.DaemonStatus{Running: true, Pid: &pidStale}, StaleBinary: true},
+	}
+
+	cmd, outBuf, errBuf, _ := setupCmd(t)
+	renderDaemonSummaries(cmd, daemons)
+	output := outBuf.String() + errBuf.String()
+
+	for _, want := range []string{
+		"alice", "permission denied",
+		"bob", "not running",
+		"carol", "111",
+		"dave", "222", "since-replaced binary",
+		"1 daemon(s) still running the pre-update binary",
+		"eos daemon stop",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q, got: %s", want, output)
+		}
+	}
+}
+
+func TestRenderDaemonSummariesEmpty(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
+	renderDaemonSummaries(cmd, nil)
+
+	if !strings.Contains(outBuf.String(), "no standalone daemons found") {
+		t.Errorf("expected empty-list message, got: %s", outBuf.String())
+	}
+}
+
 func TestDaemonStopCommandOutput(t *testing.T) {
 	cmd, outBuf, _, _ := setupCmd(t)
 	cmd.SetArgs([]string{"daemon", "stop"})
