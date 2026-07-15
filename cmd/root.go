@@ -132,6 +132,7 @@ func newRootCmd() *cobra.Command {
 eos is a service supervisor.
 	It manages services, handles deployments, and provides monitoring
 	capabilities for your VPS infrastructure.`, buildinfo.GetVersionOnly()),
+		Version: buildinfo.Get(),
 
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if cleanup != nil {
@@ -139,6 +140,7 @@ eos is a service supervisor.
 			}
 		},
 	}
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
 	rootCmd.PersistentFlags().Bool("no-daemon", false, "run in local mode without daemon")
 	rootCmd.PersistentFlags().Bool("verbose", false, "enable verbose debug logging")
