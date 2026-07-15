@@ -30,6 +30,8 @@ jobs:
           cache: true
 
       - name: Install osv-scanner
+        env:
+          GOTOOLCHAIN: auto
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
 
       - name: Run OSV Scanner
