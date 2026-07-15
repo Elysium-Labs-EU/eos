@@ -25,6 +25,8 @@ conventional_commits = true
 filter_unconventional = false
 split_commits = false
 commit_parsers = [
+  { message = "^Merge pull request", skip = true },
+  { message = "^chore: update changelog", skip = true },
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Bug Fixes" },
   { message = "^docs", group = "Documentation" },
