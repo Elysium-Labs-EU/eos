@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-install-orb test-integration lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -159,6 +159,10 @@ test-linux: ## Run tests on OrbStack $(ORB_MACHINE) Linux (mirrors CI)
 
 test-linux-single: ## Run single test on OrbStack $(ORB_MACHINE) (TEST=TestName)
 	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd ./internal/... -race -count=1 -v -run $(TEST)"
+
+test-openrc-orb: ORB_MACHINE = alpine
+test-openrc-orb: ## Run runtime-detection/OpenRC tests on OrbStack $(ORB_MACHINE) (defaults to an Alpine/OpenRC machine; override with ORB_MACHINE=<name>)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd/... -race -count=2 -run 'Openrc|OpenRC|DetectActiveSystemRuntime' -v"
 
 test-install-orb: release-local ## Build and test install.sh on OrbStack $(ORB_MACHINE) with local binary
 	orb run -m $(ORB_MACHINE) bash -lc "arch=\$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-linux-\$$arch"
