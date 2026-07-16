@@ -35,6 +35,8 @@ const (
 	HealthTimeOutLimit                = "10s"
 	InstallDir                        = "/usr/local/bin"
 	Name                              = "eos"
+	OpenRCInitDir                     = "/etc/init.d/"
+	OpenRCTargetFileName              = "eos"
 	ShutdownGracePeriod               = "5s"
 	SystemdTargetDir                  = "/etc/systemd/system/"
 	SystemdTargetFileName             = "eos.service"

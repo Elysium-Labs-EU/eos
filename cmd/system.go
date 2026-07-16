@@ -85,25 +85,39 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 	startupCmdDef := &cobra.Command{
 		Use:   "startup",
 		Short: "Enable eos to start automatically on boot",
-		Long: `Install a systemd unit file for eos and enable it to run on boot. Only supported on systems running systemd.
+		Long: `Install a systemd unit (or OpenRC init script, on OpenRC systems) for eos and enable it to run on boot.
 
-Auto-detects the unit scope based on how you invoke the command:
+On systemd, auto-detects the unit scope based on how you invoke the command:
   - Run as root (sudo): installs a system unit at /etc/systemd/system/eos.service — one per host, daemon runs as the invoking user.
   - Run as a regular user: installs a user unit at ~/.config/systemd/user/eos.service — each user gets their own, no root required.
 
-For user units, add boot-time autostart (without login) with: loginctl enable-linger <username>`,
-		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user)",
+For user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
+
+On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
+		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd only)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			userUnit := os.Getuid() != 0
-
 			installDir, _, systemConfig, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
 			}
+			verbose, _ := cmd.Flags().GetBool("verbose")
 
+			runtimeName, err := detectActiveSystemRuntime()
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+				return helpers.ErrCommandFailed
+			}
+
+			if runtimeName == "openrc" {
+				return openrcStartupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
+					config.OpenRCInitDir, config.OpenRCTargetFileName,
+					verbose, detectActiveSystemRuntime, execRunCmd)
+			}
+
+			userUnit := os.Getuid() != 0
 			systemdDir := config.SystemdTargetDir
 			if userUnit {
 				systemdDir, err = config.UserSystemdDir()
@@ -113,7 +127,6 @@ For user units, add boot-time autostart (without login) with: loginctl enable-li
 				}
 			}
 
-			verbose, _ := cmd.Flags().GetBool("verbose")
 			return startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 				systemdDir, config.SystemdTargetFileName,
 				userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
@@ -123,17 +136,31 @@ For user units, add boot-time autostart (without login) with: loginctl enable-li
 	unstartupCmdDef := &cobra.Command{
 		Use:   "unstartup",
 		Short: "Disable eos from starting automatically on boot",
-		Long: `Remove the systemd unit file for eos and disable it from running on boot. Only supported on systems running systemd.
+		Long: `Remove the systemd unit (or OpenRC init script, on OpenRC systems) for eos and disable it from running on boot.
 
-Auto-detects the unit scope based on how you invoke the command:
+On systemd, auto-detects the unit scope based on how you invoke the command:
   - Run as root (sudo): removes the system unit at /etc/systemd/system/eos.service.
-  - Run as a regular user: removes the user unit at ~/.config/systemd/user/eos.service.`,
-		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit",
+  - Run as a regular user: removes the user unit at ~/.config/systemd/user/eos.service.
+
+On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires root.`,
+		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit (systemd only)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			userUnit := os.Getuid() != 0
+			verbose, _ := cmd.Flags().GetBool("verbose")
 
+			runtimeName, err := detectActiveSystemRuntime()
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+				return helpers.ErrCommandFailed
+			}
+
+			if runtimeName == "openrc" {
+				return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
+					verbose, detectActiveSystemRuntime, execRunCmd)
+			}
+
+			userUnit := os.Getuid() != 0
 			_, _, systemConfig, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
@@ -143,7 +170,6 @@ Auto-detects the unit scope based on how you invoke the command:
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
 				return helpers.ErrCommandFailed
 			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
 			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
@@ -271,14 +297,20 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 	cmd.Printf("  %s %v\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
 }
 
+// detectActiveSystemRuntime identifies the running init system by checking for
+// well-known markers rather than trusting /proc/1/comm, which is unreliable
+// inside containers and PID namespaces where PID 1 isn't the real init.
+// /run/systemd/system is the canonical systemd-is-running check (see
+// sd_booted(3)); /sbin/openrc is OpenRC's control binary, present whenever
+// OpenRC manages the system (Alpine's default, among others).
 func detectActiveSystemRuntime() (string, error) {
-	command, err := os.ReadFile("/proc/1/comm")
-
-	if err != nil {
-		return "", err
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		return "systemd", nil
 	}
-
-	return strings.TrimSpace(string(command)), nil
+	if _, err := os.Stat("/sbin/openrc"); err == nil {
+		return "openrc", nil
+	}
+	return "unknown", nil
 }
 
 type unitData struct {
