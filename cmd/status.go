@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
+	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/dustin/go-humanize"
@@ -75,6 +77,27 @@ func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval i
 	printStatusTable(cmd, mgr)
 }
 
+// daemonIdentity describes which daemon answered the request, so "no
+// services registered" isn't indistinguishable from "wrong user's daemon
+// answered" in multi-user setups (each user runs their own daemon against
+// their own base dir). Resolution failures degrade gracefully instead of
+// hiding the "no services" message behind an unrelated error.
+func daemonIdentity() string {
+	baseDir, baseDirErr := config.GetBaseDir()
+	u, userErr := userutil.EffectiveUser()
+
+	switch {
+	case baseDirErr == nil && userErr == nil:
+		return fmt.Sprintf("for user %s (base dir: %s)", u.Username, baseDir)
+	case userErr == nil:
+		return fmt.Sprintf("for user %s", u.Username)
+	case baseDirErr == nil:
+		return fmt.Sprintf("(base dir: %s)", baseDir)
+	default:
+		return ""
+	}
+}
+
 func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 	registeredServices, err := mgr.GetAllServiceCatalogEntries()
 	if err != nil {
@@ -85,7 +108,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 	numberOfRegisteredServices := len(registeredServices)
 
 	if numberOfRegisteredServices == 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no services are registered")
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no services are registered "+daemonIdentity())
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos add <path>") + ui.TextMuted.Render(" to register a service") + "\n")
 		return
 	}
