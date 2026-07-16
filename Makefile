@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -101,6 +101,10 @@ test-integration: ## Run integration tests (requires Linux + systemd + root; use
 	@echo "Running integration tests..."
 	@echo "  On OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v -count=1"
 	go test ./cmd/... -tags integration -v -count=1
+
+test-launchd: ## Run launchd install/start/stop/uninstall integration tests (native macOS, no orb needed — launchd is macOS-only)
+	@echo "Running launchd integration tests..."
+	go test ./cmd/... -tags integration -v -count=1 -run 'Launchd'
 
 test-coverage: ## Get test coverage
 	@echo "Getting test coverage..."

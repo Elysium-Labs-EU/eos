@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -61,6 +62,24 @@ func recordingRunCmd(t *testing.T, calls *[]string) runCmdFn {
 	t.Helper()
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
 		*calls = append(*calls, strings.Join(append([]string{name}, args...), " "))
+		return []byte("ok"), nil
+	}
+}
+
+// exitCodeRunCmd returns a runCmdFn that, on its first call, produces a real
+// *exec.ExitError with the given exit code (by shelling out to `sh -c "exit N"`) —
+// not a synthetic error — so tests exercise the same errors.As(*exec.ExitError)
+// path production code hits. Subsequent calls succeed like recordingRunCmd.
+func exitCodeRunCmd(t *testing.T, calls *[]string, code int) runCmdFn {
+	t.Helper()
+	first := true
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		*calls = append(*calls, strings.Join(append([]string{name}, args...), " "))
+		if first {
+			first = false
+			out, err := exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf("exit %d", code)).CombinedOutput()
+			return out, err
+		}
 		return []byte("ok"), nil
 	}
 }
@@ -228,6 +247,257 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 
 	if !strings.Contains(outBuf.String(), "system unit startup removed") {
 		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+func TestRenderPlistFile_SystemIncludesUserName(t *testing.T) {
+	plist, err := renderPlistFile("/usr/local/bin", "alice", "org.elysiumlabs.eos", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"<string>org.elysiumlabs.eos</string>", "<string>/usr/local/bin/eos</string>", "<key>UserName</key>", "<string>alice</string>", "RunAtLoad", "KeepAlive"} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("expected plist to contain %q, got:\n%s", want, plist)
+		}
+	}
+}
+
+func TestRenderPlistFile_UserAgentOmitsUserName(t *testing.T) {
+	plist, err := renderPlistFile("/usr/local/bin", "alice", "org.elysiumlabs.eos", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(plist, "UserName") {
+		t.Errorf("expected user agent plist to omit UserName, got:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>org.elysiumlabs.eos</string>") {
+		t.Errorf("expected label in plist, got:\n%s", plist)
+	}
+}
+
+func TestLaunchdLabel(t *testing.T) {
+	if got := launchdLabel("org.elysiumlabs.eos.plist"); got != "org.elysiumlabs.eos" {
+		t.Errorf("expected %q, got %q", "org.elysiumlabs.eos", got)
+	}
+}
+
+func TestLaunchdDomain(t *testing.T) {
+	if got := launchdDomain(false, 501); got != "system" {
+		t.Errorf("expected %q, got %q", "system", got)
+	}
+	if got := launchdDomain(true, 501); got != "gui/501" {
+		t.Errorf("expected %q, got %q", "gui/501", got)
+	}
+}
+
+func TestLaunchdScope(t *testing.T) {
+	if got := launchdScope(false); got != "launch daemon" {
+		t.Errorf("expected %q, got %q", "launch daemon", got)
+	}
+	if got := launchdScope(true); got != "launch agent" {
+		t.Errorf("expected %q, got %q", "launch agent", got)
+	}
+}
+
+func TestStartupCmdLaunchdDeclinePlist(t *testing.T) {
+	tempDir := t.TempDir()
+	c, outBuf, _ := makeTestCmd(t)
+	setStdin(c, "n\n")
+
+	var calls []string
+	_ = startupCmdLaunchd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+
+	if len(calls) != 0 {
+		t.Errorf("expected no launchctl calls when user declines, got: %v", calls)
+	}
+	if !strings.Contains(outBuf.String(), "launch daemon file creation canceled") {
+		t.Errorf("expected cancelation message, got: %s", outBuf.String())
+	}
+}
+
+func TestStartupCmdLaunchdWritesPlistAndEnablesWithoutRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	c, outBuf, errBuf := makeTestCmd(t)
+	// confirm plist creation, decline restart
+	setStdin(c, "y\nn\n")
+
+	var calls []string
+	plistFileName := "org.elysiumlabs.eos-test.plist"
+	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", plistFileName, false, true, recordingRunCmd(t, &calls))
+
+	if !strings.Contains(errBuf.String(), "debug") {
+		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
+	}
+
+	plistPath := filepath.Join(tempDir, plistFileName)
+	if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+		t.Error("expected plist file to be written")
+	}
+
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 launchctl calls (bootout, bootstrap, enable), got: %v", calls)
+	}
+	if !strings.HasPrefix(calls[0], "launchctl bootout system/org.elysiumlabs.eos-test") {
+		t.Errorf("expected best-effort bootout first, got: %v", calls)
+	}
+	if !strings.HasPrefix(calls[1], "launchctl bootstrap system "+plistPath) {
+		t.Errorf("expected bootstrap call, got: %v", calls)
+	}
+	if calls[2] != "launchctl enable system/org.elysiumlabs.eos-test" {
+		t.Errorf("expected enable call, got: %v", calls)
+	}
+
+	if !strings.Contains(outBuf.String(), "launch daemon enabled, eos will start on boot") {
+		t.Errorf("expected enabled message, got: %s", outBuf.String())
+	}
+}
+
+func TestStartupCmdLaunchdFullRestartPath(t *testing.T) {
+	tempDir := t.TempDir()
+	c, _, errBuf := makeTestCmd(t)
+	// confirm plist creation, confirm restart
+	setStdin(c, "y\ny\n")
+
+	var calls []string
+	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+
+	if errBuf.Len() > 0 {
+		t.Errorf("unexpected stderr: %s", errBuf.String())
+	}
+
+	if len(calls) != 4 {
+		t.Fatalf("expected 4 launchctl calls (bootout, bootstrap, enable, kickstart), got: %v", calls)
+	}
+	if !strings.HasPrefix(calls[3], "launchctl kickstart -k system/org.elysiumlabs.eos-test") {
+		t.Errorf("expected kickstart call last, got: %v", calls)
+	}
+}
+
+func TestUnstartupCmdLaunchdDeclineConfirmation(t *testing.T) {
+	c, outBuf, _ := makeTestCmd(t)
+	setStdin(c, "n\n")
+
+	var calls []string
+	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, recordingRunCmd(t, &calls))
+
+	if len(calls) != 0 {
+		t.Errorf("expected no launchctl calls when declined, got: %v", calls)
+	}
+	if !strings.Contains(outBuf.String(), "canceled") {
+		t.Errorf("expected 'canceled' message, got: %s", outBuf.String())
+	}
+}
+
+func TestUnstartupCmdLaunchdRemovesPlistAndBootsOut(t *testing.T) {
+	tempDir := t.TempDir()
+	plistFileName := "org.elysiumlabs.eos-test.plist"
+	plistFile := filepath.Join(tempDir, plistFileName)
+	if err := os.WriteFile(plistFile, []byte("<plist/>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, outBuf, errBuf := makeTestCmd(t)
+	// confirm unstartup, decline restart standalone
+	setStdin(c, "y\nn\n")
+
+	var calls []string
+	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
+		LaunchdTargetDir:     tempDir + "/",
+		LaunchdPlistFileName: plistFileName,
+	}, false, false, recordingRunCmd(t, &calls))
+
+	if errBuf.Len() > 0 {
+		t.Errorf("unexpected stderr: %s", errBuf.String())
+	}
+
+	if _, err := os.Stat(plistFile); !os.IsNotExist(err) {
+		t.Error("expected plist file to be removed")
+	}
+
+	want := []string{"launchctl bootout system/org.elysiumlabs.eos-test"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected launchctl calls %v, got %v", want, calls)
+	}
+
+	if !strings.Contains(outBuf.String(), "launch daemon startup removed") {
+		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+func TestUnstartupCmdLaunchdToleratesJobNotLoaded(t *testing.T) {
+	tempDir := t.TempDir()
+	plistFileName := "org.elysiumlabs.eos-test.plist"
+	plistFile := filepath.Join(tempDir, plistFileName)
+	if err := os.WriteFile(plistFile, []byte("<plist/>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, outBuf, errBuf := makeTestCmd(t)
+	// confirm unstartup, decline restart standalone
+	setStdin(c, "y\nn\n")
+
+	var calls []string
+	// exit code 3 ("No such process") is what launchctl bootout returns when the job
+	// isn't currently loaded — must be tolerated, not treated as a fatal error, or the
+	// plist would never be removed whenever the job happened to already be stopped.
+	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
+		LaunchdTargetDir:     tempDir + "/",
+		LaunchdPlistFileName: plistFileName,
+	}, false, false, exitCodeRunCmd(t, &calls, 3))
+
+	if err != nil {
+		t.Errorf("expected exit code 3 to be tolerated, got error: %v", err)
+	}
+	if errBuf.Len() > 0 {
+		t.Errorf("unexpected stderr: %s", errBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "was not loaded") {
+		t.Errorf("expected 'was not loaded' message, got: %s", outBuf.String())
+	}
+	if _, statErr := os.Stat(plistFile); !os.IsNotExist(statErr) {
+		t.Error("expected plist file to still be removed when the job was already unloaded")
+	}
+	if !strings.Contains(outBuf.String(), "launch daemon startup removed") {
+		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
+	tempDir := t.TempDir()
+	plistFileName := "org.elysiumlabs.eos-test.plist"
+	plistFile := filepath.Join(tempDir, plistFileName)
+	if err := os.WriteFile(plistFile, []byte("<plist/>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, _, errBuf := makeTestCmd(t)
+	setStdin(c, "y\n")
+
+	var calls []string
+	// A generic non-3 failure (e.g. permission denied) must remain fatal and must not
+	// remove the plist file.
+	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
+		LaunchdTargetDir:     tempDir + "/",
+		LaunchdPlistFileName: plistFileName,
+	}, false, false, exitCodeRunCmd(t, &calls, 1))
+
+	if err == nil {
+		t.Fatal("expected a non-3 exit code to be a fatal error")
+	}
+	if !strings.Contains(errBuf.String(), "stopping") {
+		t.Errorf("expected stopping error message, got: %s", errBuf.String())
+	}
+	if _, statErr := os.Stat(plistFile); statErr != nil {
+		t.Error("expected plist file to be left in place when bootout fails fatally")
 	}
 }
 

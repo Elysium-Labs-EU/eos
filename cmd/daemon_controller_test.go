@@ -306,12 +306,113 @@ func TestNewDaemonController(t *testing.T) {
 		}
 	})
 
-	t.Run("neither set is an error", func(t *testing.T) {
-		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
-		if err == nil {
-			t.Fatal("expected error when both standalone and systemd are nil")
+	t.Run("launchd", func(t *testing.T) {
+		cfg := config.DaemonConfig{Launchd: &config.LaunchdConfig{}}
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := ctrl.(launchdDaemonController); !ok {
+			t.Errorf("expected launchdDaemonController, got %T", ctrl)
 		}
 	})
+
+	t.Run("none set is an error", func(t *testing.T) {
+		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		if err == nil {
+			t.Fatal("expected error when standalone, systemd, and launchd are all nil")
+		}
+	})
+}
+
+func TestLaunchdDaemonController_Domain(t *testing.T) {
+	systemCtrl := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: false}}
+	if got := systemCtrl.domain(); got != "system" {
+		t.Errorf("expected %q, got %q", "system", got)
+	}
+
+	userCtrl := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+	if got := userCtrl.domain(); !strings.HasPrefix(got, "gui/") {
+		t.Errorf("expected gui/<uid>, got %q", got)
+	}
+}
+
+func TestLaunchdDaemonController_Target(t *testing.T) {
+	ctrl := launchdDaemonController{cfg: config.LaunchdConfig{
+		UserAgent:            false,
+		LaunchdPlistFileName: "org.elysiumlabs.eos.plist",
+	}}
+	if got := ctrl.target(); got != "system/org.elysiumlabs.eos" {
+		t.Errorf("expected %q, got %q", "system/org.elysiumlabs.eos", got)
+	}
+}
+
+func TestLaunchdDaemonController_LogsHint(t *testing.T) {
+	c := launchdDaemonController{}
+	if got := c.LogsHint(); got != "eos daemon logs" {
+		t.Errorf("expected %q, got %q", "eos daemon logs", got)
+	}
+}
+
+func TestLaunchdDaemonController_Remove(t *testing.T) {
+	tempDir := t.TempDir()
+	plistFile := filepath.Join(tempDir, "org.elysiumlabs.eos.plist")
+	touchFile(t, plistFile)
+
+	c := launchdDaemonController{cfg: config.LaunchdConfig{
+		LaunchdTargetDir:     tempDir + "/",
+		LaunchdPlistFileName: "org.elysiumlabs.eos.plist",
+	}}
+	if err := c.Remove(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(plistFile); !os.IsNotExist(err) {
+		t.Error("expected plist file to be removed")
+	}
+}
+
+func TestLaunchdDaemonController_Logs(t *testing.T) {
+	tempDir := t.TempDir()
+	logDir := manager.CreateLogDirPath(tempDir)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("creating log dir: %v", err)
+	}
+	logPath := filepath.Join(logDir, config.DaemonLogFileName)
+	if err := os.WriteFile(logPath, []byte("hello from launchd\n"), 0644); err != nil {
+		t.Fatalf("writing log file: %v", err)
+	}
+
+	c := launchdDaemonController{baseDir: tempDir}
+	var out bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+
+	c.Logs(cmd, 10, false)
+
+	if !strings.Contains(out.String(), "hello from launchd") {
+		t.Errorf("expected tailed log content, got: %s", out.String())
+	}
+}
+
+func TestPrintLaunchdDaemonDetails(t *testing.T) {
+	for _, userAgent := range []bool{false, true} {
+		var out, errOut bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+
+		printLaunchdDaemonDetails(cmd, userAgent)
+
+		combined := out.String() + errOut.String()
+		if !strings.Contains(combined, "launchd managed") {
+			t.Errorf("userAgent=%v: expected 'launchd managed', got: %s", userAgent, combined)
+		}
+		if !strings.Contains(combined, "launchctl print") {
+			t.Errorf("userAgent=%v: expected launchctl print hint, got: %s", userAgent, combined)
+		}
+	}
 }
 
 func TestPrintStandaloneDaemonDetails(t *testing.T) {

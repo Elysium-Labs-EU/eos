@@ -34,6 +34,9 @@ const (
 	HealthTimeOutEnable               = true
 	HealthTimeOutLimit                = "10s"
 	InstallDir                        = "/usr/local/bin"
+	LaunchdLabel                      = "org.elysiumlabs.eos"
+	LaunchdPlistFileName              = LaunchdLabel + ".plist"
+	LaunchdTargetDir                  = "/Library/LaunchDaemons/"
 	Name                              = "eos"
 	OpenRCInitDir                     = "/etc/init.d/"
 	OpenRCTargetFileName              = "eos"
@@ -45,6 +48,7 @@ const (
 type DaemonConfig struct {
 	Standalone *StandaloneDaemonConfig `json:"standalone" yaml:"standalone"`
 	Systemd    *SystemdConfig          `json:"systemd" yaml:"systemd"`
+	Launchd    *LaunchdConfig          `json:"launchd" yaml:"launchd"`
 }
 
 type StandaloneDaemonConfig struct {
@@ -65,6 +69,15 @@ type SystemdConfig struct {
 	SystemdTargetDir      string `json:"systemd_target_dir" yaml:"systemdTargetDir"`
 	SystemdTargetFileName string `json:"systemd_target_file_name" yaml:"systemdTargetFileName"`
 	UserUnit              bool   `json:"user_unit" yaml:"userUnit"`
+}
+
+// LaunchdConfig mirrors SystemdConfig for macOS: UserAgent plays the same role as
+// SystemdConfig.UserUnit, distinguishing a per-user LaunchAgent (~/Library/LaunchAgents,
+// domain gui/<uid>) from a system-wide LaunchDaemon (/Library/LaunchDaemons, domain system).
+type LaunchdConfig struct {
+	LaunchdTargetDir     string `json:"launchd_target_dir" yaml:"launchdTargetDir"`
+	LaunchdPlistFileName string `json:"launchd_plist_file_name" yaml:"launchdPlistFileName"`
+	UserAgent            bool   `json:"user_agent" yaml:"userAgent"`
 }
 
 type TimeOutConfig struct {
@@ -207,6 +220,66 @@ func ResolveSystemdScope(systemDir string) (dir string, isManaged bool, userUnit
 		return "", false, false, fmt.Errorf("resolving user systemd dir: %w", err)
 	}
 	userManaged, err := IsSystemdManaged(userDir, SystemdTargetFileName)
+	if err != nil {
+		return "", false, false, err
+	}
+	if userManaged {
+		return userDir, true, true, nil
+	}
+
+	if os.Getuid() != 0 {
+		return userDir, false, true, nil
+	}
+	return systemDir, false, false, nil
+}
+
+// UserLaunchAgentsDir returns the per-user LaunchAgents directory, e.g. ~/Library/LaunchAgents/.
+func UserLaunchAgentsDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return filepath.Join(homeDir, "Library", "LaunchAgents") + "/", nil
+}
+
+// IsUnderLaunchd reports whether the current process was launched by launchd.
+// launchd sets XPC_SERVICE_NAME on every job it starts (LaunchAgent or LaunchDaemon) —
+// the macOS analog of systemd's INVOCATION_ID.
+func IsUnderLaunchd() bool {
+	return os.Getenv("XPC_SERVICE_NAME") != ""
+}
+
+func IsLaunchdManaged(launchdTargetDir string, launchdPlistFileName string) (bool, error) {
+	_, err := os.Stat(filepath.Join(launchdTargetDir, launchdPlistFileName))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking launchd plist file: %w", err)
+}
+
+// ResolveLaunchdScope is the launchd analog of ResolveSystemdScope: it finds which
+// domain (system LaunchDaemon or per-user LaunchAgent) actually has the eos plist
+// installed, checking the on-disk file rather than the invoking process's uid.
+//
+// If no plist exists in either location (not installed yet), it falls back to the
+// caller's privilege level: root defaults to the system scope, non-root to the user scope.
+func ResolveLaunchdScope(systemDir string) (dir string, isManaged bool, userAgent bool, err error) {
+	systemManaged, err := IsLaunchdManaged(systemDir, LaunchdPlistFileName)
+	if err != nil {
+		return "", false, false, err
+	}
+	if systemManaged {
+		return systemDir, true, false, nil
+	}
+
+	userDir, err := UserLaunchAgentsDir()
+	if err != nil {
+		return "", false, false, fmt.Errorf("resolving user launch agents dir: %w", err)
+	}
+	userManaged, err := IsLaunchdManaged(userDir, LaunchdPlistFileName)
 	if err != nil {
 		return "", false, false, err
 	}
