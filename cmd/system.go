@@ -51,12 +51,12 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		Short: "Manage the eos system settings",
 		Long:  `Manage eos system settings, check for updates, and inspect runtime configuration.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			_, baseDir, systemConfig, err := newSystemConfig()
+			_, baseDir, systemConfig, identity, err := newSystemConfig()
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)
@@ -72,7 +72,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, baseDir, config, err := newSystemConfig()
+			installDir, baseDir, config, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -98,7 +98,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, systemConfig, err := newSystemConfig()
+			installDir, _, systemConfig, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -160,7 +160,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, systemConfig, err := newSystemConfig()
+			_, _, systemConfig, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -204,7 +204,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, _, err := newSystemConfig()
+			installDir, _, _, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -242,7 +242,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, baseDir, _, err := newSystemConfig()
+			installDir, baseDir, _, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -748,7 +748,12 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		return nil
 	}
 
-	if err := forkDaemon(ctx, config.DaemonPIDFile, false); err != nil {
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving identity: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	if err := forkDaemon(ctx, config.DaemonPIDFile, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return helpers.ErrCommandFailed
@@ -1052,7 +1057,12 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig c
 		return nil
 	}
 
-	if err := forkDaemon(ctx, config.DaemonPIDFile, false); err != nil {
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving identity: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	if err := forkDaemon(ctx, config.DaemonPIDFile, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return helpers.ErrCommandFailed

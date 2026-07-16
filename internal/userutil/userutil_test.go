@@ -101,6 +101,96 @@ func TestEffectiveUser(t *testing.T) {
 	})
 }
 
+// TestResolveIdentity retargets the EffectiveUser env matrix onto Identity, the
+// public API call sites outside this package should use. It doesn't need root to
+// exercise the branch logic for the root×SUDO_USER cases below because a fake
+// Identity can be substituted in code under test — this table only verifies
+// ResolveIdentity's own resolution against the real environment.
+func TestResolveIdentity(t *testing.T) {
+	cur, err := user.Current()
+	if err != nil {
+		t.Skip("cannot determine current user")
+	}
+
+	t.Run("non-root, SUDO_USER unset: resolves to current user", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("must run as non-root")
+		}
+		t.Setenv("SUDO_USER", "")
+
+		id, err := ResolveIdentity()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id.Username() != cur.Username {
+			t.Errorf("expected current user %q, got %q", cur.Username, id.Username())
+		}
+		if id.HomeDir() != cur.HomeDir {
+			t.Errorf("expected home dir %q, got %q", cur.HomeDir, id.HomeDir())
+		}
+	})
+
+	t.Run("non-root, SUDO_USER set: SUDO_USER must be ignored", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("must run as non-root")
+		}
+		t.Setenv("SUDO_USER", "someone-else")
+
+		id, err := ResolveIdentity()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id.Username() != cur.Username {
+			t.Errorf("expected SUDO_USER to be ignored and resolve to current user %q, got %q", cur.Username, id.Username())
+		}
+	})
+
+	t.Run("root, SUDO_USER unset: resolves to current (root) user", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("must run as root")
+		}
+		t.Setenv("SUDO_USER", "")
+
+		id, err := ResolveIdentity()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id.Username() != cur.Username {
+			t.Errorf("expected current (root) user %q, got %q", cur.Username, id.Username())
+		}
+	})
+
+	t.Run("root, SUDO_USER set: resolves to invoking user, not root", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("must run as root")
+		}
+		t.Setenv("SUDO_USER", cur.Username)
+
+		id, err := ResolveIdentity()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id.Username() != cur.Username {
+			t.Errorf("expected SUDO_USER %q, got %q", cur.Username, id.Username())
+		}
+	})
+
+	t.Run("root, SUDO_USER=root: falls back to current user", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("must run as root")
+		}
+		t.Setenv("SUDO_USER", "root")
+
+		id, err := ResolveIdentity()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id.Username() != cur.Username {
+			t.Errorf("expected fallback to current user %q, got %q", cur.Username, id.Username())
+		}
+	})
+}
+
 func TestUserCredentials(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {

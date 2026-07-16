@@ -11,6 +11,7 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 // spawnDisposableChild starts a real, short-lived child process (`sleep 30`) so tests can
@@ -284,9 +285,14 @@ func TestStandaloneDaemonController_Logs(t *testing.T) {
 }
 
 func TestNewDaemonController(t *testing.T) {
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
 	t.Run("standalone", func(t *testing.T) {
 		cfg := config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{PIDFile: "/tmp/eos.pid"}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -297,7 +303,7 @@ func TestNewDaemonController(t *testing.T) {
 
 	t.Run("systemd", func(t *testing.T) {
 		cfg := config.DaemonConfig{Systemd: &config.SystemdConfig{}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -308,7 +314,7 @@ func TestNewDaemonController(t *testing.T) {
 
 	t.Run("launchd", func(t *testing.T) {
 		cfg := config.DaemonConfig{Launchd: &config.LaunchdConfig{}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -318,7 +324,7 @@ func TestNewDaemonController(t *testing.T) {
 	})
 
 	t.Run("none set is an error", func(t *testing.T) {
-		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false)
+		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
 		if err == nil {
 			t.Fatal("expected error when standalone, systemd, and launchd are all nil")
 		}

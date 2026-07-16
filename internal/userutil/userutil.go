@@ -32,3 +32,42 @@ func UserCredentials(u *user.User) (uid uint32, gid uint32, err error) {
 	}
 	return uint32(uidInt), uint32(gidInt), nil
 }
+
+// Identity is the resolved answer to "which user is this process really
+// running as." The field is unexported so the only way to obtain a value is
+// through ResolveIdentity — callers cannot fake or re-derive one by hand,
+// which is what makes this a compiler-enforced guarantee rather than a
+// convention (see https://codeberg.org/Elysium_Labs/eos/issues/97).
+type Identity struct {
+	u   *user.User
+	uid uint32
+	gid uint32
+}
+
+// ResolveIdentity is the only way to obtain an Identity. It wraps
+// EffectiveUser and UserCredentials so every call site that needs to know
+// "who is this" gets the same, already-correct answer instead of
+// reimplementing the SUDO_USER/euid check itself.
+func ResolveIdentity() (Identity, error) {
+	u, err := EffectiveUser()
+	if err != nil {
+		return Identity{}, fmt.Errorf("resolving effective user: %w", err)
+	}
+	uid, gid, err := UserCredentials(u)
+	if err != nil {
+		return Identity{}, fmt.Errorf("resolving user credentials: %w", err)
+	}
+	return Identity{u: u, uid: uid, gid: gid}, nil
+}
+
+// HomeDir returns the identity's home directory.
+func (i Identity) HomeDir() string { return i.u.HomeDir }
+
+// Username returns the identity's username.
+func (i Identity) Username() string { return i.u.Username }
+
+// UID returns the identity's numeric uid.
+func (i Identity) UID() uint32 { return i.uid }
+
+// GID returns the identity's numeric gid.
+func (i Identity) GID() uint32 { return i.gid }

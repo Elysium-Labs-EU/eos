@@ -7,6 +7,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +16,7 @@ type apiDaemonLogsResult struct {
 	Lines   []string `json:"lines"`
 }
 
-func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
+func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	daemonCmd := &cobra.Command{
 		Use:           "daemon",
 		Short:         "Machine-readable daemon interface",
@@ -26,7 +27,7 @@ func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *co
 	return daemonCmd
 }
 
-func newAPIDaemonLogsCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
+func newAPIDaemonLogsCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	var lines int
 
 	cmd := &cobra.Command{
@@ -56,7 +57,7 @@ Exit codes:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			baseDir, cfg, err := getConfig()
+			baseDir, cfg, _, err := getConfig()
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting config: %w", err))
 			}

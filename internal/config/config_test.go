@@ -6,13 +6,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 func TestGetBaseDir_EnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("EOS_BASE_DIR", dir)
 
-	got, err := GetBaseDir()
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Skip("cannot resolve identity")
+	}
+
+	got, err := GetBaseDir(id)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,7 +40,12 @@ func TestGetBaseDir_SudoUser(t *testing.T) {
 	}
 	t.Setenv("SUDO_USER", u.Username)
 
-	got, err := GetBaseDir()
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	got, err := GetBaseDir(id)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +67,12 @@ func TestGetBaseDir_SudoUserIgnoredWhenNotRoot(t *testing.T) {
 	// not the invoking user's — otherwise data lands in the wrong home dir.
 	t.Setenv("SUDO_USER", "someone-else")
 
-	got, err := GetBaseDir()
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	got, err := GetBaseDir(id)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +90,12 @@ func TestCreateBaseDir_CreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "newdir")
 	t.Setenv("EOS_BASE_DIR", dir)
 
-	got, err := CreateBaseDir()
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	got, err := CreateBaseDir(id)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,10 +115,15 @@ func TestCreateBaseDir_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("EOS_BASE_DIR", dir)
 
-	if _, err := CreateBaseDir(); err != nil {
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	if _, err := CreateBaseDir(id); err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
-	if _, err := CreateBaseDir(); err != nil {
+	if _, err := CreateBaseDir(id); err != nil {
 		t.Fatalf("second call failed: %v", err)
 	}
 }
@@ -110,7 +137,12 @@ func TestCreateBaseDir_RootWithoutSudoUserBlocked(t *testing.T) {
 	t.Setenv("EOS_BASE_DIR", dir)
 	t.Setenv("SUDO_USER", "")
 
-	_, err := CreateBaseDir()
+	id, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	_, err = CreateBaseDir(id)
 	if err != nil {
 		t.Errorf("non-root invocation should not error, got: %v", err)
 	}

@@ -126,30 +126,26 @@ func UserSystemdDir() (string, error) {
 	return filepath.Join(homeDir, ".config", "systemd", "user") + "/", nil
 }
 
-func GetBaseDir() (string, error) {
+// GetBaseDir takes an already-resolved Identity rather than deriving one itself —
+// see userutil.ResolveIdentity, the single authority for the sudo/root distinction
+// that broke this function before: `sudo -u <non-root-user>` also sets SUDO_USER even
+// though the process isn't running as root, and honoring it there would
+// redirect data to the invoking user's home instead of the target user's.
+func GetBaseDir(id userutil.Identity) (string, error) {
 	if override := os.Getenv("EOS_BASE_DIR"); override != "" {
 		return override, nil
 	}
-
-	// Delegate the sudo/root distinction to userutil.EffectiveUser(), the
-	// single authority for this check. It already handles the case that broke
-	// GetBaseDir before: `sudo -u <non-root-user>` also sets SUDO_USER even
-	// though the process isn't running as root, and honoring it there would
-	// redirect data to the invoking user's home instead of the target user's.
-	u, err := userutil.EffectiveUser()
-	if err != nil {
-		return "", fmt.Errorf("could not determine base directory: %w", err)
-	}
-
-	return filepath.Join(u.HomeDir, fmt.Sprintf(".%s", Name)), nil
+	return filepath.Join(id.HomeDir(), fmt.Sprintf(".%s", Name)), nil
 }
 
-func CreateBaseDir() (string, error) {
+// CreateBaseDir takes an already-resolved Identity rather than deriving one itself;
+// see GetBaseDir.
+func CreateBaseDir(id userutil.Identity) (string, error) {
 	if os.Getuid() == 0 && os.Getenv("SUDO_USER") == "" && os.Getenv("EOS_BASE_DIR") == "" {
 		return "", fmt.Errorf("do not run eos as root: invoke as the target user directly")
 	}
 
-	baseDir, err := GetBaseDir()
+	baseDir, err := GetBaseDir(id)
 	if err != nil {
 		return "", err
 	}
@@ -160,16 +156,8 @@ func CreateBaseDir() (string, error) {
 	}
 
 	if os.Getuid() == 0 {
-		u, err := userutil.EffectiveUser()
-		if err != nil {
-			return "", fmt.Errorf("resolving effective user for chown: %w", err)
-		}
-		uid, gid, err := userutil.UserCredentials(u)
-		if err != nil {
-			return "", fmt.Errorf("resolving credentials for chown: %w", err)
-		}
-		if err := os.Chown(baseDir, int(uid), int(gid)); err != nil {
-			return "", fmt.Errorf("chown %s to %s: %w", baseDir, u.Username, err)
+		if err := os.Chown(baseDir, int(id.UID()), int(id.GID())); err != nil {
+			return "", fmt.Errorf("chown %s to %s: %w", baseDir, id.Username(), err)
 		}
 	}
 

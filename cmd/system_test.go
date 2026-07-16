@@ -806,12 +806,12 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error, got: %v\n", err)
 	}
 
-	installDir, baseDir, systemConfig, err := newSystemConfig()
+	installDir, baseDir, systemConfig, identity, err := newSystemConfig()
 	if err != nil {
 		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
 	}
 
-	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
 	if err != nil {
 		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}
@@ -845,12 +845,12 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 		t.Fatalf("preparing update test - mkdir should not return an error: %v\n", err)
 	}
 
-	installDir, baseDir, systemConfig, err := newSystemConfig()
+	installDir, baseDir, systemConfig, identity, err := newSystemConfig()
 	if err != nil {
 		t.Fatalf("preparing update test - newSystemConfig should not return an error: %v\n", err)
 	}
 
-	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
 	if err != nil {
 		t.Fatalf("preparing update test - newDaemonController should not return an error: %v\n", err)
 	}
