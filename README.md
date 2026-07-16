@@ -11,7 +11,7 @@ Lightweight service supervisor for your VPS. Register services, start them, keep
 * **Auto-restarts crashed processes** with exponential backoff, up to a configurable restart limit.
 * **Memory enforcement**, warns at soft thresholds, restarts at hard limits.
 * **Log rotation** out of the box; tail logs live with `eos logs --follow`.
-* **Boot persistence** via systemd (Linux), system-wide or per-user, generates fitting unit file.
+* **Boot persistence** via systemd (Linux) or launchd (macOS), system-wide or per-user, generates fitting unit file.
 * **Zero runtime dependencies** single static binary.
 
 If you've used PM2 and want something smaller and self-contained, eos covers the core workflow.
@@ -94,14 +94,14 @@ runtime:
 
 ## Boot-time Startup
 
-On Linux, `eos system startup` installs a systemd unit and enables it on boot.
+`eos system startup` installs a systemd unit (Linux) or a launchd plist (macOS) and enables it on boot.
 
 ```bash
-sudo eos system startup   # system-wide unit (runs as invoking user)
-eos system startup        # per-user unit (no root required)
+sudo eos system startup   # system-wide unit / LaunchDaemon (runs as invoking user)
+eos system startup        # per-user unit / LaunchAgent (no root required)
 ```
 
-For user units without a persistent login session:
+For systemd user units without a persistent login session:
 
 ```bash
 loginctl enable-linger <username>

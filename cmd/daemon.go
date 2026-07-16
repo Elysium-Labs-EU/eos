@@ -93,7 +93,16 @@ func (c *standaloneDaemonController) LogsHint() string {
 }
 
 func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
-	logPath := filepath.Join(manager.CreateLogDirPath(c.baseDir), c.cfg.Log.LogFileName)
+	tailDaemonLogFile(cmd, c.baseDir, c.cfg.Log.LogFileName, lines, follow)
+}
+
+// tailDaemonLogFile tails the daemon's own rotated log file. The daemon writes and
+// rotates this file itself regardless of supervisor (standalone, systemd, or launchd),
+// so both standaloneDaemonController and launchdDaemonController share this — launchd
+// has no persistent unified log like journald, so reusing the daemon's own log file is
+// the correct equivalent, not a workaround.
+func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, lines int, follow bool) {
+	logPath := filepath.Join(manager.CreateLogDirPath(baseDir), logFileName)
 
 	if _, err := os.Stat(logPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
@@ -235,6 +244,84 @@ func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 	}
 }
 
+// launchdDaemonController is the macOS analog of systemdDaemonController. It keeps
+// baseDir so Logs can tail the daemon's own log file (see tailDaemonLogFile) — launchd,
+// unlike systemd/journald, has no persistent unified log to delegate to.
+type launchdDaemonController struct {
+	baseDir string
+	cfg     config.LaunchdConfig
+}
+
+// domain returns "system" for a LaunchDaemon, or "gui/<uid>" for a LaunchAgent —
+// resolving the target user's uid via userutil.EffectiveUser() since os.Getuid() is 0
+// under sudo while the LaunchAgent's gui session belongs to the invoking user.
+func (c launchdDaemonController) domain() string {
+	if !c.cfg.UserAgent {
+		return "system"
+	}
+	uid := os.Getuid()
+	if effectiveUser, err := userutil.EffectiveUser(); err == nil {
+		if euid, _, credErr := userutil.UserCredentials(effectiveUser); credErr == nil {
+			uid = int(euid)
+		}
+	}
+	return launchdDomain(true, uid)
+}
+
+func (c launchdDaemonController) target() string {
+	return c.domain() + "/" + launchdLabel(c.cfg.LaunchdPlistFileName)
+}
+
+func (c launchdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
+	if !c.cfg.UserAgent && os.Getuid() != 0 {
+		return errors.New("requires root — run with sudo")
+	}
+	plistPath := filepath.Join(c.cfg.LaunchdTargetDir, c.cfg.LaunchdPlistFileName)
+	out, err := exec.CommandContext(ctx, "launchctl", "bootstrap", c.domain(), plistPath).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input
+	if err != nil {
+		return fmt.Errorf("starting launchd service: %s", out)
+	}
+	return nil
+}
+
+// Stop uses "launchctl bootout", which stops the job and unloads it — the plist stays
+// on disk so it starts again at next boot/login, matching systemd stop's behavior of
+// stopping now without disabling the unit. Exit code 3 ("No such process") means the
+// job wasn't loaded, i.e. already stopped — treated the same as systemd stop on an
+// already-stopped unit (killed=false, no error), verified empirically via launchctl.
+func (c launchdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
+	target := c.target()
+	helpers.Debugf(cmd, verbose, "running: launchctl bootout %s", target)
+	out, err := exec.CommandContext(ctx, "launchctl", "bootout", target).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+			helpers.Debugf(cmd, verbose, "launchctl bootout: job was not loaded")
+			return false, nil
+		}
+		helpers.Debugf(cmd, verbose, "launchctl exited with error: %s", strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("stopping launchd service: %s", out)
+	}
+	helpers.Debugf(cmd, verbose, "launchctl bootout succeeded")
+	return true, nil
+}
+
+func (c launchdDaemonController) Remove() error {
+	return os.Remove(filepath.Join(c.cfg.LaunchdTargetDir, c.cfg.LaunchdPlistFileName))
+}
+
+func (c launchdDaemonController) Info(cmd *cobra.Command) {
+	printLaunchdDaemonDetails(cmd, c.cfg.UserAgent)
+}
+
+func (c launchdDaemonController) LogsHint() string {
+	return "eos daemon logs"
+}
+
+func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
+	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
+}
+
 func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool) (DaemonController, error) {
 	if cfg.Standalone != nil {
 		return &standaloneDaemonController{
@@ -248,7 +335,10 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 	if cfg.Systemd != nil {
 		return systemdDaemonController{cfg: *cfg.Systemd}, nil
 	}
-	return nil, errors.New("invalid daemon config: both standalone and systemd are nil")
+	if cfg.Launchd != nil {
+		return launchdDaemonController{cfg: *cfg.Launchd, baseDir: baseDir}, nil
+	}
+	return nil, errors.New("invalid daemon config: standalone, systemd, and launchd are all nil")
 }
 
 // buildDaemonSubcmds attaches all daemon subcommands to daemonCmd.
@@ -546,6 +636,20 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
+	cmd.Println()
+}
+
+func printLaunchdDaemonDetails(cmd *cobra.Command, userAgent bool) {
+	statusCmd := "sudo launchctl print system/" + config.LaunchdLabel
+	scope := "launch daemon"
+	if userAgent {
+		scope = "launch agent"
+		statusCmd = "launchctl print gui/$(id -u)/" + config.LaunchdLabel
+	}
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(fmt.Sprintf("daemon is launchd managed (%s)", scope)))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check launchd service status") + "\n")
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → tail daemon log file") + "\n")
 	cmd.Println()
 }
 

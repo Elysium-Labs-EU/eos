@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -170,6 +171,20 @@ eos is a service supervisor.
 	return rootCmd
 }
 
+func newStandaloneDaemonConfig(baseDir string, logCfg config.EosLogConfig) *config.StandaloneDaemonConfig {
+	return &config.StandaloneDaemonConfig{
+		PIDFile:       filepath.Clean(filepath.Join(baseDir, config.DaemonPIDFile)),
+		SocketPath:    filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
+		SocketTimeout: safeParseDuration(config.DaemonSocketTimeout, time.Second*5),
+		Log: config.DaemonLogConfig{
+			LogDir:           manager.CreateLogDirPath(baseDir),
+			LogFileName:      config.DaemonLogFileName,
+			LogMaxFiles:      logCfg.MaxFiles,
+			LogFileSizeLimit: logCfg.FileSizeLimitBytes,
+		},
+	}
+}
+
 func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, systemdDir string, userUnit bool, logCfg config.EosLogConfig) config.DaemonConfig {
 	// When invoked BY systemd (INVOCATION_ID set) we ARE the daemon process —
 	// run standalone in the foreground. Only delegate to systemctl when a human
@@ -186,17 +201,29 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, s
 	}
 
 	return config.DaemonConfig{
-		Standalone: &config.StandaloneDaemonConfig{
-			PIDFile:       filepath.Clean(filepath.Join(baseDir, config.DaemonPIDFile)),
-			SocketPath:    filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
-			SocketTimeout: safeParseDuration(config.DaemonSocketTimeout, time.Second*5),
-			Log: config.DaemonLogConfig{
-				LogDir:           manager.CreateLogDirPath(baseDir),
-				LogFileName:      config.DaemonLogFileName,
-				LogMaxFiles:      logCfg.MaxFiles,
-				LogFileSizeLimit: logCfg.FileSizeLimitBytes,
-			}},
-		Systemd: nil,
+		Standalone: newStandaloneDaemonConfig(baseDir, logCfg),
+		Systemd:    nil,
+	}
+}
+
+func newDaemonConfigLaunchd(baseDir string, isLaunchdManaged bool, underLaunchd bool, launchdDir string, userAgent bool, logCfg config.EosLogConfig) config.DaemonConfig {
+	// When invoked BY launchd (XPC_SERVICE_NAME set) we ARE the daemon process —
+	// run standalone in the foreground. Only delegate to launchctl when a human
+	// calls "eos daemon start" from outside launchd.
+	if isLaunchdManaged && !underLaunchd {
+		return config.DaemonConfig{
+			Standalone: nil,
+			Launchd: &config.LaunchdConfig{
+				LaunchdTargetDir:     launchdDir,
+				LaunchdPlistFileName: config.LaunchdPlistFileName,
+				UserAgent:            userAgent,
+			},
+		}
+	}
+
+	return config.DaemonConfig{
+		Standalone: newStandaloneDaemonConfig(baseDir, logCfg),
+		Launchd:    nil,
 	}
 }
 
@@ -219,11 +246,20 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		FileSizeLimitBytes: overrideInt64ConfigValue("DAEMON_LOG_FILE_SIZE_LIMIT", eosCfg.Log.FileSizeLimitBytes),
 	}
 
-	systemdDir, isSystemdManaged, userUnit, err := config.ResolveSystemdScope(overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir))
-	if err != nil {
-		return "", "", nil, fmt.Errorf("resolving systemd scope: %w", err)
+	var daemonConfig config.DaemonConfig
+	if runtime.GOOS == "darwin" {
+		launchdDir, isLaunchdManaged, userAgent, launchdErr := config.ResolveLaunchdScope(overrideStringConfigValue("EOS_LAUNCHD_TARGET_DIR", config.LaunchdTargetDir))
+		if launchdErr != nil {
+			return "", "", nil, fmt.Errorf("resolving launchd scope: %w", launchdErr)
+		}
+		daemonConfig = newDaemonConfigLaunchd(baseDir, isLaunchdManaged, config.IsUnderLaunchd(), launchdDir, userAgent, logCfg)
+	} else {
+		systemdDir, isSystemdManaged, userUnit, systemdErr := config.ResolveSystemdScope(overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir))
+		if systemdErr != nil {
+			return "", "", nil, fmt.Errorf("resolving systemd scope: %w", systemdErr)
+		}
+		daemonConfig = newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), systemdDir, userUnit, logCfg)
 	}
-	daemonConfig := newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), systemdDir, userUnit, logCfg)
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
 	if restartCounterResetWindow <= 0 {
