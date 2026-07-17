@@ -53,6 +53,7 @@ eos is a service supervisor.
 
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
+	rootCmd.AddCommand(newEnvCmd(getManager))
 	rootCmd.AddCommand(newLogsCmd(getManager))
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
@@ -153,6 +154,7 @@ eos is a service supervisor.
 
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
+	rootCmd.AddCommand(newEnvCmd(getManager))
 	rootCmd.AddCommand(newLogsCmd(getManager))
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
