@@ -982,30 +982,12 @@ func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) 
 	}
 
 	if config.EnvFile != "" {
-		envFilePath := filepath.Clean(filepath.Join(serviceDirectoryPath, config.EnvFile))
-
-		// Prevents path traversal outside service directory
-		if !strings.HasPrefix(envFilePath, filepath.Clean(serviceDirectoryPath)+string(filepath.Separator)) && envFilePath != filepath.Clean(serviceDirectoryPath) {
-			return nil, fmt.Errorf("env file path %q escapes service directory", config.EnvFile)
+		envFileVars, err := ParseEnvFile(config, serviceDirectoryPath)
+		if err != nil {
+			return nil, err
 		}
-
-		envFileContents, readErr := os.ReadFile(filepath.Clean(filepath.Join(serviceDirectoryPath, config.EnvFile)))
-		if readErr != nil {
-			return nil, fmt.Errorf("reading env file: %w", readErr)
-		}
-		for envVar := range strings.SplitSeq(string(envFileContents), "\n") {
-			envVar = strings.TrimSpace(envVar)
-			if envVar == "" {
-				continue
-			}
-			if strings.HasPrefix(envVar, "#") {
-				continue
-			}
-			before, _, found := strings.Cut(envVar, "=")
-			if !found {
-				continue
-			}
-
+		for _, envVar := range envFileVars {
+			before, _, _ := strings.Cut(envVar, "=")
 			index, _ := doesEnvVarAlreadyExist(before+"=", env)
 			if index > -1 {
 				env[index] = envVar
@@ -1016,6 +998,69 @@ func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) 
 	}
 
 	return env, nil
+}
+
+// ResolveEnvFilePath returns the absolute path to a service's env_file,
+// rejecting paths that escape the service directory. Returns an empty string
+// if config.EnvFile is unset.
+func ResolveEnvFilePath(config *types.ServiceConfig, serviceDirectoryPath string) (string, error) {
+	if config.EnvFile == "" {
+		return "", nil
+	}
+
+	cleanedServiceDirectoryPath := filepath.Clean(serviceDirectoryPath)
+	envFilePath := filepath.Clean(filepath.Join(cleanedServiceDirectoryPath, config.EnvFile))
+
+	// Prevents path traversal outside service directory
+	if !strings.HasPrefix(envFilePath, cleanedServiceDirectoryPath+string(filepath.Separator)) && envFilePath != cleanedServiceDirectoryPath {
+		return "", fmt.Errorf("env file path %q escapes service directory", config.EnvFile)
+	}
+
+	return envFilePath, nil
+}
+
+// ParseEnvFile resolves the KEY=VALUE pairs defined in a service's env_file,
+// relative to its service directory. Returns nil if config.EnvFile is unset.
+// Later duplicate keys within the file override earlier ones.
+func ParseEnvFile(config *types.ServiceConfig, serviceDirectoryPath string) ([]string, error) {
+	if config.EnvFile == "" {
+		return nil, nil
+	}
+
+	envFilePath, pathErr := ResolveEnvFilePath(config, serviceDirectoryPath)
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
+	// #nosec G304 - envFilePath validated against traversal by ResolveEnvFilePath above
+	envFileContents, readErr := os.ReadFile(envFilePath)
+	if readErr != nil {
+		return nil, fmt.Errorf("reading env file: %w", readErr)
+	}
+
+	envFileVars := []string{}
+	for envVar := range strings.SplitSeq(string(envFileContents), "\n") {
+		envVar = strings.TrimSpace(envVar)
+		if envVar == "" {
+			continue
+		}
+		if strings.HasPrefix(envVar, "#") {
+			continue
+		}
+		before, _, found := strings.Cut(envVar, "=")
+		if !found {
+			continue
+		}
+
+		index, _ := doesEnvVarAlreadyExist(before+"=", envFileVars)
+		if index > -1 {
+			envFileVars[index] = envVar
+		} else {
+			envFileVars = append(envFileVars, envVar)
+		}
+	}
+
+	return envFileVars, nil
 }
 
 func doesEnvVarAlreadyExist(envName string, env []string) (int, string) {
