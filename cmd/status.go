@@ -83,19 +83,16 @@ func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval i
 // their own base dir). Resolution failures degrade gracefully instead of
 // hiding the "no services" message behind an unrelated error.
 func daemonIdentity() string {
-	baseDir, baseDirErr := config.GetBaseDir()
-	u, userErr := userutil.EffectiveUser()
-
-	switch {
-	case baseDirErr == nil && userErr == nil:
-		return fmt.Sprintf("for user %s (base dir: %s)", u.Username, baseDir)
-	case userErr == nil:
-		return fmt.Sprintf("for user %s", u.Username)
-	case baseDirErr == nil:
-		return fmt.Sprintf("(base dir: %s)", baseDir)
-	default:
+	identity, identityErr := userutil.ResolveIdentity()
+	if identityErr != nil {
 		return ""
 	}
+
+	baseDir, baseDirErr := config.GetBaseDir(identity)
+	if baseDirErr != nil {
+		return fmt.Sprintf("for user %s", identity.Username())
+	}
+	return fmt.Sprintf("for user %s (base dir: %s)", identity.Username(), baseDir)
 }
 
 func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
