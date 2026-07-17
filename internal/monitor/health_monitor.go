@@ -19,8 +19,16 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/cronutil"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
+
+// cpuSample is the previous CPU-time reading for a service, used to turn two
+// cumulative readings into an interval CPU percentage.
+type cpuSample struct {
+	at  time.Time
+	cpu time.Duration
+}
 
 type Monitor interface {
 	Start(ctx context.Context)
@@ -42,6 +50,7 @@ type HealthMonitor struct {
 	db                        *database.DB
 	logger                    *slog.Logger
 	lastMemSample             map[string]time.Time
+	lastCPUSample             map[string]cpuSample
 	checkInterval             time.Duration
 	memSampleInterval         time.Duration
 	timeoutLimit              time.Duration
@@ -97,6 +106,7 @@ func NewHealthMonitor(
 		checkInterval:             checkInterval,
 		memSampleInterval:         memSampleInterval,
 		lastMemSample:             make(map[string]time.Time),
+		lastCPUSample:             make(map[string]cpuSample),
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
 		maxRestartCount:           healthConfig.MaxRestart,
@@ -229,9 +239,10 @@ func (hm *HealthMonitor) checkStartProcess(
 	}
 }
 
-func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, rssMemoryKb *int64, serviceName string) {
+func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, rssMemoryKb *int64, cpuPercent *float64, serviceName string) {
 	err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		RssMemoryKb: rssMemoryKb,
+		CPUPercent:  cpuPercent,
 	})
 	if err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
@@ -263,9 +274,10 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
 
 	rssKb, sampled := hm.measureRSS(pgid, serviceName)
+	cpuPct, cpuSampled := hm.measureCPU(pgid, serviceName)
 
 	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
-	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled)
+	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled, cpuPct, cpuSampled)
 }
 
 // checkCronRestart restarts a running service when its cron_restart schedule
@@ -357,9 +369,10 @@ func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, servic
 
 // dispatchMemoryAction acts on the outcome of evaluateMemoryThresholds: log-only for
 // warnings, a graduated restart for soft/force thresholds, or a plain history update.
-func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, pgid int, rssKb int64, sampled bool) {
+func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, pgid int, rssKb int64, sampled bool, cpuPct float64, cpuSampled bool) {
 	serviceName := service.Name
 	rssPtr := rssKbPtr(rssKb, sampled)
+	cpuPtr := cpuPctPtr(cpuPct, cpuSampled)
 
 	switch action {
 	case ReasonWarning:
@@ -369,14 +382,14 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
 			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 		}
-		hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
+		hm.updateProcessEntry(ctx, pgid, rssPtr, cpuPtr, serviceName)
 	case ReasonSoftRestart:
 		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "soft", 5*time.Second, 200*time.Millisecond)
 	case ReasonForceRestart:
 		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "force", 1*time.Second, 10*time.Millisecond)
 	case ReasonNone:
-		if sampled {
-			hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
+		if rssPtr != nil || cpuPtr != nil {
+			hm.updateProcessEntry(ctx, pgid, rssPtr, cpuPtr, serviceName)
 		}
 	}
 }
@@ -393,7 +406,7 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
 	newPgid, err := hm.mgr.RestartService(service.Name, gracePeriod, tickerPeriod)
 	if err != nil {
-		hm.updateProcessEntry(ctx, pgid, rssPtr, serviceName)
+		hm.updateProcessEntry(ctx, pgid, rssPtr, nil, serviceName)
 		hm.logger.Error("restarting on "+label+" restart threshold", "service", serviceName, "error", err)
 		return
 	}
@@ -404,8 +417,11 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 		hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
 	}
 	delete(hm.lastMemSample, serviceName)
+	// The restarted service has a new PGID; drop the old CPU baseline so the
+	// next tick reseeds instead of diffing against the dead process's total.
+	delete(hm.lastCPUSample, serviceName)
 	newRssKb, newSampled := hm.measureRSS(newPgid, serviceName)
-	hm.updateProcessEntry(ctx, newPgid, rssKbPtr(newRssKb, newSampled), serviceName)
+	hm.updateProcessEntry(ctx, newPgid, rssKbPtr(newRssKb, newSampled), nil, serviceName)
 }
 
 func rssKbPtr(rssKb int64, sampled bool) *int64 {
@@ -413,6 +429,13 @@ func rssKbPtr(rssKb int64, sampled bool) *int64 {
 		return nil
 	}
 	return &rssKb
+}
+
+func cpuPctPtr(cpuPct float64, sampled bool) *float64 {
+	if !sampled {
+		return nil
+	}
+	return &cpuPct
 }
 
 func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
@@ -592,6 +615,43 @@ func scanStatusFieldBytes(contents []byte, field []byte) []byte {
 		return bytes.TrimSpace(line[len(field):])
 	}
 	return nil
+}
+
+// measureCPU returns (cpuPercent, true) once it has two readings spanning at
+// least the sample interval, where 100.0 means one core fully busy. The first
+// reading (or the first after a restart clears the service's entry) seeds the
+// baseline and returns (0, false): a percentage needs a delta between two
+// cumulative CPU-time readings, so it can't be computed from a single sample.
+// CPU time is summed across the PGID, the same scope as measureRSS.
+func (hm *HealthMonitor) measureCPU(pgid int, serviceName string) (float64, bool) {
+	prev, hadPrev := hm.lastCPUSample[serviceName]
+	if hadPrev && time.Since(prev.at) < hm.memSampleInterval {
+		return 0, false
+	}
+
+	cpu, err := procutil.CPUTime(pgid)
+	if err != nil {
+		// Unsupported platform or a transient read failure: skip this sample
+		// without disturbing the stored baseline.
+		return 0, false
+	}
+	now := time.Now()
+	hm.lastCPUSample[serviceName] = cpuSample{at: now, cpu: cpu}
+
+	if !hadPrev {
+		return 0, false
+	}
+	elapsed := now.Sub(prev.at)
+	if elapsed <= 0 {
+		return 0, false
+	}
+	percent := (cpu - prev.cpu).Seconds() / elapsed.Seconds() * 100
+	if percent < 0 {
+		// CPU time can't decrease; a negative delta means the PGID was reused
+		// by an unrelated process. Treat it as a fresh baseline.
+		return 0, false
+	}
+	return percent, true
 }
 
 // measureRSS returns (rssKb, true) when a sample was taken,

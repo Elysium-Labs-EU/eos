@@ -114,7 +114,12 @@ type ProcessHistory struct {
 	ServiceName string       `json:"service_name" yaml:"service_name"`
 	State       ProcessState `json:"state" yaml:"state"`
 	RssMemoryKb int64        `json:"rss_memory_kb" yaml:"rss_memory_kb"`
-	PGID        int          `json:"pgid" yaml:"pgid"`
+	// CPUPercent is the most recent per-service CPU usage, sampled on a health
+	// tick as the delta of accumulated CPU time (utime+stime) across the PGID
+	// over the sampling interval. 100.0 means one core fully busy; a service
+	// spanning several busy cores can exceed 100.
+	CPUPercent float64 `json:"cpu_percent" yaml:"cpu_percent"`
+	PGID       int     `json:"pgid" yaml:"pgid"`
 	// StartedAtTicks is an opaque, platform-specific process start-time
 	// marker (see procutil.StartTime) captured at launch alongside PGID.
 	// PGIDs get recycled by the kernel; comparing this value alongside PGID

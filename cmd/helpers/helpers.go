@@ -93,6 +93,20 @@ func DetermineProcessMemoryInMbAPI(rssMemoryKb int64, status types.ServiceStatus
 	return new(fmt.Sprintf("%.1f MB", float64(rssMemoryKb)/1024))
 }
 
+// DetermineProcessCPUHuman formats a per-service CPU percentage for status
+// output. Unlike memory, 0% is a meaningful reading (an idle-but-running
+// service), so a running service always shows a number; only stopped/failed
+// services collapse to "-".
+func DetermineProcessCPUHuman(cpuPercent float64, status types.ServiceStatus) string {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+		return "-"
+	}
+	if cpuPercent < 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f%%", cpuPercent)
+}
+
 func DetermineError(errorStringPtr *string) string {
 	if errorStringPtr == nil {
 		return "-"

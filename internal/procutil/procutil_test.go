@@ -63,6 +63,61 @@ func killAndReap(t *testing.T, cmd *exec.Cmd) {
 	_ = cmd.Wait()
 }
 
+// TestCPUTime_IdleProcess checks that a sleeping group leader accumulates
+// essentially no CPU time between two readings.
+func TestCPUTime_IdleProcess(t *testing.T) {
+	cmd, pgid := launchGroupLeader(t) // sleep 30 — idle
+	defer killAndReap(t, cmd)
+
+	first, err := CPUTime(pgid)
+	if err != nil {
+		t.Fatalf("CPUTime(%d): %v", pgid, err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	second, err := CPUTime(pgid)
+	if err != nil {
+		t.Fatalf("CPUTime(%d) second read: %v", pgid, err)
+	}
+
+	// An idle process should burn well under 50ms of CPU over 300ms of sleep.
+	if delta := second - first; delta > 50*time.Millisecond {
+		t.Errorf("idle CPUTime delta = %v, want ~0", delta)
+	}
+}
+
+// TestCPUTime_BusyProcess checks that a process spinning in a tight loop
+// accumulates a growing amount of CPU time.
+func TestCPUTime_BusyProcess(t *testing.T) {
+	// Group leader spinning a busy loop; drives real utime/stime.
+	cmd := exec.Command("sh", "-c", "while :; do :; done")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start busy loop: %v", err)
+	}
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("Getpgid: %v", err)
+	}
+	defer killAndReap(t, cmd)
+
+	first, err := CPUTime(pgid)
+	if err != nil {
+		t.Fatalf("CPUTime(%d): %v", pgid, err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	second, err := CPUTime(pgid)
+	if err != nil {
+		t.Fatalf("CPUTime(%d) second read: %v", pgid, err)
+	}
+
+	// A fully busy single process should accrue a large fraction of the wall
+	// interval as CPU time; require at least 100ms over the 400ms window.
+	if delta := second - first; delta < 100*time.Millisecond {
+		t.Errorf("busy CPUTime delta = %v, want a substantial fraction of 400ms", delta)
+	}
+}
+
 func TestStartTime(t *testing.T) {
 	cmd, pgid := launchGroupLeader(t)
 	defer killAndReap(t, cmd)
