@@ -26,6 +26,11 @@ jobs:
 
   test:
     runs-on: codeberg-small
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-latest
+      volumes:
+        - gomodcache-eos:/root/go/pkg/mod
+        - gobuildcache-eos:/root/.cache/go-build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -58,6 +63,11 @@ jobs:
             goarch: arm64
             artifact: eos-linux-arm64
     runs-on: codeberg-medium
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-latest
+      volumes:
+        - gomodcache-eos:/root/go/pkg/mod
+        - gobuildcache-eos:/root/.cache/go-build
 
     steps:
       - name: Checkout code
