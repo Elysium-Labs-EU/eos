@@ -1390,3 +1390,99 @@ func TestSupportedPlatformsMatchCheckForUpdates(t *testing.T) {
 		}
 	}
 }
+
+type stubUpdateController struct {
+	stopErr    error
+	startErr   error
+	startCount int
+	killed     bool
+}
+
+func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
+	s.startCount++
+	return s.startErr
+}
+func (s *stubUpdateController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
+	return s.killed, s.stopErr
+}
+func (s *stubUpdateController) Remove() error                        { return nil }
+func (s *stubUpdateController) Info(_ *cobra.Command)                {}
+func (s *stubUpdateController) Logs(_ *cobra.Command, _ int, _ bool) {}
+func (s *stubUpdateController) LogsHint() string                     { return "eos daemon logs" }
+
+func TestRestartDaemonAfterUpdate(t *testing.T) {
+	t.Run("declined leaves manual restart hint", func(t *testing.T) {
+		cmd, outBuf, _, _ := setupCmd(t)
+		setStdin(cmd, "n\n")
+		ctrl := &stubUpdateController{}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error when declined, got %v", err)
+		}
+		if ctrl.startCount != 0 {
+			t.Errorf("Start should not be called when restart declined")
+		}
+		if !strings.Contains(outBuf.String(), "manual daemon restart required") {
+			t.Errorf("expected manual restart hint, got %s", outBuf.String())
+		}
+	})
+
+	t.Run("not running short-circuits before start", func(t *testing.T) {
+		cmd, outBuf, _, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{killed: false}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if ctrl.startCount != 0 {
+			t.Errorf("Start should not be called when daemon was not running")
+		}
+		if !strings.Contains(outBuf.String(), "daemon was not running") {
+			t.Errorf("expected not-running message, got %s", outBuf.String())
+		}
+	})
+
+	t.Run("stop error fails the command", func(t *testing.T) {
+		cmd, _, _, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{stopErr: errors.New("boom")}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
+			t.Fatal("expected error when stop fails")
+		}
+	})
+
+	t.Run("start error surfaces logs hint", func(t *testing.T) {
+		cmd, _, errBuf, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{killed: true, startErr: errors.New("nope")}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
+			t.Fatal("expected error when start fails")
+		}
+		if !strings.Contains(errBuf.String(), "eos daemon logs") {
+			t.Errorf("expected logs hint in output, got %s", errBuf.String())
+		}
+	})
+
+	t.Run("successful restart cleans up and reports success", func(t *testing.T) {
+		cmd, outBuf, _, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{killed: true}
+		tempDir := t.TempDir()
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, tempDir, "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if ctrl.startCount != 1 {
+			t.Errorf("expected Start called once, got %d", ctrl.startCount)
+		}
+		if !strings.Contains(outBuf.String(), "eos updated to") {
+			t.Errorf("expected success message, got %s", outBuf.String())
+		}
+		if _, statErr := os.Stat(tempDir); !os.IsNotExist(statErr) {
+			t.Errorf("expected temp dir removed, stat err = %v", statErr)
+		}
+	})
+}
