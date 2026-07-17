@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -110,7 +111,15 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 		errs = append(errs, fmt.Errorf("runtime: %w", err))
 	}
 	for i := range config.LogSinks {
-		if sinkErrs := ValidateLogSink(&config.LogSinks[i]); len(sinkErrs) > 0 {
+		ref := &config.LogSinks[i]
+		if ref.Inline == nil {
+			// Name reference into the daemon's sink registry; the registry
+			// isn't in scope during standalone service.yaml validation, so
+			// resolution and validation of the referenced sink happens at
+			// service start time via ResolveLogSinks.
+			continue
+		}
+		if sinkErrs := ValidateLogSink(ref.Inline); len(sinkErrs) > 0 {
 			for _, e := range sinkErrs {
 				errs = append(errs, fmt.Errorf("log_sinks[%d]: %w", i, e))
 			}
@@ -147,6 +156,40 @@ func DetectSelfDetachRisk(command string) []string {
 		}
 	}
 	return warnings
+}
+
+// ResolveLogSinks resolves a service's log_sinks entries against the
+// daemon's named sink registry (~/.eos/config.yaml sinks:). Inline sink
+// configs pass through unchanged; name references are looked up in
+// registry. An unknown name is a hard error; sinks are how logs leave the
+// system, so a typo should fail loudly at start time rather than silently
+// drop a sink.
+func ResolveLogSinks(serviceName string, refs []types.LogSinkRef, registry map[string]types.LogSink) ([]types.LogSink, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	resolved := make([]types.LogSink, 0, len(refs))
+	for i, ref := range refs {
+		if ref.Inline != nil {
+			resolved = append(resolved, *ref.Inline)
+			continue
+		}
+		sink, ok := registry[ref.Name]
+		if !ok {
+			return nil, fmt.Errorf("service '%s': log_sinks[%d]: unknown sink %q — registered: %s", serviceName, i, ref.Name, formatRegisteredSinkNames(registry))
+		}
+		resolved = append(resolved, sink)
+	}
+	return resolved, nil
+}
+
+func formatRegisteredSinkNames(registry map[string]types.LogSink) string {
+	names := make([]string, 0, len(registry))
+	for name := range registry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 var validStreams = map[string]bool{"stdout": true, "stderr": true}

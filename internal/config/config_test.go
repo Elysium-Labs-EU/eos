@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
@@ -276,5 +277,64 @@ func TestEosConfig_Validate_BackoffMaxLessThanBase(t *testing.T) {
 	cfg.Health.Backoff.MaxMs = 500
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected error when maxMs < baseMs, got nil")
+	}
+}
+
+func TestLoadEosConfig_Sinks(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `sinks:
+  prod-loki:
+    type: loki
+    mode: push
+    address: http://loki:3100
+  local-file:
+    type: file
+    mode: serve
+    address: /var/log/eos
+`
+	if err := os.WriteFile(filepath.Join(dir, EosConfigFileName), []byte(yaml), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadEosConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Sinks) != 2 {
+		t.Fatalf("expected 2 registered sinks, got %d", len(cfg.Sinks))
+	}
+	loki, ok := cfg.Sinks["prod-loki"]
+	if !ok {
+		t.Fatal("expected sink \"prod-loki\" to be registered")
+	}
+	if loki.Type != "loki" || loki.Address != "http://loki:3100" {
+		t.Errorf("prod-loki: unexpected sink %+v", loki)
+	}
+	if _, ok := cfg.Sinks["local-file"]; !ok {
+		t.Fatal("expected sink \"local-file\" to be registered")
+	}
+}
+
+func TestLoadEosConfig_SinksAbsent(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadEosConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Sinks != nil {
+		t.Errorf("expected nil sink registry by default, got %+v", cfg.Sinks)
+	}
+}
+
+func TestEosConfig_Validate_SinkMissingType(t *testing.T) {
+	cfg := DefaultEosConfig()
+	cfg.Sinks = map[string]types.LogSink{
+		"broken": {Address: "http://example.com"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for sink missing type, got nil")
+	}
+	if !strings.Contains(err.Error(), "sinks.broken") {
+		t.Errorf("expected error to mention sinks.broken, got: %v", err)
 	}
 }
