@@ -11,10 +11,6 @@ on:
       - develop
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pull-requests: read
-
 jobs:
   test:
     name: Test
@@ -82,6 +78,7 @@ jobs:
 
       - name: Upload snapshot
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v3
         with:
           name: bench-mem-${{ github.sha }}

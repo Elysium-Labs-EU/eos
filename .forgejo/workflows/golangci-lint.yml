@@ -11,10 +11,6 @@ on:
       - develop
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pull-requests: read
-
 jobs:
   golangci:
     name: lint
