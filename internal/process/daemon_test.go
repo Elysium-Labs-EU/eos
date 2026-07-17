@@ -60,7 +60,7 @@ func TestReconcileOrphans_TerminalStates(t *testing.T) {
 			if err := db.RegisterService(t.Context(), "svc", "/opt/svc", "service.yaml"); err != nil {
 				t.Fatalf("RegisterService: %v", err)
 			}
-			if _, err := db.RegisterProcessHistoryEntry(t.Context(), 12345, "svc", state); err != nil {
+			if _, err := db.RegisterProcessHistoryEntry(t.Context(), 12345, 0, "svc", state); err != nil {
 				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 			}
 
@@ -101,7 +101,7 @@ func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
 				_ = cmd.Wait()
 			})
 
-			if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, "svc", state); err != nil {
+			if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, "svc", state); err != nil {
 				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 			}
 
@@ -132,7 +132,7 @@ func TestReconcileOrphans_ActiveStates(t *testing.T) {
 			if err := db.RegisterService(t.Context(), "svc", "/opt/svc", "service.yaml"); err != nil {
 				t.Fatalf("RegisterService: %v", err)
 			}
-			if _, err := db.RegisterProcessHistoryEntry(t.Context(), 2000001, "svc", state); err != nil {
+			if _, err := db.RegisterProcessHistoryEntry(t.Context(), 2000001, 0, "svc", state); err != nil {
 				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 			}
 
@@ -175,7 +175,7 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 		if err := db.RegisterService(t.Context(), svc.name, "/opt/"+svc.name, "service.yaml"); err != nil {
 			t.Fatalf("RegisterService %s: %v", svc.name, err)
 		}
-		if _, err := db.RegisterProcessHistoryEntry(t.Context(), svc.pgid, svc.name, svc.state); err != nil {
+		if _, err := db.RegisterProcessHistoryEntry(t.Context(), svc.pgid, 0, svc.name, svc.state); err != nil {
 			t.Fatalf("RegisterProcessHistoryEntry %s: %v", svc.name, err)
 		}
 	}

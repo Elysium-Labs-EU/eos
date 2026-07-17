@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/database"
+	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
@@ -237,7 +238,7 @@ func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 	}
 
 	// Simulate a daemon crash mid-start: a Starting entry whose PGID is dead.
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, "test-service", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "test-service", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestStartServiceSelfHealsStaleServiceInstance(t *testing.T) {
 	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, "test-service", types.ProcessStateRunning); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "test-service", types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -391,11 +392,15 @@ func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Getpgid: %v", err)
 	}
+	livePGIDStartedAtTicks, err := procutil.StartTime(livePGID)
+	if err != nil {
+		t.Fatalf("StartTime: %v", err)
+	}
 
 	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, "test-service", types.ProcessStateRunning); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, livePGIDStartedAtTicks, "test-service", types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -639,10 +644,10 @@ func TestStopServiceWithSignal_stopped(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71001, name, types.ProcessStateStopped); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71001, 0, name, types.ProcessStateStopped); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry stopped: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71002, name, types.ProcessStateFailed); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71002, 0, name, types.ProcessStateFailed); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
@@ -667,7 +672,7 @@ func TestStopServiceWithSignal_deadPGID(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, name, types.ProcessStateRunning); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, name, types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -688,7 +693,7 @@ func TestStopService_noLiveProcesses(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 72001, name, types.ProcessStateStopped); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 72001, 0, name, types.ProcessStateStopped); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -713,7 +718,7 @@ func TestStopService_deadPGID(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, name, types.ProcessStateRunning); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, name, types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -738,7 +743,7 @@ func TestForceStopService_deadPGID(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, name, types.ProcessStateRunning); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, name, types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -760,7 +765,7 @@ func TestUpdateProcessHistoryEntriesAsStopped(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, name, types.ProcessStateRunning); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, name, types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -779,7 +784,7 @@ func TestUpdateProcessHistoryEntriesAsUnknown(t *testing.T) {
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, name, types.ProcessStateRunning); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, name, types.ProcessStateRunning); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
@@ -856,7 +861,7 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 	}
 
 	// Register a first entry — started_at will be set by the INSERT.
-	_, err := db.RegisterProcessHistoryEntry(t.Context(), 1001, serviceName, types.ProcessStateFailed)
+	_, err := db.RegisterProcessHistoryEntry(t.Context(), 1001, 0, serviceName, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry first: %v", err)
 	}
@@ -869,7 +874,7 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 	}
 
 	// Register a second (newer) entry — this is the one we expect to get back.
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1002, serviceName, types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1002, 0, serviceName, types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry second: %v", err)
 	}

@@ -77,6 +77,12 @@ type ProcessHistory struct {
 	State       ProcessState `json:"state" yaml:"state"`
 	RssMemoryKb int64        `json:"rss_memory_kb" yaml:"rss_memory_kb"`
 	PGID        int          `json:"pgid" yaml:"pgid"`
+	// StartedAtTicks is an opaque, platform-specific process start-time
+	// marker (see procutil.StartTime) captured at launch alongside PGID.
+	// PGIDs get recycled by the kernel; comparing this value alongside PGID
+	// during liveness checks rules out a false match against an unrelated
+	// later process that reused the same PGID.
+	StartedAtTicks int64 `json:"started_at_ticks" yaml:"started_at_ticks"`
 }
 
 type RunningProcess struct {

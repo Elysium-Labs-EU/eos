@@ -159,7 +159,7 @@ func TestProcessHistoryCRUD(t *testing.T) {
 	state := types.ProcessStateRunning
 
 	// Create
-	entry, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, state)
+	entry, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, state)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestProcessHistoryUpdates(t *testing.T) {
 	pgid := 54321
 	initialState := types.ProcessStateStarting
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, initialState)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, initialState)
 	if err != nil {
 		t.Fatalf("Failed to register process history entry: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestProcessHistoryQueryByService(t *testing.T) {
 	// Create multiple process history entries
 	pgids := []int{11111, 22222, 33333}
 	for _, pgid := range pgids {
-		_, registerErr := db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, types.ProcessStateRunning)
+		_, registerErr := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateRunning)
 		if registerErr != nil {
 			t.Fatalf("Failed to register process %d: %v", pgid, registerErr)
 		}

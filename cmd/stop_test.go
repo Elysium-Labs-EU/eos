@@ -393,7 +393,7 @@ func TestStopCommandMultipleProcesses(t *testing.T) {
 	// Register a second, unreachable PGID as a leftover "running" process
 	// for the same service; StopService should find it already dead.
 	const deadPGID = 999999
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, testFile.Name, types.ProcessStateRunning)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, testFile.Name, types.ProcessStateRunning)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}

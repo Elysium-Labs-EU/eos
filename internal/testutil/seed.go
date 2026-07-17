@@ -109,8 +109,9 @@ func SeedServiceInstances(t testing.TB, ctx context.Context, db database.Databas
 type HistoryOption func(*historyDefaults)
 
 type historyDefaults struct {
-	state    types.ProcessState
-	basePGID int
+	state          types.ProcessState
+	basePGID       int
+	startedAtTicks int64
 }
 
 func WithHistoryState(s types.ProcessState) HistoryOption {
@@ -120,6 +121,14 @@ func WithHistoryState(s types.ProcessState) HistoryOption {
 // WithBasePGID sets the starting PGID. Default: 10000. Increment across calls to avoid PK collisions.
 func WithBasePGID(base int) HistoryOption {
 	return func(d *historyDefaults) { d.basePGID = base }
+}
+
+// WithHistoryStartedAtTicks sets the started_at_ticks value stored alongside every seeded
+// PGID (see procutil.StartTime). Default: 0 — fine for the common case of a PGID that
+// isn't expected to pass a liveness match; set explicitly when a test needs
+// procutil.IsAliveMatching to succeed against a real process.
+func WithHistoryStartedAtTicks(ticks int64) HistoryOption {
+	return func(d *historyDefaults) { d.startedAtTicks = ticks }
 }
 
 // SeedProcessHistory inserts n history entries for serviceName (requires instance to exist; FK constraint).
@@ -139,7 +148,7 @@ func SeedProcessHistory(t testing.TB, ctx context.Context, db database.Database,
 	for i := range n {
 		pgid := d.basePGID + i
 
-		entry, err := db.RegisterProcessHistoryEntry(ctx, pgid, serviceName, d.state)
+		entry, err := db.RegisterProcessHistoryEntry(ctx, pgid, d.startedAtTicks, serviceName, d.state)
 		if err != nil {
 			t.Fatalf("SeedProcessHistory[%d] pgid=%d: %v", i, pgid, err)
 		}
