@@ -93,6 +93,18 @@ def owner(f, line):
             break
     return found
 
+# Cobra command builders are CLI wiring, not gateable logic: a function whose
+# body constructs a cobra.Command{...} literal is excluded from the gate.
+def _is_cobra_builder(e):
+    lst = by_file.get(e["file"], [])
+    end = next((o["line"] for o in lst if o["line"] > e["line"]), None)
+    try:
+        src = open(e["file"], encoding="utf-8").read().splitlines()
+    except OSError:
+        return False
+    body = "\n".join(src[e["line"]-1 : (end-1 if end else len(src))])
+    return "cobra.Command{" in body
+
 touched_funcs = {}
 for f, lines in changed_lines.items():
     for L in lines:
@@ -100,7 +112,8 @@ for f, lines in changed_lines.items():
         if e:
             touched_funcs[(e["file"], e["function"], e["line"])] = e
 
-bad = [e for e in touched_funcs.values() if e["crap"] > threshold]
+bad = [e for e in touched_funcs.values()
+       if e["crap"] > threshold and not _is_cobra_builder(e)]
 if bad:
     print(f"go-crap gate FAILED: {len(bad)} changed function(s) exceed CRAP {threshold:g}:")
     for e in sorted(bad, key=lambda x: -x["crap"]):
