@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -119,6 +120,33 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 		return nil, errs
 	}
 	return &config, nil
+}
+
+var selfDetachCommands = map[string]bool{"setsid": true, "nohup": true, "disown": true}
+
+var commandSeparators = regexp.MustCompile(`&&|\|\||[;|]`)
+
+// DetectSelfDetachRisk flags command segments that start with a self-detaching
+// command (setsid, nohup, disown). eos tracks the process it spawns via a
+// single process group (Setpgid: true) and kills that group on stop; a
+// segment that detaches escapes the group and eos loses the ability to
+// stop/kill it. This is a string heuristic on the configured command, not a
+// runtime check — it won't catch a program that daemonizes internally.
+func DetectSelfDetachRisk(command string) []string {
+	var warnings []string
+	for _, segment := range commandSeparators.Split(command, -1) {
+		fields := strings.Fields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+		if selfDetachCommands[fields[0]] {
+			warnings = append(warnings, fmt.Sprintf(
+				"command segment %q starts with %q, which detaches from eos's process group; eos will not be able to stop or kill it via the normal service commands",
+				strings.TrimSpace(segment), fields[0],
+			))
+		}
+	}
+	return warnings
 }
 
 var validStreams = map[string]bool{"stdout": true, "stderr": true}
