@@ -141,6 +141,6 @@ func BenchmarkRegisterProcessHistoryEntry(b *testing.B) {
 	i := 0
 	for b.Loop() {
 		i++
-		_, _ = db.RegisterProcessHistoryEntry(b.Context(), 20000+i, "svc-0", types.ProcessStateRunning)
+		_, _ = db.RegisterProcessHistoryEntry(b.Context(), 20000+i, 0, "svc-0", types.ProcessStateRunning)
 	}
 }

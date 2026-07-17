@@ -247,7 +247,7 @@ func livePGIDInHistory(history []types.ProcessHistory) int {
 		if p.State != types.ProcessStateRunning && p.State != types.ProcessStateStarting {
 			continue
 		}
-		if procutil.IsAlive(p.PGID) {
+		if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
 			return p.PGID
 		}
 	}
@@ -297,7 +297,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		processPGID := p.PGID
 
 		if state == types.ProcessStateRunning {
-			if procutil.IsAlive(processPGID) {
+			if procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
 				return 0, fmt.Errorf("service already running with PGID %d", processPGID)
 			}
 			// Stale Running entry: the real process is dead (killed
@@ -314,7 +314,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 			continue
 		}
 		if state == types.ProcessStateStarting {
-			if procutil.IsAlive(processPGID) {
+			if procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
 				return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
 			}
 			// Stale Starting entry: the daemon likely crashed or the machine
@@ -434,6 +434,15 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 	m.logger.Debug("process started", "service", name, "pgid", pgid)
 
+	startedAtTicks, err := procutil.StartTime(pgid)
+	if err != nil {
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
+		if killErr != nil {
+			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
+		}
+		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
+	}
+
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
@@ -454,7 +463,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateStarting)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {
@@ -598,6 +607,15 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 	m.logger.Debug("restarted process", "service", name, "pgid", pgid)
 
+	startedAtTicks, err := procutil.StartTime(pgid)
+	if err != nil {
+		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
+		if killErr != nil {
+			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
+		}
+		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
+	}
+
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    new(time.Now()),
 		RestartCount: new(serviceInstance.RestartCount + 1),
@@ -611,7 +629,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
 	}
 
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, service.Name, types.ProcessStateStarting)
+	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
 		if killErr != nil {

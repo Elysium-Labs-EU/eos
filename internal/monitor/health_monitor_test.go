@@ -1059,7 +1059,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 
 	fakePGID := 999999
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateFailed)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history: %v", err)
 	}
@@ -1345,7 +1345,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 
 	fakePGID := 999998
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, svc3Name, types.ProcessStateFailed)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, svc3Name, types.ProcessStateFailed)
 	if err != nil {
 		t.Fatalf("Failed to register fake process history for %s: %v", svc3Name, err)
 	}
@@ -1676,7 +1676,7 @@ func TestHealthMonitor_CheckAllServices_PanicInOneServiceDoesNotStopOthers(t *te
 	if err = db.RegisterServiceInstance(t.Context(), healthyName); err != nil {
 		t.Fatalf("Failed to register healthy-svc instance: %v", err)
 	}
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), 424243, healthyName, types.ProcessStateStopped); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), 424243, 0, healthyName, types.ProcessStateStopped); err != nil {
 		t.Fatalf("Failed to register healthy-svc process history: %v", err)
 	}
 
@@ -1986,7 +1986,7 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	}
 
 	fakePGID := 999997
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateUnknown); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateUnknown); err != nil {
 		t.Fatalf("failed to register fake process history: %v", err)
 	}
 	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
@@ -2088,7 +2088,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 		t.Fatalf("failed to create service log files: %v", err)
 	}
 	const pgid = 999900
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, serviceName, types.ProcessStateRunning); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateRunning); err != nil {
 		t.Fatalf("failed to register process history: %v", err)
 	}
 
@@ -2246,7 +2246,7 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	}
 
 	fakePGID := 999998
-	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, serviceName, types.ProcessStateRunning); err != nil {
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateRunning); err != nil {
 		t.Fatalf("failed to register process history: %v", err)
 	}
 

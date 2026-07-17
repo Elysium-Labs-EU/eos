@@ -339,7 +339,7 @@ func TestRegisterProcessHistoryEntry(t *testing.T) {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	entry, err := db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
+	entry, err := db.RegisterProcessHistoryEntry(t.Context(), 1234, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestGetProcessHistoryEntryByPGID(t *testing.T) {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -400,11 +400,11 @@ func TestGetProcessHistoryEntriesByServiceName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 100, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 100, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 200, "web-api", types.ProcessStateRunning)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 200, 0, "web-api", types.ProcessStateRunning)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestGetProcessHistoryEntriesByServiceName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 300, "worker", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 300, 0, "worker", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestUpdateProcessHistoryEntry_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 42, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 42, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestUpdateProcessHistoryEntry_PartialUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 50, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 50, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -564,7 +564,7 @@ func TestUpdateProcessHistoryEntry_NoFields(t *testing.T) {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
 
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 60, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 60, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestUpdateProcessHistoryEntry_ConcurrentWrites(t *testing.T) {
 	const goroutines = 20
 	for i := range goroutines {
 		pgid := 1000 + i
-		_, _ = db.RegisterProcessHistoryEntry(t.Context(), pgid, "web-api", types.ProcessStateStarting)
+		_, _ = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, "web-api", types.ProcessStateStarting)
 	}
 
 	var wg sync.WaitGroup
@@ -620,7 +620,7 @@ func TestRemoveProcessHistoryEntryViaPGID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterServiceInstance failed: %v", err)
 	}
-	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, "web-api", types.ProcessStateStarting)
+	_, err = db.RegisterProcessHistoryEntry(t.Context(), 1234, 0, "web-api", types.ProcessStateStarting)
 	if err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}

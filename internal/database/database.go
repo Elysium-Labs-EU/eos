@@ -35,7 +35,7 @@ type Database interface {
 	GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error)
 	GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error)
 	GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error)
-	RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
+	RegisterProcessHistoryEntry(ctx context.Context, pgid int, startedAtTicks int64, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
 	RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error)
 	UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error
 
@@ -147,24 +147,25 @@ func (db *DB) RegisterServiceInstance(ctx context.Context, name string) error {
 	return nil
 }
 
-func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, serviceName string, state types.ProcessState) (types.ProcessHistory, error) {
+func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, startedAtTicks int64, serviceName string, state types.ProcessState) (types.ProcessHistory, error) {
 	createdAt := time.Now()
 	instanceQuery := `
-	INSERT INTO process_history (pgid, service_name, state, created_at, started_at)
-	VALUES (?, ?, ?, ?, ?)
+	INSERT INTO process_history (pgid, started_at_ticks, service_name, state, created_at, started_at)
+	VALUES (?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := db.conn.ExecContext(ctx, instanceQuery, pgid, serviceName, state, createdAt, createdAt)
+	_, err := db.conn.ExecContext(ctx, instanceQuery, pgid, startedAtTicks, serviceName, state, createdAt, createdAt)
 	if err != nil {
 		return types.ProcessHistory{}, fmt.Errorf("could not create process history entry: %w", err)
 	}
 
 	return types.ProcessHistory{
-		PGID:        pgid,
-		ServiceName: serviceName,
-		State:       state,
-		CreatedAt:   createdAt,
-		StartedAt:   &createdAt,
+		PGID:           pgid,
+		StartedAtTicks: startedAtTicks,
+		ServiceName:    serviceName,
+		State:          state,
+		CreatedAt:      createdAt,
+		StartedAt:      &createdAt,
 	}, nil
 }
 
@@ -274,7 +275,7 @@ var ErrProcessHistoryNotFound = errors.New("process history not found")
 
 func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE pgid = ?
 	`
@@ -283,6 +284,7 @@ func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types
 	var processHistory types.ProcessHistory
 
 	err := row.Scan(&processHistory.PGID,
+		&processHistory.StartedAtTicks,
 		&processHistory.ServiceName,
 		&processHistory.State,
 		&processHistory.RssMemoryKb,
@@ -302,7 +304,7 @@ func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types
 
 func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
 	ORDER BY pgid
@@ -318,6 +320,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 	for rows.Next() {
 		var processHistory types.ProcessHistory
 		err := rows.Scan(&processHistory.PGID,
+			&processHistory.StartedAtTicks,
 			&processHistory.ServiceName,
 			&processHistory.State,
 			&processHistory.RssMemoryKb,
@@ -341,7 +344,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 
 func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
 	ORDER BY started_at DESC NULLS LAST
@@ -350,6 +353,7 @@ func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, servic
 	var entry types.ProcessHistory
 	err := db.conn.QueryRowContext(ctx, query, serviceName).Scan(
 		&entry.PGID,
+		&entry.StartedAtTicks,
 		&entry.ServiceName,
 		&entry.State,
 		&entry.RssMemoryKb,
