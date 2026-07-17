@@ -272,6 +272,37 @@ func TestUpdateServiceInstance(t *testing.T) {
 	}
 }
 
+func TestUpdateServiceInstance_NextRestartAt(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	err := db.RegisterServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("RegisterServiceInstance failed: %v", err)
+	}
+
+	instance, err := db.GetServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	if instance.NextRestartAt != nil {
+		t.Fatalf("expected nil next_restart_at before it is scheduled, got %v", instance.NextRestartAt)
+	}
+
+	next := time.Now().Add(24 * time.Hour).Truncate(time.Second)
+	err = db.UpdateServiceInstance(t.Context(), "cms", database.ServiceInstanceUpdate{NextRestartAt: &next})
+	if err != nil {
+		t.Fatalf("UpdateServiceInstance failed: %v", err)
+	}
+
+	instance, err = db.GetServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	if instance.NextRestartAt == nil || !instance.NextRestartAt.Equal(next) {
+		t.Errorf("expected next_restart_at %v, got %v", next, instance.NextRestartAt)
+	}
+}
+
 func TestUpdateServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 

@@ -87,6 +87,12 @@ func WithLogSinks(sinks ...types.LogSink) ServiceConfigOption {
 	}
 }
 
+func WithCronRestart(cronExpr string) ServiceConfigOption {
+	return func(sc *types.ServiceConfig) {
+		sc.CronRestart = cronExpr
+	}
+}
+
 func NewTestServiceConfigFile(t *testing.T, opts ...ServiceConfigOption) *types.ServiceConfig {
 	t.Helper()
 

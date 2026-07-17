@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/cronutil"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
@@ -258,12 +259,61 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 		return
 	}
 
+	hm.checkCronRestart(ctx, service, instance, config.CronRestart)
 	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
 
 	rssKb, sampled := hm.measureRSS(pgid, serviceName)
 
 	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
 	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled)
+}
+
+// checkCronRestart restarts a running service when its cron_restart schedule
+// is due, and (re)computes NextRestartAt in the DB. A missing NextRestartAt
+// (e.g. first tick after start, or a cron_restart that was just added) only
+// schedules the next fire time — it does not restart immediately.
+func (hm *HealthMonitor) checkCronRestart(ctx context.Context, service *types.ServiceCatalogEntry, instance *types.ServiceInstance, cronExpr string) {
+	serviceName := service.Name
+	if cronExpr == "" {
+		return
+	}
+
+	now := time.Now()
+
+	if instance.NextRestartAt == nil {
+		hm.scheduleNextCronRestart(ctx, serviceName, cronExpr, now)
+		return
+	}
+
+	if instance.NextRestartAt.After(now) {
+		return
+	}
+
+	restartMsg := fmt.Sprintf("[%s] cron restart triggered", serviceName)
+	hm.logger.Info(restartMsg)
+	if logErr := hm.mgr.LogToServiceStdout(serviceName, restartMsg); logErr != nil {
+		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
+	}
+
+	if _, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond); err != nil {
+		hm.logger.Error("cron restart failed", "service", serviceName, "error", err)
+		return
+	}
+
+	hm.scheduleNextCronRestart(ctx, serviceName, cronExpr, time.Now())
+}
+
+// scheduleNextCronRestart computes the next fire time for cronExpr after from
+// and persists it on the service instance.
+func (hm *HealthMonitor) scheduleNextCronRestart(ctx context.Context, serviceName, cronExpr string, from time.Time) {
+	next, err := cronutil.Next(cronExpr, from)
+	if err != nil {
+		hm.logger.Error("parsing cron_restart", "service", serviceName, "error", err)
+		return
+	}
+	if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{NextRestartAt: &next}); err != nil {
+		hm.logger.Error("failed to persist next cron restart", "service", serviceName, "error", err)
+	}
 }
 
 // isPortReachable does a best-effort TCP dial to confirm the configured port still

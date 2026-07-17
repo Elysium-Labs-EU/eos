@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/internal/cronutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
@@ -109,6 +110,9 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if err := ValidateRuntimeBinary(config.Runtime); err != nil {
 		errs = append(errs, fmt.Errorf("runtime: %w", err))
 	}
+	if err := ValidateCronRestart(config.CronRestart); err != nil {
+		errs = append(errs, fmt.Errorf("cron_restart: %w", err))
+	}
 	for i := range config.LogSinks {
 		if sinkErrs := ValidateLogSink(&config.LogSinks[i]); len(sinkErrs) > 0 {
 			for _, e := range sinkErrs {
@@ -120,6 +124,18 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 		return nil, errs
 	}
 	return &config, nil
+}
+
+// ValidateCronRestart validates the optional cron_restart field. An empty
+// expression is valid (cron restart disabled for that service).
+func ValidateCronRestart(cronExpr string) error {
+	if cronExpr == "" {
+		return nil
+	}
+	if _, err := cronutil.ParseSchedule(cronExpr); err != nil {
+		return err
+	}
+	return nil
 }
 
 var selfDetachCommands = map[string]bool{"setsid": true, "nohup": true, "disown": true}

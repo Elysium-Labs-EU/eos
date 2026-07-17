@@ -117,6 +117,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 		Started      string
 		Uptime       string
 		Error        string
+		NextRestart  string
 		PGID         int
 		RestartCount int
 	}
@@ -168,15 +169,24 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 			entry.Started = humanize.Time(*serviceInstance.StartedAt)
 			entry.RestartCount = serviceInstance.RestartCount
 		}
+		switch {
+		case config.CronRestart == "":
+			entry.NextRestart = "-"
+		case serviceInstance != nil && serviceInstance.NextRestartAt != nil:
+			entry.NextRestart = humanize.Time(*serviceInstance.NextRestartAt)
+		default:
+			entry.NextRestart = "pending"
+		}
 		activeServices = append(activeServices, entry)
 	}
 
 	rows := [][]string{}
 
 	if len(activeServices) == 0 {
-		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-"})
+		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-", "-"})
 	} else {
-		for _, svc := range activeServices {
+		for i := range activeServices {
+			svc := &activeServices[i]
 			rows = append(rows, []string{
 				svc.Name,
 				helpers.PrintStatus(svc.Status),
@@ -185,6 +195,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 				svc.Uptime,
 				fmt.Sprintf("%d", svc.RestartCount),
 				svc.Started,
+				svc.NextRestart,
 				svc.Error,
 			})
 		}
@@ -202,7 +213,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 			}
 			return ui.TableOddRowStyle
 		}).
-		Headers("name", "status", "pgid", "memory", "uptime", "restarts", "started", "error").
+		Headers("name", "status", "pgid", "memory", "uptime", "restarts", "started", "next restart", "error").
 		Rows(rows...)
 
 	cmd.Println(t)
