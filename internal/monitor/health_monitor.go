@@ -671,6 +671,20 @@ func rssIfPgidMatches(contents, pgidBytes []byte) int64 {
 	return parseVMRSSKB(vmRSSValue)
 }
 
+// rssForProcName resolves a /proc entry name to a PID, reads its status, and
+// returns its VmRSS (kB) if it belongs to pgidBytes, else 0.
+func (hm *HealthMonitor) rssForProcName(name string, pgidBytes, pathBuf []byte) int64 {
+	pid, err := strconv.Atoi(name)
+	if err != nil {
+		return 0
+	}
+	contents, ok := hm.readProcStatus(pid, pathBuf)
+	if !ok {
+		return 0
+	}
+	return rssIfPgidMatches(contents, pgidBytes)
+}
+
 func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
 	names, ok := hm.readProcPIDs()
 	if !ok {
@@ -683,15 +697,7 @@ func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
 	var pathBuf [32]byte
 	totalRssMemory := int64(0)
 	for _, name := range names {
-		pid, err := strconv.Atoi(name)
-		if err != nil {
-			continue
-		}
-		contents, statusOK := hm.readProcStatus(pid, pathBuf[:])
-		if !statusOK {
-			continue
-		}
-		totalRssMemory += rssIfPgidMatches(contents, pgidBytes)
+		totalRssMemory += hm.rssForProcName(name, pgidBytes, pathBuf[:])
 	}
 	return totalRssMemory
 }
