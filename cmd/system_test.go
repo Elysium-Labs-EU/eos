@@ -24,6 +24,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -190,7 +191,11 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -205,7 +210,11 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -227,10 +236,14 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
 	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
-	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -387,7 +400,11 @@ func TestUnstartupCmdLaunchdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when declined, got: %v", calls)
@@ -410,10 +427,14 @@ func TestUnstartupCmdLaunchdRemovesPlistAndBootsOut(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
 	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, recordingRunCmd(t, &calls))
+	}, false, false, recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -449,10 +470,14 @@ func TestUnstartupCmdLaunchdToleratesJobNotLoaded(t *testing.T) {
 	// exit code 3 ("No such process") is what launchctl bootout returns when the job
 	// isn't currently loaded — must be tolerated, not treated as a fatal error, or the
 	// plist would never be removed whenever the job happened to already be stopped.
+	identity, identityErr := userutil.ResolveIdentity()
+	if identityErr != nil {
+		t.Fatalf("resolving identity: %v", identityErr)
+	}
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 3))
+	}, false, false, exitCodeRunCmd(t, &calls, 3), identity)
 
 	if err != nil {
 		t.Errorf("expected exit code 3 to be tolerated, got error: %v", err)
@@ -485,10 +510,14 @@ func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
 	var calls []string
 	// A generic non-3 failure (e.g. permission denied) must remain fatal and must not
 	// remove the plist file.
+	identity, identityErr := userutil.ResolveIdentity()
+	if identityErr != nil {
+		t.Fatalf("resolving identity: %v", identityErr)
+	}
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 1))
+	}, false, false, exitCodeRunCmd(t, &calls, 1), identity)
 
 	if err == nil {
 		t.Fatal("expected a non-3 exit code to be a fatal error")
