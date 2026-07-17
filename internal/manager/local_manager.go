@@ -424,24 +424,31 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
 	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, errFileLogger, name, sinks, sinkWg)
 
-	go func() {
-		_ = startCommand.Wait()
-	}()
-
-	pgid, err = syscall.Getpgid(startCommand.Process.Pid)
-	if err != nil {
-		return 0, fmt.Errorf("getting pgid: %w", err)
-	}
+	// With Setpgid the child leads a new process group, so its PGID equals its
+	// PID. Read it directly rather than via syscall.Getpgid, which races the
+	// reaper goroutine below: a service that exits immediately can be reaped
+	// before Getpgid runs and then fail with ESRCH ("no such process") even
+	// though the start itself succeeded.
+	pgid = startCommand.Process.Pid
 	m.logger.Debug("process started", "service", name, "pgid", pgid)
 
+	// Read the start time from the (possibly already-exited but not-yet-reaped)
+	// process before launching the reaper below, so it stays readable in the
+	// proc table even for an instant-exit service.
 	startedAtTicks, err := procutil.StartTime(pgid)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = startCommand.Wait() // reap; the async reaper below never launched on this path
 		if killErr != nil {
 			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
 		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
 	}
+
+	// Reap the process asynchronously now that its identity is recorded.
+	go func() {
+		_ = startCommand.Wait()
+	}()
 
 	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
 	if err != nil {
@@ -597,24 +604,26 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
 	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, errFileLogger, name, sinks, sinkWg)
 
-	go func() {
-		_ = restartCommand.Wait()
-	}()
-
-	pgid, err = syscall.Getpgid(restartCommand.Process.Pid)
-	if err != nil {
-		return 0, fmt.Errorf("getting pgid: %w", err)
-	}
+	// See StartService: derive PGID from the leader's PID and capture the
+	// start time before launching the reaper, so an instant-exit process is
+	// still readable and Getpgid can't race the reap into an ESRCH failure.
+	pgid = restartCommand.Process.Pid
 	m.logger.Debug("restarted process", "service", name, "pgid", pgid)
 
 	startedAtTicks, err := procutil.StartTime(pgid)
 	if err != nil {
 		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = restartCommand.Wait() // reap; the async reaper below never launched on this path
 		if killErr != nil {
 			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
 		}
 		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
 	}
+
+	// Reap the process asynchronously now that its identity is recorded.
+	go func() {
+		_ = restartCommand.Wait()
+	}()
 
 	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    new(time.Now()),
@@ -851,12 +860,34 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 
 		switch processState {
 		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
+			// Guard against PGID reuse before signaling. The kernel recycles
+			// PGIDs, so a stored record whose process has since exited may now
+			// point at an unrelated, later process. Signaling it blindly would
+			// kill an innocent bystander (or, if it belongs to another user,
+			// fail with EPERM and surface as a spurious stop error). Only signal
+			// when the PGID is still alive AND its start time matches what we
+			// recorded; otherwise the process we started is already gone.
+			if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
+				alreadyDead[processPGID] = true
+				continue
+			}
 			err := syscall.Kill(-processPGID, signal)
 			switch {
 			case errors.Is(err, syscall.ESRCH):
 				alreadyDead[processPGID] = true
 			case err != nil:
-				errored[processPGID] = fmt.Sprintf("killing service: %v", err)
+				// The process was alive and ours a moment ago (IsAliveMatching
+				// above), so an error here means it raced from running into an
+				// exited/zombie state before the signal landed — e.g. a service
+				// that exits the instant it's stopped. On macOS, signaling a
+				// process group whose leader is now a zombie returns EPERM.
+				// Classify by liveness, not the raw errno: if it's no longer
+				// alive-matching it's already gone, not a stop failure.
+				if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
+					alreadyDead[processPGID] = true
+				} else {
+					errored[processPGID] = fmt.Sprintf("killing service: %v", err)
+				}
 			default:
 				pending[processPGID] = true
 			}
