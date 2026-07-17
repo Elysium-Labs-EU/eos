@@ -18,6 +18,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
 	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
@@ -110,7 +111,7 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
-			m, cl, err := newManager(rootCmd, baseDir, c.Daemon)
+			m, cl, err := newManager(rootCmd, baseDir, c.Daemon, c.Sinks)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting manager: %v", err))
 				os.Exit(1)
@@ -303,6 +304,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	}
 
 	systemConfig = &config.SystemConfig{
+		Sinks:        eosCfg.Sinks,
 		Health:       healthConfig,
 		Daemon:       daemonConfig,
 		Shutdown:     shutdownConfig,
@@ -376,7 +378,7 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	return limit
 }
 
-func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig) (mgr manager.ServiceManager, cleanUp func(), err error) {
+func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig, sinkRegistry map[string]types.LogSink) (mgr manager.ServiceManager, cleanUp func(), err error) {
 	ctx := rootCmd.Context()
 	noDaemon, err := rootCmd.Flags().GetBool("no-daemon")
 	if err != nil {
@@ -390,7 +392,7 @@ func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
 		}
 
-		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose))
+		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose), manager.WithSinkRegistry(sinkRegistry))
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {
@@ -406,7 +408,7 @@ func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 		if dbErr != nil {
 			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
 		}
-		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose))
+		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose), manager.WithSinkRegistry(sinkRegistry))
 		cleanup := func() {
 			err = db.CloseDBConnection()
 			if err != nil {

@@ -189,6 +189,86 @@ func TestValidateLogSink_validStreams(t *testing.T) {
 	}
 }
 
+func TestResolveLogSinks_NoRefs(t *testing.T) {
+	resolved, err := ResolveLogSinks("svc", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Errorf("expected no resolved sinks, got %v", resolved)
+	}
+}
+
+func TestResolveLogSinks_InlineOnly(t *testing.T) {
+	refs := []types.LogSinkRef{{Inline: &types.LogSink{Type: "file", Address: "/var/log/eos"}}}
+	resolved, err := ResolveLogSinks("svc", refs, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].Type != "file" {
+		t.Errorf("expected inline sink to pass through, got %+v", resolved)
+	}
+}
+
+func TestResolveLogSinks_NameReference(t *testing.T) {
+	registry := map[string]types.LogSink{
+		"prod-loki": {Type: "loki", Address: "http://loki:3100"},
+	}
+	refs := []types.LogSinkRef{{Name: "prod-loki"}}
+	resolved, err := ResolveLogSinks("svc", refs, registry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].Type != "loki" || resolved[0].Address != "http://loki:3100" {
+		t.Errorf("expected resolved registry sink, got %+v", resolved)
+	}
+}
+
+func TestResolveLogSinks_MixedInlineAndName(t *testing.T) {
+	registry := map[string]types.LogSink{
+		"local-file": {Type: "file", Address: "/var/log/eos"},
+	}
+	refs := []types.LogSinkRef{
+		{Name: "local-file"},
+		{Inline: &types.LogSink{Type: "otlp", Address: "otel:4317"}},
+	}
+	resolved, err := ResolveLogSinks("svc", refs, registry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 2 || resolved[0].Type != "file" || resolved[1].Type != "otlp" {
+		t.Errorf("expected both sinks resolved in order, got %+v", resolved)
+	}
+}
+
+func TestResolveLogSinks_UnknownName(t *testing.T) {
+	registry := map[string]types.LogSink{
+		"prod-loki":  {Type: "loki"},
+		"local-file": {Type: "file"},
+	}
+	refs := []types.LogSinkRef{{Name: "prod-lokk"}}
+	_, err := ResolveLogSinks("api", refs, registry)
+	if err == nil {
+		t.Fatal("expected error for unknown sink name, got nil")
+	}
+	want := `service 'api': log_sinks[0]: unknown sink "prod-lokk" — registered: [local-file, prod-loki]`
+	if err.Error() != want {
+		t.Errorf("unexpected error message:\nwant: %s\ngot:  %s", want, err.Error())
+	}
+}
+
+func TestResolveLogSinks_UnknownNameEmptyRegistry(t *testing.T) {
+	refs := []types.LogSinkRef{{Name: "prod-loki"}}
+	_, err := ResolveLogSinks("api", refs, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown sink name, got nil")
+	}
+	want := `service 'api': log_sinks[0]: unknown sink "prod-loki" — registered: []`
+	if err.Error() != want {
+		t.Errorf("unexpected error message:\nwant: %s\ngot:  %s", want, err.Error())
+	}
+}
+
 func TestNewServiceCatalogEntry(t *testing.T) {
 	_, err := NewServiceCatalogEntry("website", "./test-files", "service.yaml")
 	if err != nil {
@@ -268,8 +348,8 @@ func TestValidateServiceConfig_badRuntimeAndLogSink(t *testing.T) {
 		Name:    "svc",
 		Command: "./start.sh",
 		Runtime: types.Runtime{Type: "node"},
-		LogSinks: []types.LogSink{
-			{},
+		LogSinks: []types.LogSinkRef{
+			{Inline: &types.LogSink{}},
 		},
 	}
 	yamlData, err := yaml.Marshal(config)

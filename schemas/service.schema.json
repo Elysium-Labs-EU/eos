@@ -63,65 +63,75 @@
     },
     "log_sinks": {
       "type": "array",
-      "description": "External log sink plugins. Each sink receives all service log lines via its stdin as NDJSON. eos manages the plugin process lifetime.",
+      "description": "External log sink plugins. Each sink receives all service log lines via its stdin as NDJSON. eos manages the plugin process lifetime. Entries are either an inline sink config or a bare string naming a sink registered in ~/.eos/config.yaml's sinks registry; the daemon resolves name references at startup and errors on an unknown name.",
       "items": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type": {
+        "oneOf": [
+          {
             "type": "string",
-            "description": "Sink type. eos discovers the plugin binary as eos-sink-{type} on $PATH.",
+            "description": "Name of a sink registered in ~/.eos/config.yaml's sinks registry.",
             "minLength": 1,
-            "examples": ["logbench", "datadog", "loki", "betterstack"]
+            "examples": ["prod-loki", "local-file"]
           },
-          "exec": {
-            "type": "string",
-            "description": "Explicit path to the plugin binary. Overrides the eos-sink-{type} PATH lookup.",
-            "examples": ["/usr/local/bin/eos-sink-datadog", "./bin/my-custom-sink"]
-          },
-          "args": {
-            "type": "array",
-            "description": "Extra arguments passed to the plugin binary.",
-            "items": { "type": "string" },
-            "examples": [["--site", "datadoghq.com"]]
-          },
-          "buffer_size": {
-            "type": "integer",
-            "description": "Number of log records to buffer in memory when the plugin is slow. Oldest records are dropped on overflow. Default: 4096.",
-            "minimum": 1,
-            "default": 4096,
-            "examples": [1024, 4096, 16384]
-          },
-          "restart_delay_ms": {
-            "type": "integer",
-            "description": "Milliseconds to wait before restarting a crashed plugin. Default: 5000.",
-            "minimum": 0,
-            "default": 5000,
-            "examples": [1000, 5000, 30000]
-          },
-          "streams": {
-            "type": "array",
-            "description": "Which output streams to route to this sink. Default: both stdout and stderr.",
-            "items": {
-              "type": "string",
-              "enum": ["stdout", "stderr"]
-            },
-            "minItems": 1,
-            "uniqueItems": true,
-            "default": ["stdout", "stderr"],
-            "examples": [["stdout"], ["stderr"], ["stdout", "stderr"]]
-          },
-          "options": {
+          {
             "type": "object",
-            "description": "Plugin-specific configuration. Passed to the plugin as JSON via the EOS_SINK_OPTIONS environment variable. eos does not validate this field.",
-            "additionalProperties": true,
-            "examples": [
-              { "project_id": "abc123", "endpoint": "http://localhost:1447" },
-              { "api_key": "${DD_API_KEY}", "site": "datadoghq.com" }
-            ]
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Sink type. eos discovers the plugin binary as eos-sink-{type} on $PATH.",
+                "minLength": 1,
+                "examples": ["logbench", "datadog", "loki", "betterstack"]
+              },
+              "exec": {
+                "type": "string",
+                "description": "Explicit path to the plugin binary. Overrides the eos-sink-{type} PATH lookup.",
+                "examples": ["/usr/local/bin/eos-sink-datadog", "./bin/my-custom-sink"]
+              },
+              "args": {
+                "type": "array",
+                "description": "Extra arguments passed to the plugin binary.",
+                "items": { "type": "string" },
+                "examples": [["--site", "datadoghq.com"]]
+              },
+              "buffer_size": {
+                "type": "integer",
+                "description": "Number of log records to buffer in memory when the plugin is slow. Oldest records are dropped on overflow. Default: 4096.",
+                "minimum": 1,
+                "default": 4096,
+                "examples": [1024, 4096, 16384]
+              },
+              "restart_delay_ms": {
+                "type": "integer",
+                "description": "Milliseconds to wait before restarting a crashed plugin. Default: 5000.",
+                "minimum": 0,
+                "default": 5000,
+                "examples": [1000, 5000, 30000]
+              },
+              "streams": {
+                "type": "array",
+                "description": "Which output streams to route to this sink. Default: both stdout and stderr.",
+                "items": {
+                  "type": "string",
+                  "enum": ["stdout", "stderr"]
+                },
+                "minItems": 1,
+                "uniqueItems": true,
+                "default": ["stdout", "stderr"],
+                "examples": [["stdout"], ["stderr"], ["stdout", "stderr"]]
+              },
+              "options": {
+                "type": "object",
+                "description": "Plugin-specific configuration. Passed to the plugin as JSON via the EOS_SINK_OPTIONS environment variable. eos does not validate this field.",
+                "additionalProperties": true,
+                "examples": [
+                  { "project_id": "abc123", "endpoint": "http://localhost:1447" },
+                  { "api_key": "${DD_API_KEY}", "site": "datadoghq.com" }
+                ]
+              }
+            }
           }
-        }
+        ]
       }
     }
   }

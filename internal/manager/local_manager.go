@@ -21,12 +21,13 @@ import (
 )
 
 type LocalManager struct {
-	db       database.Database
-	ctx      context.Context
-	logger   *slog.Logger
-	executor Executor
-	baseDir  string
-	pipeWg   sync.WaitGroup
+	db           database.Database
+	ctx          context.Context
+	executor     Executor
+	logger       *slog.Logger
+	sinkRegistry map[string]types.LogSink
+	baseDir      string
+	pipeWg       sync.WaitGroup
 }
 
 // WaitPipes blocks until all pipe-forwarding goroutines have exited.
@@ -43,6 +44,15 @@ func WithExecutor(e Executor) LocalManagerOption {
 			return
 		}
 		m.executor = e
+	}
+}
+
+// WithSinkRegistry sets the named log sink registry (from the daemon's
+// ~/.eos/config.yaml sinks:) used to resolve log_sinks name references in
+// service.yaml. Services with only inline sink configs work fine without it.
+func WithSinkRegistry(registry map[string]types.LogSink) LocalManagerOption {
+	return func(m *LocalManager) {
+		m.sinkRegistry = registry
 	}
 }
 
@@ -270,6 +280,11 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, fmt.Errorf("load service config for %s: %w", name, err)
 	}
 
+	resolvedSinks, err := ResolveLogSinks(name, config.LogSinks, m.sinkRegistry)
+	if err != nil {
+		return 0, err
+	}
+
 	serviceInstance, err := m.GetServiceInstance(name)
 	if err != nil && !errors.Is(err, ErrServiceNotRunning) {
 		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
@@ -409,7 +424,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 
 	errFileLogger := logutil.NewJSONLogger(errorLogFile, false)
-	sinks := startSinkProcesses(m.ctx, config.LogSinks, name, m.logger, errFileLogger)
+	sinks := startSinkProcesses(m.ctx, resolvedSinks, name, m.logger, errFileLogger)
 	var sinkWg *sync.WaitGroup
 	if len(sinks) > 0 {
 		sinkWg = &sync.WaitGroup{}
@@ -489,6 +504,11 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	config, err := LoadServiceConfig(configPath)
 	if err != nil {
 		return 0, fmt.Errorf("load service config for %s: %w", name, err)
+	}
+
+	resolvedSinks, err := ResolveLogSinks(name, config.LogSinks, m.sinkRegistry)
+	if err != nil {
+		return 0, err
 	}
 
 	serviceInstance, err := m.GetServiceInstance(name)
@@ -582,7 +602,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 
 	errFileLogger := logutil.NewJSONLogger(errorLogFile, false)
-	sinks := startSinkProcesses(m.ctx, config.LogSinks, name, m.logger, errFileLogger)
+	sinks := startSinkProcesses(m.ctx, resolvedSinks, name, m.logger, errFileLogger)
 	var sinkWg *sync.WaitGroup
 	if len(sinks) > 0 {
 		sinkWg = &sync.WaitGroup{}
