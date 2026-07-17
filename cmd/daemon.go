@@ -211,6 +211,40 @@ func (c systemdDaemonController) LogsHint() string {
 	return "journalctl -u eos -f"
 }
 
+// buildJournalArgs assembles the journalctl arguments for the daemon unit,
+// scoped to the user bus when running a user unit.
+func buildJournalArgs(userUnit bool, lines int, follow bool) []string {
+	journalArgs := systemctlArgs(userUnit, "-u", "eos", "-n", fmt.Sprintf("%d", lines))
+	if follow {
+		journalArgs = append(journalArgs, "-f")
+	}
+	return journalArgs
+}
+
+// reportJournalExit prints a failure only for real journalctl errors, treating
+// exit code 130 (SIGINT from the user's Ctrl-C while following) as normal.
+func reportJournalExit(cmd *cobra.Command, err error) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() != 130 {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("journalctl failed: %v", err))
+	}
+}
+
+// runJournalStream runs journalctl with the given args, forwarding its output to
+// the command's streams.
+func runJournalStream(cmd *cobra.Command, journalArgs []string) {
+	// #nosec G204 - journalArgs contains only --user, -u, eos, -n, <int>, and optionally -f
+	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", journalArgs...)
+	journalCmd.Stdout = cmd.OutOrStdout()
+	journalCmd.Stderr = cmd.ErrOrStderr()
+	if err := journalCmd.Start(); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting journalctl: %v", err))
+		return
+	}
+	if err := journalCmd.Wait(); err != nil {
+		reportJournalExit(cmd, err)
+	}
+}
+
 func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	if lines < 0 || lines > 10000 {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
@@ -223,26 +257,7 @@ func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "showing daemon logs")
 	}
 
-	// #nosec G204 - lines is validated above
-	journalArgs := systemctlArgs(c.cfg.UserUnit, "-u", "eos", "-n", fmt.Sprintf("%d", lines))
-	if follow {
-		journalArgs = append(journalArgs, "-f")
-	}
-	// #nosec G204 - lines is validated above; journalArgs contains only --user, -u, eos, -n, <int>, and optionally -f
-	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", journalArgs...)
-	journalCmd.Stdout = cmd.OutOrStdout()
-	journalCmd.Stderr = cmd.ErrOrStderr()
-	if err := journalCmd.Start(); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting journalctl: %v", err))
-		return
-	}
-	if err := journalCmd.Wait(); err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			if exitErr.ExitCode() != 130 {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("journalctl failed: %v", err))
-			}
-		}
-	}
+	runJournalStream(cmd, buildJournalArgs(c.cfg.UserUnit, lines, follow))
 }
 
 // launchdDaemonController is the macOS analog of systemdDaemonController. It keeps
@@ -512,12 +527,10 @@ func envWithout(env []string, key string) []string {
 }
 
 // Stay in sync with "startDaemonProcess"
-func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity userutil.Identity) error {
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("can't find executable path: %w", err)
-	}
-
+// buildForkCommand constructs the detached `eos daemon start` command. When the
+// parent runs as root it drops the child to identity's uid/gid and strips root's
+// HOME so the child resolves paths under its own home, not /root.
+func buildForkCommand(ctx context.Context, exePath string, verbose bool, identity userutil.Identity) (*exec.Cmd, *manager.CapturedWriter) {
 	args := []string{"daemon", "start", "--log-to-file-and-console"}
 	if verbose {
 		args = append(args, "--verbose")
@@ -538,13 +551,12 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity user
 		// which the dropped-privilege child can't even stat (root's home is 0700).
 		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+identity.HomeDir())
 	}
+	return cmd, stderr
+}
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start daemon process: %w", err)
-	}
-
-	// Wait for child to write PID file before parent exits.
-	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+// waitForForkPIDFile blocks until the forked daemon writes its PID file or the
+// 5s deadline elapses, folding any captured child stderr into the timeout error.
+func waitForForkPIDFile(pidFile string, stderr *manager.CapturedWriter) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(pidFile); err == nil {
@@ -557,6 +569,22 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity user
 		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
 	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
+}
+
+func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity userutil.Identity) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("can't find executable path: %w", err)
+	}
+
+	cmd, stderr := buildForkCommand(ctx, exePath, verbose, identity)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start daemon process: %w", err)
+	}
+
+	// Wait for child to write PID file before parent exits.
+	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+	return waitForForkPIDFile(pidFile, stderr)
 }
 
 func printAllDaemons(cmd *cobra.Command) error {

@@ -2,6 +2,8 @@ package process
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -13,6 +15,33 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestHandleReapedChild(t *testing.T) {
+	logger := discardLogger()
+	var status syscall.WaitStatus
+
+	t.Run("wait error stops the drain", func(t *testing.T) {
+		if got := handleReapedChild(t.Context(), nil, logger, 0, errors.New("ECHILD"), status); got != reapStop {
+			t.Errorf("expected reapStop on wait error, got %v", got)
+		}
+	})
+
+	t.Run("no more children stops the drain", func(t *testing.T) {
+		if got := handleReapedChild(t.Context(), nil, logger, 0, nil, status); got != reapStop {
+			t.Errorf("expected reapStop when pid is 0, got %v", got)
+		}
+	})
+
+	t.Run("negative pid continues without db work", func(t *testing.T) {
+		if got := handleReapedChild(t.Context(), nil, logger, -1, nil, status); got != reapContinue {
+			t.Errorf("expected reapContinue on negative pid, got %v", got)
+		}
+	})
+}
 
 func TestAllMethodsHandled(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)

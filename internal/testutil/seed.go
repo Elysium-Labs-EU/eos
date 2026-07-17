@@ -88,13 +88,7 @@ func SeedServiceInstances(t testing.TB, ctx context.Context, db database.Databas
 			t.Fatalf("SeedServiceInstances %q: %v", name, err)
 		}
 
-		if d.restartCount > 0 {
-			if err := db.UpdateServiceInstance(ctx, name, database.ServiceInstanceUpdate{
-				RestartCount: &d.restartCount,
-			}); err != nil {
-				t.Fatalf("SeedServiceInstances %q update restart count: %v", name, err)
-			}
-		}
+		applyInstanceRestartCount(t, ctx, db, name, d.restartCount)
 
 		instances = append(instances, types.ServiceInstance{
 			Name:         name,
@@ -104,6 +98,20 @@ func SeedServiceInstances(t testing.TB, ctx context.Context, db database.Databas
 	}
 
 	return instances
+}
+
+// applyInstanceRestartCount updates a seeded instance's restart count when the
+// requested count is non-zero.
+func applyInstanceRestartCount(t testing.TB, ctx context.Context, db database.Database, name string, restartCount int) {
+	t.Helper()
+	if restartCount <= 0 {
+		return
+	}
+	if err := db.UpdateServiceInstance(ctx, name, database.ServiceInstanceUpdate{
+		RestartCount: &restartCount,
+	}); err != nil {
+		t.Fatalf("SeedServiceInstances %q update restart count: %v", name, err)
+	}
 }
 
 type HistoryOption func(*historyDefaults)

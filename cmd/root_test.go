@@ -5,11 +5,36 @@ import (
 	"strings"
 	"testing"
 
+	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"github.com/spf13/cobra"
 )
+
+func TestNewManagerLocalMode(t *testing.T) {
+	_, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	rootCmd := &cobra.Command{Use: "eos"}
+	rootCmd.SetContext(t.Context())
+	rootCmd.Flags().Bool("no-daemon", false, "")
+	rootCmd.Flags().Bool("verbose", false, "")
+	if err := rootCmd.Flags().Set("no-daemon", "true"); err != nil {
+		t.Fatalf("setting no-daemon flag: %v", err)
+	}
+
+	mgr, cleanup, err := newManager(rootCmd, td, config.DaemonConfig{Standalone: nil}, nil)
+	if err != nil {
+		t.Fatalf("newManager should not error in local mode: %v", err)
+	}
+	if mgr == nil {
+		t.Fatal("expected a manager in local mode")
+	}
+	if cleanup == nil {
+		t.Fatal("expected a cleanup func in local mode")
+	}
+	t.Cleanup(cleanup)
+}
 
 func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string) {
 	t.Helper()

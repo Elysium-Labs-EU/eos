@@ -613,17 +613,81 @@ var (
 	procStatusVMRSS  = []byte("VmRSS:\t")
 )
 
-func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
-	totalRssMemory := int64(0)
-
+// readProcPIDs returns the entry names under /proc (candidate PIDs), or ok=false
+// if /proc can't be read.
+func (hm *HealthMonitor) readProcPIDs() (names []string, ok bool) {
 	procDir, err := os.Open("/proc")
 	if err != nil {
 		hm.logger.Error("error reading /proc dir", "error", err)
-		return 0
+		return nil, false
 	}
-	names, err := procDir.Readdirnames(-1)
+	names, err = procDir.Readdirnames(-1)
 	_ = procDir.Close()
 	if err != nil {
+		return nil, false
+	}
+	return names, true
+}
+
+// readProcStatus reads /proc/<pid>/status into hm's scratch buffer, returning
+// the bytes and ok=false if the file couldn't be read.
+func (hm *HealthMonitor) readProcStatus(pid int, pathBuf []byte) (contents []byte, ok bool) {
+	path := fmt.Appendf(pathBuf[:0], "/proc/%d/status", pid)
+	fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
+	if err != nil {
+		return nil, false
+	}
+	n, _ := syscall.Read(fd, hm.procBuf[:])
+	_ = syscall.Close(fd)
+	if n <= 0 {
+		return nil, false
+	}
+	return hm.procBuf[:n], true
+}
+
+// parseVMRSSKB parses the numeric kB prefix of a VmRSS field value ("1234 kB").
+func parseVMRSSKB(vmRSSValue []byte) int64 {
+	spaceIdx := bytes.IndexByte(vmRSSValue, ' ')
+	if spaceIdx <= 0 {
+		return 0
+	}
+	kb, err := strconv.Atoi(string(vmRSSValue[:spaceIdx]))
+	if err != nil {
+		return 0
+	}
+	return int64(kb)
+}
+
+// rssIfPgidMatches returns the VmRSS (kB) from a /proc status blob only when its
+// NSpgid matches pgidBytes, else 0.
+func rssIfPgidMatches(contents, pgidBytes []byte) int64 {
+	if !bytes.Equal(scanStatusFieldBytes(contents, procStatusNSpgid), pgidBytes) {
+		return 0
+	}
+	vmRSSValue := scanStatusFieldBytes(contents, procStatusVMRSS)
+	if vmRSSValue == nil {
+		return 0
+	}
+	return parseVMRSSKB(vmRSSValue)
+}
+
+// rssForProcName resolves a /proc entry name to a PID, reads its status, and
+// returns its VmRSS (kB) if it belongs to pgidBytes, else 0.
+func (hm *HealthMonitor) rssForProcName(name string, pgidBytes, pathBuf []byte) int64 {
+	pid, err := strconv.Atoi(name)
+	if err != nil {
+		return 0
+	}
+	contents, ok := hm.readProcStatus(pid, pathBuf)
+	if !ok {
+		return 0
+	}
+	return rssIfPgidMatches(contents, pgidBytes)
+}
+
+func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
+	names, ok := hm.readProcPIDs()
+	if !ok {
 		return 0
 	}
 
@@ -631,42 +695,9 @@ func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
 	pgidBytes := strconv.AppendInt(pgidBuf[:0], int64(pgid), 10)
 
 	var pathBuf [32]byte
+	totalRssMemory := int64(0)
 	for _, name := range names {
-		pid, err := strconv.Atoi(name)
-		if err != nil {
-			continue
-		}
-
-		path := fmt.Appendf(pathBuf[:0], "/proc/%d/status", pid)
-		fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
-		if err != nil {
-			continue
-		}
-		n, _ := syscall.Read(fd, hm.procBuf[:])
-		_ = syscall.Close(fd)
-		if n <= 0 {
-			continue
-		}
-		contents := hm.procBuf[:n]
-
-		if !bytes.Equal(scanStatusFieldBytes(contents, procStatusNSpgid), pgidBytes) {
-			continue
-		}
-
-		vmRSSValue := scanStatusFieldBytes(contents, procStatusVMRSS)
-		if vmRSSValue == nil {
-			continue
-		}
-		// vmRSSValue is "1234 kB" — parse the numeric prefix only
-		spaceIdx := bytes.IndexByte(vmRSSValue, ' ')
-		if spaceIdx <= 0 {
-			continue
-		}
-		kb, err := strconv.Atoi(string(vmRSSValue[:spaceIdx]))
-		if err != nil {
-			continue
-		}
-		totalRssMemory += int64(kb)
+		totalRssMemory += hm.rssForProcName(name, pgidBytes, pathBuf[:])
 	}
 	return totalRssMemory
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -264,23 +265,266 @@ func livePGIDInHistory(history []types.ProcessHistory) int {
 	return 0
 }
 
-func (m *LocalManager) StartService(name string) (pgid int, err error) {
+// launchIO bundles the log files and stdout/stderr pipes created for a service
+// launch so every failure path can clean them up together.
+type launchIO struct {
+	logFile      *os.File
+	errorLogFile *os.File
+	readLog      *os.File
+	writeLog     *os.File
+	readErr      *os.File
+	writeErr     *os.File
+}
+
+// prepareLaunchIO opens the service log files and the two stdout/stderr pipes.
+// On any partial failure it closes whatever was already opened so the caller
+// never leaks a descriptor.
+func (m *LocalManager) prepareLaunchIO(name string) (launchIO, error) {
+	logFile, errorLogFile, err := m.prepareLogFiles(name)
+	if err != nil {
+		return launchIO{}, fmt.Errorf("preparing log files for %s: %w", name, err)
+	}
+	readLog, writeLog, err := newPipeForStd()
+	if err != nil {
+		_ = logFile.Close()
+		_ = errorLogFile.Close()
+		return launchIO{}, fmt.Errorf("creating log file pipe for %s: %w", name, err)
+	}
+	readErr, writeErr, err := newPipeForStd()
+	if err != nil {
+		_ = logFile.Close()
+		_ = errorLogFile.Close()
+		_ = readLog.Close()
+		_ = writeLog.Close()
+		return launchIO{}, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
+	}
+	return launchIO{
+		logFile:      logFile,
+		errorLogFile: errorLogFile,
+		readLog:      readLog,
+		writeLog:     writeLog,
+		readErr:      readErr,
+		writeErr:     writeErr,
+	}, nil
+}
+
+// closeAll closes every file in the bundle, joining any close errors. Used by
+// the launch failure path before the pipe goroutines take ownership.
+func (lio launchIO) closeAll() error {
+	closers := []struct {
+		f   *os.File
+		msg string
+	}{
+		{lio.readLog, "closing read log file pipe"},
+		{lio.writeLog, "closing write log file pipe"},
+		{lio.readErr, "closing read error log file pipe"},
+		{lio.writeErr, "closing write error log file pipe"},
+		{lio.logFile, "closing log file"},
+		{lio.errorLogFile, "closing error log file"},
+	}
+	var errs []error
+	for _, c := range closers {
+		if closeErr := c.f.Close(); closeErr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", c.msg, closeErr))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// buildLaunchCommand constructs the /bin/sh command that runs a service, wiring
+// its process group, working directory, environment, and stdout/stderr pipes.
+func (m *LocalManager) buildLaunchCommand(service types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO) (*exec.Cmd, error) {
+	cmd := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Dir = service.DirectoryPath
+	env, err := buildEnvironment(config, service.DirectoryPath)
+	if err != nil {
+		return nil, fmt.Errorf("building environment for %s: %w", service.Name, err)
+	}
+	cmd.Env = env
+	cmd.Stdout = lio.writeLog
+	cmd.Stderr = lio.writeErr
+	return cmd, nil
+}
+
+// wireLogPipes closes the now-handed-off write ends, starts any log sinks, and
+// launches the goroutines that forward the process's stdout/stderr to the log
+// files and sinks. It must be called once Start has succeeded.
+func (m *LocalManager) wireLogPipes(lio launchIO, resolvedSinks []types.LogSink, name string) error {
+	if closeErr := lio.writeLog.Close(); closeErr != nil {
+		return fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
+	}
+	if closeErr := lio.writeErr.Close(); closeErr != nil {
+		return fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
+	}
+
+	errFileLogger := logutil.NewJSONLogger(lio.errorLogFile, false)
+	sinks := startSinkProcesses(m.ctx, resolvedSinks, name, m.logger, errFileLogger)
+	var sinkWg *sync.WaitGroup
+	if len(sinks) > 0 {
+		sinkWg = &sync.WaitGroup{}
+		sinkWg.Add(2)
+		go func() {
+			sinkWg.Wait()
+			stopSinkProcesses(sinks)
+		}()
+	}
+
+	m.pipeWg.Add(2)
+	go m.pipeToLogFile(lio.readLog, lio.logFile, name, sinks, sinkWg)
+	go m.pipeToErrorLogFile(lio.readErr, lio.errorLogFile, errFileLogger, name, sinks, sinkWg)
+	return nil
+}
+
+// killAndWrap kills a launched process group after a post-start bookkeeping
+// step failed, and wraps err with action context. If the kill itself fails the
+// process may still be alive, so pgid 0 is returned to flag manual cleanup;
+// otherwise the (now cleaned-up) pgid is returned.
+func killAndWrap(pgid int, err error, action string) (int, error) {
+	if killErr := syscall.Kill(-pgid, syscall.SIGKILL); killErr != nil {
+		return 0, fmt.Errorf("%s %d: %w; kill process: %w - manual intervention required", action, pgid, err, killErr)
+	}
+	return pgid, fmt.Errorf("%s (process cleaned up): %w", action, err)
+}
+
+// captureIdentity derives the process-group id from a freshly started leader
+// (its PID, since Setpgid makes it the group leader), reads its start time
+// before the reaper can collect it, then launches the async reaper. On a
+// start-time read failure it kills the group and reaps synchronously.
+func captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks int64, err error) {
+	pgid = cmd.Process.Pid
+	startedAtTicks, err = procutil.StartTime(pgid)
+	if err != nil {
+		cleanPGID, wrapErr := killAndWrap(pgid, err, "reading process start time")
+		_ = cmd.Wait() // reap; the async reaper below never launched on this path
+		return cleanPGID, 0, wrapErr
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return pgid, startedAtTicks, nil
+}
+
+// reconcileStartHistory scans prior process history before a start. It errors
+// if a still-live Running/Starting process for this service is found, and
+// otherwise self-heals stale rows whose processes are gone (Running->Stopped,
+// Starting->Failed) so status displays don't report phantom processes.
+func (m *LocalManager) reconcileStartHistory(name string, processHistory []types.ProcessHistory) error {
+	for _, p := range processHistory {
+		switch p.State {
+		case types.ProcessStateRunning:
+			if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
+				return fmt.Errorf("service already running with PGID %d", p.PGID)
+			}
+			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, p.PGID, database.ProcessHistoryUpdate{
+				State:     new(types.ProcessStateStopped),
+				StoppedAt: new(time.Now()),
+			}); updateErr != nil {
+				m.logger.Error("failed to mark stale running entry as stopped", "service", name, "pgid", p.PGID, "error", updateErr)
+			}
+		case types.ProcessStateStarting:
+			if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
+				return fmt.Errorf("service already starting with PGID %d", p.PGID)
+			}
+			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, p.PGID, database.ProcessHistoryUpdate{
+				State:     new(types.ProcessStateFailed),
+				StoppedAt: new(time.Now()),
+			}); updateErr != nil {
+				m.logger.Error("failed to mark stale starting entry as failed", "service", name, "pgid", p.PGID, "error", updateErr)
+			}
+		case types.ProcessStateStopped, types.ProcessStateFailed, types.ProcessStateUnknown:
+			// Already terminal; nothing to reconcile.
+		}
+	}
+	return nil
+}
+
+// loadServiceForLaunch resolves the catalog entry, parsed service config, and
+// resolved log sinks shared by Start and Restart. An unregistered service is
+// normalized into a plain error.
+func (m *LocalManager) loadServiceForLaunch(name string) (types.ServiceCatalogEntry, *types.ServiceConfig, []types.LogSink, error) {
 	service, err := m.GetServiceCatalogEntry(name)
 	if errors.Is(err, ErrServiceNotRegistered) {
-		return 0, fmt.Errorf("service %s not registered", name)
+		return types.ServiceCatalogEntry{}, nil, nil, fmt.Errorf("service %s not registered", name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("get service catalog entry %q: %w", name, err)
+		return types.ServiceCatalogEntry{}, nil, nil, fmt.Errorf("get service catalog entry %q: %w", name, err)
 	}
 
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
 	config, err := LoadServiceConfig(configPath)
-
 	if err != nil {
-		return 0, fmt.Errorf("load service config for %s: %w", name, err)
+		return types.ServiceCatalogEntry{}, nil, nil, fmt.Errorf("load service config for %s: %w", name, err)
 	}
 
 	resolvedSinks, err := ResolveLogSinks(name, config.LogSinks, m.sinkRegistry)
+	if err != nil {
+		return types.ServiceCatalogEntry{}, nil, nil, err
+	}
+
+	return service, config, resolvedSinks, nil
+}
+
+// launchAndCapture builds the service command, starts it, wires its log pipes,
+// and captures its process identity. On a successful Start it sets
+// *launchSuccess so the caller's deferred IO cleanup is skipped. startErrLabel
+// distinguishes "start command" from "restart command" in the error.
+func (m *LocalManager) launchAndCapture(service types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO, resolvedSinks []types.LogSink, launchSuccess *bool, startErrLabel string) (pgid int, startedAtTicks int64, err error) {
+	cmd, err := m.buildLaunchCommand(service, config, lio)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if startErr := cmd.Start(); startErr != nil {
+		return 0, 0, fmt.Errorf("%s: %w", startErrLabel, startErr)
+	}
+	*launchSuccess = true
+
+	if wireErr := m.wireLogPipes(lio, resolvedSinks, service.Name); wireErr != nil {
+		return 0, 0, wireErr
+	}
+
+	// See captureIdentity: derive PGID from the leader's PID and read its start
+	// time before the reaper runs, so an instant-exit process is still readable
+	// and Getpgid can't race the reap into an ESRCH failure.
+	m.logger.Debug("process started", "service", service.Name, "pgid", cmd.Process.Pid)
+	return captureIdentity(cmd)
+}
+
+// recordStartedInstance persists the service instance and process-history rows
+// for a freshly started service. On any DB failure it kills the process group.
+func (m *LocalManager) recordStartedInstance(service types.ServiceCatalogEntry, pgid int, startedAtTicks int64) (int, error) {
+	if regErr := m.db.RegisterServiceInstance(m.ctx, service.Name); regErr != nil {
+		return killAndWrap(pgid, regErr, "register service instance")
+	}
+	if updErr := m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
+		StartedAt: new(time.Now()),
+	}); updErr != nil {
+		return killAndWrap(pgid, updErr, "update service instance")
+	}
+	if _, histErr := m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting); histErr != nil {
+		return killAndWrap(pgid, histErr, "register process history entry")
+	}
+	return pgid, nil
+}
+
+// recordRestartedInstance bumps the restart count and records the new process
+// history row for a restarted service. On any DB failure it kills the group.
+func (m *LocalManager) recordRestartedInstance(service types.ServiceCatalogEntry, restartCount, pgid int, startedAtTicks int64) (int, error) {
+	if updErr := m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
+		StartedAt:    new(time.Now()),
+		RestartCount: new(restartCount + 1),
+	}); updErr != nil {
+		return killAndWrap(pgid, updErr, "update service instance")
+	}
+	if _, histErr := m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting); histErr != nil {
+		return killAndWrap(pgid, histErr, "register process history entry")
+	}
+	return pgid, nil
+}
+
+func (m *LocalManager) StartService(name string) (pgid int, err error) {
+	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
 	if err != nil {
 		return 0, err
 	}
@@ -307,87 +551,20 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		// this row on a successful start.
 	}
 
-	for _, p := range processHistory {
-		state := p.State
-		processPGID := p.PGID
-
-		if state == types.ProcessStateRunning {
-			if procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-				return 0, fmt.Errorf("service already running with PGID %d", processPGID)
-			}
-			// Stale Running entry: the real process is dead (killed
-			// out-of-band, crashed, or the daemon restarted before the
-			// health monitor's checkRunningProcess could catch it), but the
-			// row was never transitioned out of Running. Self-heal, then
-			// proceed as if this entry didn't exist.
-			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, processPGID, database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateStopped),
-				StoppedAt: new(time.Now()),
-			}); updateErr != nil {
-				m.logger.Error("failed to mark stale running entry as stopped", "service", name, "pgid", processPGID, "error", updateErr)
-			}
-			continue
-		}
-		if state == types.ProcessStateStarting {
-			if procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-				return 0, fmt.Errorf("service already starting with PGID %d", processPGID)
-			}
-			// Stale Starting entry: the daemon likely crashed or the machine
-			// rebooted mid-start, so the process behind this PGID is gone but the
-			// row was never transitioned out of Starting (normally the health
-			// monitor's checkStartProcess/markProcessFailed does this, but it
-			// never got the chance to run). Mark it Failed so status displays
-			// don't report this service as perpetually "starting", then proceed
-			// as if this entry didn't exist.
-			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, processPGID, database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateFailed),
-				StoppedAt: new(time.Now()),
-			}); updateErr != nil {
-				m.logger.Error("failed to mark stale starting entry as failed", "service", name, "pgid", processPGID, "error", updateErr)
-			}
-			continue
-		}
+	if reconcileErr := m.reconcileStartHistory(name, processHistory); reconcileErr != nil {
+		return 0, reconcileErr
 	}
 
-	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
+	lio, err := m.prepareLaunchIO(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
+		return 0, err
 	}
 
-	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
-	if err != nil {
-		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
-	}
-
-	readErrorLogFilePipe, writeErrorLogFilePipe, err := newPipeForStd()
-	if err != nil {
-		return 0, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
-	}
-
-	startSuccess := false
+	launchSuccess := false
 	defer func() {
-		if !startSuccess {
-			var closeErrs []error
-			if closeErr := readLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing read log file pipe: %w", closeErr))
-			}
-			if closeErr := writeLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing write log file pipe: %w", closeErr))
-			}
-			if closeErr := readErrorLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing read error log file pipe: %w", closeErr))
-			}
-			if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing write error log file pipe: %w", closeErr))
-			}
-			if closeErr := logFile.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing log file: %w", closeErr))
-			}
-			if closeErr := errorLogFile.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing error log file: %w", closeErr))
-			}
-			if len(closeErrs) > 0 {
-				err = errors.Join(err, errors.Join(closeErrs...))
+		if !launchSuccess {
+			if closeErr := lio.closeAll(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 		}
 	}()
@@ -396,102 +573,15 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, binaryErr
 	}
 
-	startCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
-	startCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	startCommand.Dir = service.DirectoryPath
-	env, err := buildEnvironment(config, service.DirectoryPath)
-	if err != nil {
-		return 0, fmt.Errorf("building environment for %s: %w", name, err)
-	}
-
-	startCommand.Env = env
-	startCommand.Stdout = writeLogFilePipe
-	startCommand.Stderr = writeErrorLogFilePipe
-
 	m.logger.Debug("launching service", "service", name, "cmd", config.Command)
-	if startErr := startCommand.Start(); startErr != nil {
-		return 0, fmt.Errorf("start command: %w", startErr)
-	}
-	startSuccess = true
-
-	if closeErr := writeLogFilePipe.Close(); closeErr != nil {
-		return 0, fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
-	}
-
-	if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
-		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
-	}
-
-	errFileLogger := logutil.NewJSONLogger(errorLogFile, false)
-	sinks := startSinkProcesses(m.ctx, resolvedSinks, name, m.logger, errFileLogger)
-	var sinkWg *sync.WaitGroup
-	if len(sinks) > 0 {
-		sinkWg = &sync.WaitGroup{}
-		sinkWg.Add(2)
-		go func() {
-			sinkWg.Wait()
-			stopSinkProcesses(sinks)
-		}()
-	}
-
-	m.pipeWg.Add(2)
-	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
-	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, errFileLogger, name, sinks, sinkWg)
-
-	// With Setpgid the child leads a new process group, so its PGID equals its
-	// PID. Read it directly rather than via syscall.Getpgid, which races the
-	// reaper goroutine below: a service that exits immediately can be reaped
-	// before Getpgid runs and then fail with ESRCH ("no such process") even
-	// though the start itself succeeded.
-	pgid = startCommand.Process.Pid
-	m.logger.Debug("process started", "service", name, "pgid", pgid)
-
-	// Read the start time from the (possibly already-exited but not-yet-reaped)
-	// process before launching the reaper below, so it stays readable in the
-	// proc table even for an instant-exit service.
-	startedAtTicks, err := procutil.StartTime(pgid)
+	pgid, startedAtTicks, err := m.launchAndCapture(service, config, lio, resolvedSinks, &launchSuccess, "start command")
 	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		_ = startCommand.Wait() // reap; the async reaper below never launched on this path
-		if killErr != nil {
-			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
+		return pgid, err
 	}
 
-	// Reap the process asynchronously now that its identity is recorded.
-	go func() {
-		_ = startCommand.Wait()
-	}()
-
-	err = m.db.RegisterServiceInstance(m.ctx, service.Name)
+	pgid, err = m.recordStartedInstance(service, pgid, startedAtTicks)
 	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		if killErr != nil {
-			return 0, fmt.Errorf("register service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("register service instance (process cleaned up): %w", err)
-	}
-
-	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
-		StartedAt: new(time.Now()),
-	})
-	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		if killErr != nil {
-			return 0, fmt.Errorf("update service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
-	}
-
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting)
-	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		if killErr != nil {
-			return 0, fmt.Errorf("register process history entry %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
+		return pgid, err
 	}
 	m.logger.Debug("state=Starting recorded", "service", name, "pgid", pgid)
 
@@ -499,21 +589,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 }
 
 func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
-	service, err := m.GetServiceCatalogEntry(name)
-	if errors.Is(err, ErrServiceNotRegistered) {
-		return 0, fmt.Errorf("service %s not registered", name)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get service catalog entry %q: %w", name, err)
-	}
-
-	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
-	config, err := LoadServiceConfig(configPath)
-	if err != nil {
-		return 0, fmt.Errorf("load service config for %s: %w", name, err)
-	}
-
-	resolvedSinks, err := ResolveLogSinks(name, config.LogSinks, m.sinkRegistry)
+	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
 	if err != nil {
 		return 0, err
 	}
@@ -526,45 +602,16 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("no service instance for %s", name)
 	}
 
-	logFile, errorLogFile, err := m.prepareLogFiles(service.Name)
+	lio, err := m.prepareLaunchIO(service.Name)
 	if err != nil {
-		return 0, fmt.Errorf("preparing log files for %s: %w", name, err)
+		return 0, err
 	}
 
-	readLogFilePipe, writeLogFilePipe, err := newPipeForStd()
-	if err != nil {
-		return 0, fmt.Errorf("creating log file pipe for %s: %w", name, err)
-	}
-
-	readErrorLogFilePipe, writeErrorLogFilePipe, err := newPipeForStd()
-	if err != nil {
-		return 0, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
-	}
-
-	restartSuccess := false
+	launchSuccess := false
 	defer func() {
-		if !restartSuccess {
-			var closeErrs []error
-			if closeErr := readLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing read log file pipe: %w", closeErr))
-			}
-			if closeErr := writeLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing write log file pipe: %w", closeErr))
-			}
-			if closeErr := readErrorLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing read error log file pipe: %w", closeErr))
-			}
-			if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing write error log file pipe: %w", closeErr))
-			}
-			if closeErr := logFile.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing log file: %w", closeErr))
-			}
-			if closeErr := errorLogFile.Close(); closeErr != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("closing error log file: %w", closeErr))
-			}
-			if len(closeErrs) > 0 {
-				err = errors.Join(err, errors.Join(closeErrs...))
+		if !launchSuccess {
+			if closeErr := lio.closeAll(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 		}
 	}()
@@ -581,93 +628,13 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
 	}
 
-	restartCommand := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
-	restartCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	restartCommand.Dir = service.DirectoryPath
-	env, err := buildEnvironment(config, service.DirectoryPath)
-	if err != nil {
-		return 0, fmt.Errorf("building environment for %s: %w", name, err)
-	}
-
-	restartCommand.Env = env
-	restartCommand.Stdout = writeLogFilePipe
-	restartCommand.Stderr = writeErrorLogFilePipe
-
 	m.logger.Debug("stop complete, launching restart", "service", name)
-	if restartErr := restartCommand.Start(); restartErr != nil {
-		return 0, fmt.Errorf("restart command: %w", restartErr)
-	}
-	restartSuccess = true
-
-	if closeErr := writeLogFilePipe.Close(); closeErr != nil {
-		return 0, fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
-	}
-
-	if closeErr := writeErrorLogFilePipe.Close(); closeErr != nil {
-		return 0, fmt.Errorf("closing write error log file pipe for %s: %w", name, closeErr)
-	}
-
-	errFileLogger := logutil.NewJSONLogger(errorLogFile, false)
-	sinks := startSinkProcesses(m.ctx, resolvedSinks, name, m.logger, errFileLogger)
-	var sinkWg *sync.WaitGroup
-	if len(sinks) > 0 {
-		sinkWg = &sync.WaitGroup{}
-		sinkWg.Add(2)
-		go func() {
-			sinkWg.Wait()
-			stopSinkProcesses(sinks)
-		}()
-	}
-
-	m.pipeWg.Add(2)
-	go m.pipeToLogFile(readLogFilePipe, logFile, name, sinks, sinkWg)
-	go m.pipeToErrorLogFile(readErrorLogFilePipe, errorLogFile, errFileLogger, name, sinks, sinkWg)
-
-	// See StartService: derive PGID from the leader's PID and capture the
-	// start time before launching the reaper, so an instant-exit process is
-	// still readable and Getpgid can't race the reap into an ESRCH failure.
-	pgid = restartCommand.Process.Pid
-	m.logger.Debug("restarted process", "service", name, "pgid", pgid)
-
-	startedAtTicks, err := procutil.StartTime(pgid)
+	pgid, startedAtTicks, err := m.launchAndCapture(service, config, lio, resolvedSinks, &launchSuccess, "restart command")
 	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		_ = restartCommand.Wait() // reap; the async reaper below never launched on this path
-		if killErr != nil {
-			return 0, fmt.Errorf("reading process start time %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("reading process start time (process cleaned up): %w", err)
+		return pgid, err
 	}
 
-	// Reap the process asynchronously now that its identity is recorded.
-	go func() {
-		_ = restartCommand.Wait()
-	}()
-
-	err = m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
-		StartedAt:    new(time.Now()),
-		RestartCount: new(serviceInstance.RestartCount + 1),
-	})
-
-	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		if killErr != nil {
-			return 0, fmt.Errorf("update service instance %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("update service instance (process cleaned up): %w", err)
-	}
-
-	_, err = m.db.RegisterProcessHistoryEntry(m.ctx, pgid, startedAtTicks, service.Name, types.ProcessStateStarting)
-	if err != nil {
-		killErr := syscall.Kill(-pgid, syscall.SIGKILL)
-		if killErr != nil {
-			return 0, fmt.Errorf("register process history entry %d: %w; kill process: %w - manual intervention required", pgid, err, killErr)
-		}
-		return pgid, fmt.Errorf("register process history entry (process cleaned up): %w", err)
-	}
-
-	return pgid, nil
+	return m.recordRestartedInstance(service, serviceInstance.RestartCount, pgid, startedAtTicks)
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
@@ -698,6 +665,49 @@ type StopServiceResult struct {
 	Errored   map[int]string
 	Stopped   map[int]bool
 	StaleData map[int]string
+}
+
+// waitForPendingStops polls until every pending PID has exited or the grace
+// period elapses. PIDs still alive once the grace period is exceeded are marked
+// in errored ("exceeded grace period"). Returns the set that exited cleanly, or
+// canceled=true when m.ctx is done (caller should abandon and re-check later).
+func (m *LocalManager) waitForPendingStops(name string, pending map[int]bool, errored map[int]string, requestStartTime time.Time, gracePeriod, tickerPeriod time.Duration) (stopped map[int]bool, canceled bool) {
+	ticker := time.NewTicker(tickerPeriod)
+	defer ticker.Stop()
+
+	countPending := len(pending)
+	stopped = make(map[int]bool)
+
+	for {
+		select {
+		case <-ticker.C:
+			if time.Since(requestStartTime) > gracePeriod {
+				for pendingPID := range pending {
+					if _, ok := stopped[pendingPID]; !ok {
+						errored[pendingPID] = "killing service: exceeded grace period"
+					}
+				}
+				return stopped, false
+			}
+
+			for pendingPID := range pending {
+				if _, ok := stopped[pendingPID]; ok {
+					continue
+				}
+				if !isProcessAlive(pendingPID) {
+					stopped[pendingPID] = true
+				}
+			}
+
+			if len(stopped) == countPending {
+				m.logger.Debug("all processes exited", "service", name, "elapsed", time.Since(requestStartTime))
+				return stopped, false
+			}
+
+		case <-m.ctx.Done():
+			return nil, true
+		}
+	}
 }
 
 func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
@@ -737,49 +747,11 @@ func (m *LocalManager) StopService(name string, gracePeriod time.Duration, ticke
 		}, nil
 	}
 
-	ticker := time.NewTicker(tickerPeriod)
-	defer ticker.Stop()
-
 	erroredProcesses := stopResult.Errored
-	stoppedProcesses := make(map[int]bool)
-
-OuterLoop:
-	for {
-		select {
-		case <-ticker.C:
-			if time.Since(requestStartTime) > gracePeriod {
-				if len(stoppedProcesses) != countPending {
-					for pendingPID := range stopResult.Pending {
-						_, ok := stoppedProcesses[pendingPID]
-						if ok {
-							continue
-						}
-						erroredProcesses[pendingPID] = "killing service: exceeded grace period"
-					}
-				}
-
-				break OuterLoop
-			}
-
-			for pendingPID := range stopResult.Pending {
-				_, ok := stoppedProcesses[pendingPID]
-				if ok {
-					continue
-				}
-				if !isProcessAlive(pendingPID) {
-					stoppedProcesses[pendingPID] = true
-				}
-			}
-
-			if len(stoppedProcesses) == countPending {
-				m.logger.Debug("all processes exited", "service", name, "elapsed", time.Since(requestStartTime))
-				break OuterLoop
-			}
-
-		case <-m.ctx.Done():
-			// User canceled, return empty result. System will check all again.
-			return StopServiceResult{}, nil
-		}
+	stoppedProcesses, canceled := m.waitForPendingStops(name, stopResult.Pending, erroredProcesses, requestStartTime, gracePeriod, tickerPeriod)
+	if canceled {
+		// User canceled, return empty result. System will check all again.
+		return StopServiceResult{}, nil
 	}
 
 	staleDataErrors := make(map[int]string)
@@ -932,6 +904,21 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 // 	NodeJs SupportedRuntime = "nodejs"
 // )
 
+// runtimeBinaryName maps a service's runtime type to the executable expected on
+// the system PATH, or "" when no PATH check applies (custom/unknown runtimes).
+func runtimeBinaryName(runtimeType string) string {
+	switch runtimeType {
+	case "bun":
+		return "bun"
+	case "deno":
+		return "deno"
+	case "node", "nodejs":
+		return "node"
+	default:
+		return ""
+	}
+}
+
 func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error {
 	if config.Runtime.Path != "" {
 		if runtimePathErr := ValidateRuntimePath(config.Runtime); runtimePathErr != nil {
@@ -941,23 +928,13 @@ func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error 
 		return nil
 	}
 
-	switch config.Runtime.Type {
-	case "bun":
-		if _, lookPathErr := m.executor.LookPath("bun"); lookPathErr != nil {
-			return fmt.Errorf("bun not found in system PATH: %w", lookPathErr)
-		}
-	case "deno":
-		if _, lookPathErr := m.executor.LookPath("deno"); lookPathErr != nil {
-			return fmt.Errorf("deno not found in system PATH: %w", lookPathErr)
-		}
-	case "node", "nodejs":
-		if _, lookPathErr := m.executor.LookPath("node"); lookPathErr != nil {
-			return fmt.Errorf("node not found in system PATH: %w", lookPathErr)
-		}
-	default:
+	binary := runtimeBinaryName(config.Runtime.Type)
+	if binary == "" {
 		return nil
 	}
-
+	if _, lookPathErr := m.executor.LookPath(binary); lookPathErr != nil {
+		return fmt.Errorf("%s not found in system PATH: %w", binary, lookPathErr)
+	}
 	return nil
 }
 
