@@ -281,7 +281,7 @@ func newTestDaemonCmd(ctrl DaemonController) *cobra.Command {
 	return parent
 }
 
-func TestDaemonStartForeground(t *testing.T) {
+func TestDaemonStartDefaultsToBackground(t *testing.T) {
 	fake := &fakeDaemonController{}
 	cmd := newTestDaemonCmd(fake)
 	var out, errOut strings.Builder
@@ -295,15 +295,56 @@ func TestDaemonStartForeground(t *testing.T) {
 	if !fake.startCalled {
 		t.Fatal("expected Start to be called")
 	}
+	if !fake.detachArg {
+		t.Fatal("expected detach=true by default")
+	}
+	if !strings.Contains(out.String(), "background") {
+		t.Errorf("expected 'background' in output, got: %s", out.String())
+	}
+}
+
+func TestDaemonStartForegroundFlag(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "--foreground"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.startCalled {
+		t.Fatal("expected Start to be called")
+	}
 	if fake.detachArg {
-		t.Fatal("expected detach=false for foreground start")
+		t.Fatal("expected detach=false for --foreground flag")
 	}
 	if !strings.Contains(out.String(), "foreground") {
 		t.Errorf("expected 'foreground' in output, got: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "Ctrl-C") {
+		t.Errorf("expected Ctrl-C warning in output, got: %s", out.String())
+	}
 }
 
-func TestDaemonStartDetachLongFlag(t *testing.T) {
+func TestDaemonStartForegroundShortFlag(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "-f"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.detachArg {
+		t.Fatal("expected detach=false for -f flag")
+	}
+}
+
+func TestDaemonStartDetachLongFlagIsNoOp(t *testing.T) {
 	fake := &fakeDaemonController{}
 	cmd := newTestDaemonCmd(fake)
 	var out, errOut strings.Builder
@@ -318,14 +359,14 @@ func TestDaemonStartDetachLongFlag(t *testing.T) {
 		t.Fatal("expected Start to be called")
 	}
 	if !fake.detachArg {
-		t.Fatal("expected detach=true for --detach flag")
+		t.Fatal("expected detach=true for --detach flag (kept for backward compatibility)")
 	}
 	if !strings.Contains(out.String(), "background") {
 		t.Errorf("expected 'background' in output, got: %s", out.String())
 	}
 }
 
-func TestDaemonStartDetachShortFlag(t *testing.T) {
+func TestDaemonStartDetachShortFlagIsNoOp(t *testing.T) {
 	fake := &fakeDaemonController{}
 	cmd := newTestDaemonCmd(fake)
 	var out, errOut strings.Builder
@@ -338,6 +379,25 @@ func TestDaemonStartDetachShortFlag(t *testing.T) {
 	}
 	if !fake.detachArg {
 		t.Fatal("expected detach=true for -d flag")
+	}
+}
+
+func TestDaemonStartConflictingFlags(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"start", "--foreground", "--detach"})
+
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if fake.startCalled {
+		t.Fatal("expected Start not to be called on conflicting flags")
+	}
+	if !strings.Contains(errOut.String(), "cannot use --foreground and --detach together") {
+		t.Errorf("expected conflicting flags error, got: %s", errOut.String())
 	}
 }
 

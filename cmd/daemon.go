@@ -369,22 +369,32 @@ func buildDaemonSubcmds(daemonCmd *cobra.Command, getCtrl func() DaemonControlle
 
 If a systemd unit file is installed, delegates to "systemctl start eos" (requires root).
 
-Otherwise, starts the daemon directly. By default runs in the foreground and streams output to the console. Pass --detach (-d) to fork the process into a new session in the background; control returns once the PID file is written (timeout: 5s).`,
+Otherwise, starts the daemon detached in the background by default; control returns once the PID file is written (timeout: 5s). --detach (-d) is accepted for backward compatibility but is now a no-op. Pass --foreground (-f) to run in the foreground and stream output to the console instead — Ctrl-C will then stop the daemon.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctrl := getCtrl()
-			detach, err := cmd.Flags().GetBool("detach")
+			foreground, err := cmd.Flags().GetBool("foreground")
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 				return helpers.ErrCommandFailed
 			}
+			detachFlag, err := cmd.Flags().GetBool("detach")
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return helpers.ErrCommandFailed
+			}
+			if foreground && detachFlag {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "cannot use --foreground and --detach together")
+				return helpers.ErrCommandFailed
+			}
+			detach := !foreground
 			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
 
 			if detach {
 				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in background...")
 			} else {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground...")
+				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground — press Ctrl-C to stop this daemon...")
 			}
 
 			verbose, _ := cmd.Flags().GetBool("verbose")
@@ -400,7 +410,8 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 			return nil
 		},
 	}
-	startCmd.Flags().BoolP("detach", "d", false, "run daemon in background")
+	startCmd.Flags().BoolP("foreground", "f", false, "run daemon in foreground and stream output (Ctrl-C stops it)")
+	startCmd.Flags().BoolP("detach", "d", false, "run daemon in background (default; kept for backward compatibility)")
 	startCmd.Flags().Bool("log-to-file-and-console", false, "")
 	err := startCmd.Flags().MarkHidden("log-to-file-and-console")
 	if err != nil {
@@ -531,7 +542,9 @@ func envWithout(env []string, key string) []string {
 // parent runs as root it drops the child to identity's uid/gid and strips root's
 // HOME so the child resolves paths under its own home, not /root.
 func buildForkCommand(ctx context.Context, exePath string, verbose bool, identity userutil.Identity) (*exec.Cmd, *manager.CapturedWriter) {
-	args := []string{"daemon", "start", "--log-to-file-and-console"}
+	// --foreground is required here: the child inherits no flags, and "daemon start"
+	// now defaults to detach=true, so without it the child would fork again and again.
+	args := []string{"daemon", "start", "--foreground", "--log-to-file-and-console"}
 	if verbose {
 		args = append(args, "--verbose")
 	}
@@ -633,7 +646,7 @@ func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) 
 
 	if staleCount > 0 {
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("%d daemon(s) still running the pre-update binary", staleCount))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start --detach") + ui.TextMuted.Render(" → restart each") + "\n\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start") + ui.TextMuted.Render(" → restart each") + "\n\n")
 	}
 }
 

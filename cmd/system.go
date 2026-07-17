@@ -349,7 +349,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={{.ExecStart}} daemon start
+ExecStart={{.ExecStart}} daemon start --foreground
 Restart=always
 RestartSec=5s
 User={{.User}}
@@ -363,7 +363,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={{.ExecStart}} daemon start
+ExecStart={{.ExecStart}} daemon start --foreground
 Restart=always
 RestartSec=5s
 
@@ -819,6 +819,7 @@ func renderPlistFile(installDir string, user string, label string, userAgent boo
 		<string>{{.ExecStart}}</string>
 		<string>daemon</string>
 		<string>start</string>
+		<string>--foreground</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -839,6 +840,7 @@ func renderPlistFile(installDir string, user string, label string, userAgent boo
 		<string>{{.ExecStart}}</string>
 		<string>daemon</string>
 		<string>start</string>
+		<string>--foreground</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
