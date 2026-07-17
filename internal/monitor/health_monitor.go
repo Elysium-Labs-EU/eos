@@ -213,17 +213,8 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
 	hm.logger.Debug("startup→running", "service", serviceName, "mem_kb", activeRssMemoryKb)
-	var rssPtr *int64
-	if sampled {
-		rssPtr = &activeRssMemoryKb
-	}
 
-	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-		State:       new(types.ProcessStateRunning),
-		Error:       new(""),
-		RssMemoryKb: rssPtr,
-	})
-	if err != nil {
+	if err := hm.markRunning(ctx, pgid, rssKbPtr(activeRssMemoryKb, sampled)); err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
 	}
 }
@@ -432,17 +423,8 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	}
 
 	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
-	var rssPtr *int64
-	if sampled {
-		rssPtr = &activeRssMemoryKb
-	}
 
-	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-		State:       new(types.ProcessStateRunning),
-		Error:       new(""),
-		RssMemoryKb: rssPtr,
-	})
-	if err != nil {
+	if err := hm.markRunning(ctx, pgid, rssKbPtr(activeRssMemoryKb, sampled)); err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
 	}
 }
@@ -450,20 +432,34 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, level slog.Level, errorString string) {
 	hm.logger.Log(ctx, level, errorString)
 	hm.logger.Debug("state→Failed", "service", serviceName, "pgid", pgid)
-	err := hm.mgr.LogToServiceStderr(serviceName, errorString)
-	if err != nil {
+	if err := hm.mgr.LogToServiceStderr(serviceName, errorString); err != nil {
 		hm.logger.Error("failed to log service error output", "service", serviceName, "error", err)
 	}
 
-	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+	if err := hm.markFailed(ctx, pgid, errorString); err != nil {
+		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+	}
+}
+
+// markRunning records that the process at pgid is running, updating its sampled RSS
+// (nil skips the column update) and clearing any prior error string.
+func (hm *HealthMonitor) markRunning(ctx context.Context, pgid int, rssKb *int64) error {
+	return hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+		State:       new(types.ProcessStateRunning),
+		Error:       new(""),
+		RssMemoryKb: rssKb,
+	})
+}
+
+// markFailed records that the process at pgid has failed, stamping StoppedAt and
+// zeroing RssMemoryKb since the process is no longer alive to sample.
+func (hm *HealthMonitor) markFailed(ctx context.Context, pgid int, errString string) error {
+	return hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State:       new(types.ProcessStateFailed),
 		StoppedAt:   new(time.Now()),
 		RssMemoryKb: new(int64(0)),
-		Error:       new(errorString),
+		Error:       new(errString),
 	})
-	if err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
-	}
 }
 
 func canRestart(restartCount, maxRestartCount int, since *time.Time, backoff config.BackoffConfig) bool {
