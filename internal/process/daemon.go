@@ -170,6 +170,41 @@ func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.
 	go healthMonitor.Start(d.ctx)
 }
 
+// reclaimStalePIDFile clears a leftover PID file whose daemon has since died.
+// It errors if a live daemon still owns the file.
+func reclaimStalePIDFile(pidFile string, logger *slog.Logger) error {
+	if _, pidFileStatErr := os.Stat(pidFile); pidFileStatErr == nil {
+		data, _ := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
+		oldPid, _ := strconv.Atoi(string(data))
+
+		if process, findProcessErr := os.FindProcess(oldPid); findProcessErr == nil {
+			if process.Signal(syscall.Signal(0)) == nil {
+				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
+				logger.Info(errorMessage.Error())
+				return errorMessage
+			}
+		}
+		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
+			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
+			logger.Error(errorMessage.Error())
+			return errorMessage
+		}
+	}
+	return nil
+}
+
+// removeExistingSocket clears a leftover unix socket file so Listen can rebind.
+func removeExistingSocket(socketPath string, logger *slog.Logger) error {
+	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
+		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
+			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
+			logger.Error(errorMessage.Error())
+			return errorMessage
+		}
+	}
+	return nil
+}
+
 func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
 	logger, err := manager.NewDaemonLogger(logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
@@ -180,22 +215,8 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	pidFile := standaloneDaemonConfig.PIDFile
 	socketPath := standaloneDaemonConfig.SocketPath
 
-	if _, pidFileStatErr := os.Stat(pidFile); pidFileStatErr == nil {
-		data, _ := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
-		oldPid, _ := strconv.Atoi(string(data))
-
-		if process, findProcessErr := os.FindProcess(oldPid); findProcessErr == nil {
-			if process.Signal(syscall.Signal(0)) == nil {
-				errorMessage := fmt.Errorf("daemon already running with PID %d", oldPid)
-				logger.Info(errorMessage.Error())
-				return nil, errorMessage
-			}
-		}
-		if pidRemoveErr := os.Remove(pidFile); pidRemoveErr != nil {
-			errorMessage := fmt.Errorf("unable to remove the pid file, got: %w", pidRemoveErr)
-			logger.Error(errorMessage.Error())
-			return nil, errorMessage
-		}
+	if reclaimErr := reclaimStalePIDFile(pidFile, logger); reclaimErr != nil {
+		return nil, reclaimErr
 	}
 
 	myPID := os.Getpid()
@@ -212,12 +233,8 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGCHLD)
 
-	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
-		if socketPathRemoveErr := os.Remove(socketPath); socketPathRemoveErr != nil {
-			errorMessage := fmt.Errorf("unable to remove the socket, got: %w", socketPathRemoveErr)
-			logger.Error(errorMessage.Error())
-			return nil, errorMessage
-		}
+	if removeErr := removeExistingSocket(socketPath, logger); removeErr != nil {
+		return nil, removeErr
 	}
 
 	lc := net.ListenConfig{}
@@ -265,58 +282,74 @@ func (d *daemon) wait() {
 	}
 }
 
+// reapAction tells handleSIGCHLDRequest whether to keep draining exited children
+// or stop for this SIGCHLD.
+type reapAction int
+
+const (
+	reapStop reapAction = iota
+	reapContinue
+)
+
+// pgroupStillAlive reports whether the reaped PID's process group still has live
+// members. The reaped PID may be the group leader (shell) while service
+// processes keep running in the same group; in that case the health monitor,
+// not the reaper, owns the liveness state.
+func pgroupStillAlive(pid int, logger *slog.Logger) bool {
+	if pid > 1 && syscall.Kill(-pid, 0) == nil {
+		logger.Info(fmt.Sprintf("reaped process %d but process group still alive, skipping state update\n", pid))
+		return true
+	}
+	return false
+}
+
+// recordReapedExit writes the terminal process-history state for a reaped PID:
+// Stopped on a clean exit, Failed otherwise.
+func recordReapedExit(ctx context.Context, db *database.DB, logger *slog.Logger, pid int, status syscall.WaitStatus) {
+	updates := database.ProcessHistoryUpdate{
+		State:     new(types.ProcessStateStopped),
+		StoppedAt: new(time.Now()),
+	}
+	if status.ExitStatus() != 0 {
+		updates.State = new(types.ProcessStateFailed)
+		updates.Error = new("Zombie process has been reaped")
+	}
+	if updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates); updateErr != nil {
+		logger.Error("updating reaped process in database", "error", updateErr)
+	}
+}
+
+// handleReapedChild processes one Wait4 result, returning reapStop when the
+// drain loop should end.
+func handleReapedChild(ctx context.Context, db *database.DB, logger *slog.Logger, pid int, waitErr error, status syscall.WaitStatus) reapAction {
+	if waitErr != nil {
+		logger.Error("cleaning up child process", "pid", pid, "error", waitErr)
+		return reapStop
+	}
+	if pid == 0 {
+		return reapStop
+	}
+	if pid < 0 {
+		logger.Error("cleaning up child process", "pid", pid)
+		return reapContinue
+	}
+
+	logger.Info(fmt.Sprintf("reaped zombie process: %d\n", pid))
+	if pgroupStillAlive(pid, logger) {
+		return reapContinue
+	}
+
+	recordReapedExit(ctx, db, logger, pid, status)
+	return reapContinue
+}
+
 func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *slog.Logger) {
 	for {
 		var status syscall.WaitStatus
 		pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
-		if err != nil {
-			logger.Error("cleaning up child process", "pid", pid, "error", err)
+		if handleReapedChild(ctx, db, logger, pid, err, status) == reapStop {
 			break
 		}
-		if pid == 0 {
-			break
-		}
-		if pid < 0 {
-			logger.Error("cleaning up child process", "pid", pid)
-			continue
-		}
-
-		logger.Info(fmt.Sprintf("reaped zombie process: %d\n", pid))
-
-		// Check if the process group is still alive (children still running).
-		// The reaped PID may be the PGID leader (shell), but actual service
-		// processes can still be running in the same group.
-		// If the group is alive, skip the state update. The health monitor
-		// will handle ongoing liveness tracking.
-		if pid > 1 && syscall.Kill(-pid, 0) == nil {
-			logger.Info(fmt.Sprintf("reaped process %d but process group still alive, skipping state update\n", pid))
-			continue
-		}
-
-		if status.ExitStatus() == 0 {
-			updates := database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateStopped),
-				StoppedAt: new(time.Now()),
-			}
-			updateErr := db.UpdateProcessHistoryEntry(ctx, pid, updates)
-			if updateErr != nil {
-				logger.Error("updating reaped process in database", "error", updateErr)
-			}
-			continue
-		}
-
-		updates := database.ProcessHistoryUpdate{
-			State:     new(types.ProcessStateFailed),
-			StoppedAt: new(time.Now()),
-			Error:     new("Zombie process has been reaped"),
-		}
-
-		err = db.UpdateProcessHistoryEntry(ctx, pid, updates)
-		if err != nil {
-			logger.Error("updating reaped process in database", "error", err)
-		}
-
-		continue
 	}
 }
 
@@ -435,21 +468,40 @@ func DiscoverDaemons() ([]DaemonSummary, error) {
 		return nil, fmt.Errorf("discovering daemons across users is only supported on linux")
 	}
 
-	var homeDirs []string
+	homeDirs, err := candidateHomeDirs()
+	if err != nil {
+		return nil, err
+	}
+
+	return discoverDaemonsIn(homeDirs, currentExecutableInode()), nil
+}
+
+// readHomeDirs lists the entries under /home as full paths. A missing /home
+// yields an empty list; other read errors are surfaced. Non-directory entries
+// are harmless — discoverDaemonsIn skips any whose .eos dir doesn't stat.
+func readHomeDirs() ([]string, error) {
 	entries, err := os.ReadDir("/home")
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading /home: %w", err)
 	}
+	dirs := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() {
-			homeDirs = append(homeDirs, filepath.Join("/home", e.Name()))
-		}
+		dirs = append(dirs, filepath.Join("/home", e.Name()))
 	}
-	if _, err := os.Stat("/root"); err == nil {
+	return dirs, nil
+}
+
+// candidateHomeDirs returns the per-user home directories (plus /root) to scan
+// for standalone daemon PID files.
+func candidateHomeDirs() ([]string, error) {
+	homeDirs, err := readHomeDirs()
+	if err != nil {
+		return nil, err
+	}
+	if _, statErr := os.Stat("/root"); statErr == nil {
 		homeDirs = append(homeDirs, "/root")
 	}
-
-	return discoverDaemonsIn(homeDirs, currentExecutableInode()), nil
+	return homeDirs, nil
 }
 
 // discoverDaemonsIn is the testable core of DiscoverDaemons: given a set of candidate home
