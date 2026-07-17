@@ -150,6 +150,28 @@ log_sinks:
 
 `type` maps to a binary on PATH named `eos-sink-<type>`. Available plugins (Loki, SSE, Logbench) are maintained at [codeberg.org/Elysium_Labs/eos-plugins](https://codeberg.org/Elysium_Labs/eos-plugins).
 
+When multiple services share the same sink, register it once in `~/.eos/config.yaml` and reference it by name instead of repeating the config in every `service.yaml`:
+
+```yaml
+# ~/.eos/config.yaml
+sinks:
+  prod-loki:
+    type: loki
+    mode: push
+    address: "http://loki:3100"
+  local-file:
+    type: file
+    mode: serve
+    address: /var/log/eos
+```
+
+```yaml
+# service.yaml
+log_sinks: [prod-loki, local-file]
+```
+
+Named references and inline sink configs compose in the same `log_sinks` list. The daemon resolves names at service start; an unknown name is a hard error.
+
 ## Deploy with GitHub Actions
 
 The [eos-deploy-action](https://github.com/Elysium-Labs-EU/eos-deploy-action) handles SSH, binary install, and service restart in one step.

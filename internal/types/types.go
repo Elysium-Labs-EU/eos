@@ -2,8 +2,11 @@
 package types
 
 import (
+	"fmt"
 	"os/exec"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type ServiceStatus string
@@ -38,14 +41,47 @@ type LogSink struct {
 	RestartDelayMs int            `json:"restart_delay_ms,omitempty" yaml:"restart_delay_ms,omitempty"`
 }
 
+// LogSinkRef is one entry of ServiceConfig.LogSinks: either a bare name
+// referencing a sink registered in the daemon's ~/.eos/config.yaml sink
+// registry, or an inline LogSink config. The two modes compose in the same
+// log_sinks list.
+type LogSinkRef struct {
+	Inline *LogSink // set when this entry is an inline sink config
+	Name   string   // set when this entry is a name reference into the registry
+}
+
+// UnmarshalYAML distinguishes a scalar node (`- prod-loki`, a registry name
+// reference) from a mapping node (`- type: file ...`, an inline sink config).
+func (r *LogSinkRef) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		r.Name = node.Value
+		return nil
+	}
+	var sink LogSink
+	if err := node.Decode(&sink); err != nil {
+		return fmt.Errorf("decoding inline log sink: %w", err)
+	}
+	r.Inline = &sink
+	return nil
+}
+
+// MarshalYAML is the inverse of UnmarshalYAML: a name reference marshals
+// back to a bare scalar, an inline config to a mapping node.
+func (r LogSinkRef) MarshalYAML() (any, error) {
+	if r.Inline != nil {
+		return r.Inline, nil
+	}
+	return r.Name, nil
+}
+
 type ServiceConfig struct {
-	Runtime       Runtime   `json:"runtime"                  yaml:"runtime"`
-	Name          string    `json:"name"                     yaml:"name"`
-	Command       string    `json:"command"                  yaml:"command"`
-	EnvFile       string    `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
-	LogSinks      []LogSink `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
-	Port          int       `json:"port,omitempty"           yaml:"port,omitempty"`
-	MemoryLimitMb int       `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
+	Runtime       Runtime      `json:"runtime"                  yaml:"runtime"`
+	Name          string       `json:"name"                     yaml:"name"`
+	Command       string       `json:"command"                  yaml:"command"`
+	EnvFile       string       `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
+	LogSinks      []LogSinkRef `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
+	Port          int          `json:"port,omitempty"           yaml:"port,omitempty"`
+	MemoryLimitMb int          `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
 }
 
 type ServiceInstance struct {

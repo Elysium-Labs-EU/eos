@@ -100,12 +100,16 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 			if config != nil && len(config.LogSinks) > 0 {
 				for i := range config.LogSinks {
-					sink := &config.LogSinks[i]
-					streams := "all"
-					if len(sink.Streams) > 0 {
-						streams = strings.Join(sink.Streams, ", ")
+					ref := &config.LogSinks[i]
+					if ref.Inline == nil {
+						helpers.PrintKV(cmd, fmt.Sprintf("sink %d", i+1), fmt.Sprintf("%s (registry)", ref.Name))
+						continue
 					}
-					helpers.PrintKV(cmd, fmt.Sprintf("sink %d", i+1), fmt.Sprintf("%s (%s)", sink.Type, streams))
+					streams := "all"
+					if len(ref.Inline.Streams) > 0 {
+						streams = strings.Join(ref.Inline.Streams, ", ")
+					}
+					helpers.PrintKV(cmd, fmt.Sprintf("sink %d", i+1), fmt.Sprintf("%s (%s)", ref.Inline.Type, streams))
 				}
 			}
 
