@@ -571,306 +571,358 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Lo
 	}
 }
 
+// executeRequest dispatches a decoded daemon IPC request to the handler for
+// its method. Each case below is a thin one-line call into a handleX
+// function that owns the args-unmarshal / manager-call / response-marshal
+// sequence for that method; this function's only job is routing.
 func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
 	switch request.Method {
 	case types.MethodGetAllServiceInstances:
-		result, err := mgr.GetAllServiceInstances()
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		if result == nil {
-			result = []types.ServiceInstance{}
-		}
-		data, err := json.Marshal(types.GetAllServiceInstancesResponse{
-			Instances: result,
-		})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleGetAllServiceInstances(mgr)
 	case types.MethodGetServiceInstance:
-		var args types.GetServiceInstanceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodGetServiceInstance args: %v", err))
-		}
-
-		result, err := mgr.GetServiceInstance(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		if result == nil {
-			return errorResponse("result returned nil")
-		}
-		data, err := json.Marshal(types.GetServiceInstanceResponse{
-			Instance: *result,
-		})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleGetServiceInstance(mgr, request.Args)
 	case types.MethodRemoveServiceInstance:
-		var args types.RemoveServiceInstanceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceInstance args: %v", err))
-		}
-		removed, err := mgr.RemoveServiceInstance(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(map[string]bool{"removed": removed})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{Success: true, Data: data}
-
+		return handleRemoveServiceInstance(mgr, request.Args)
 	case types.MethodStartService:
-		var args types.StartServiceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodStartService args: %v", err))
-		}
-		pid, err := mgr.StartService(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(map[string]int{"pid": pid})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleStartService(mgr, request.Args)
 	case types.MethodRestartService:
-		var args types.RestartServiceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse("invalid MethodRestartService args")
-		}
-		gracePeriod, err := time.ParseDuration(args.GracePeriod)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
-		}
-		tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
-		}
-		pid, err := mgr.RestartService(args.Name, gracePeriod, tickerPeriod)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(map[string]int{"pid": pid})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleRestartService(mgr, request.Args)
 	case types.MethodStopService:
-		var args types.StopServiceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse("invalid MethodStopService args")
-		}
-		gracePeriod, err := time.ParseDuration(args.GracePeriod)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
-		}
-		tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
-		}
-		result, err := mgr.StopService(args.Name, gracePeriod, tickerPeriod)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(result)
-
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleStopService(mgr, request.Args)
 	case types.MethodForceStopService:
-		var args types.ForceStopServiceArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
-		}
-		result, err := mgr.ForceStopService(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleForceStopService(mgr, request.Args)
 	case types.MethodAddServiceCatalogEntry:
-		var args types.AddServiceCatalogEntryArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodAddServiceCatalogEntry args: %v", err))
-		}
-		err := mgr.AddServiceCatalogEntry(args.Service)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		return types.DaemonResponse{Success: true}
-
+		return handleAddServiceCatalogEntry(mgr, request.Args)
 	case types.MethodGetAllServiceCatalogEntries:
-		result, err := mgr.GetAllServiceCatalogEntries()
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleGetAllServiceCatalogEntries(mgr)
 	case types.MethodGetServiceCatalogEntry:
-		var args types.GetServiceCatalogEntryArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodGetServiceCatalogEntry args: %v", err))
-		}
-		result, err := mgr.GetServiceCatalogEntry(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleGetServiceCatalogEntry(mgr, request.Args)
 	case types.MethodIsServiceRegistered:
-		var args types.IsServiceRegisteredArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodIsServiceRegistered args: %v", err))
-		}
-		result, err := mgr.IsServiceRegistered(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(map[string]bool{"exists": result})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleIsServiceRegistered(mgr, request.Args)
 	case types.MethodRemoveServiceCatalogEntry:
-		var args types.RemoveServiceCatalogEntryArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceCatalogEntry args: %v", err))
-		}
-		removed, err := mgr.RemoveServiceCatalogEntry(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		data, err := json.Marshal(map[string]bool{"removed": removed})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-
-		return types.DaemonResponse{Success: true, Data: data}
-
+		return handleRemoveServiceCatalogEntry(mgr, request.Args)
 	case types.MethodUpdateServiceCatalogEntry:
-		var args types.UpdateServiceCatalogEntryArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodUpdateServiceCatalogEntry args: %v", err))
-		}
-		err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		return types.DaemonResponse{Success: true}
-
+		return handleUpdateServiceCatalogEntry(mgr, request.Args)
 	case types.MethodGetMostRecentProcessHistoryEntry:
-		var args types.GetMostRecentProcessHistoryEntryArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodGetMostRecentProcessHistoryEntry args: %v", err))
-		}
-		result, err := mgr.GetMostRecentProcessHistoryEntry(args.Name)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-		if result == nil {
-			return errorResponse("no process history entry found")
-		}
-		data, err := json.Marshal(types.GetMostRecentProcessHistoryEntryResponse{
-			ProcessEntry: *result,
-		})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-
-		return types.DaemonResponse{
-			Success: true,
-			Data:    data,
-		}
-
+		return handleGetMostRecentProcessHistoryEntry(mgr, request.Args)
 	case types.MethodNewServiceLogFiles:
-		var args types.NewServiceLogFilesArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodNewServiceLogFiles args: %v", err))
-		}
-
-		logPath, errorLogPath, err := mgr.NewServiceLogFiles(args.ServiceName)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-
-		data, err := json.Marshal(map[string]string{"logPath": logPath, "errorLogPath": errorLogPath})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-
-		return types.DaemonResponse{Success: true, Data: data}
-
+		return handleNewServiceLogFiles(mgr, request.Args)
 	case types.MethodGetServiceLogFilePath:
-		var args types.GetServiceLogFilePathArgs
-		if err := json.Unmarshal(request.Args, &args); err != nil {
-			return errorResponse(fmt.Sprintf("invalid MethodGetServiceLogFilePath args: %v", err))
-		}
-
-		filepath, err := mgr.GetServiceLogFilePath(args.ServiceName, args.ErrorLog)
-		if err != nil {
-			return sentinelErrorResponse(err)
-		}
-
-		data, err := json.Marshal(map[string]*string{"filepath": filepath})
-		if err != nil {
-			return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-		}
-
-		return types.DaemonResponse{Success: true, Data: data}
-
+		return handleGetServiceLogFilePath(mgr, request.Args)
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
 	}
+}
+
+func handleGetAllServiceInstances(mgr manager.ServiceManager) types.DaemonResponse {
+	result, err := mgr.GetAllServiceInstances()
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	if result == nil {
+		result = []types.ServiceInstance{}
+	}
+	data, err := json.Marshal(types.GetAllServiceInstancesResponse{
+		Instances: result,
+	})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleGetServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.GetServiceInstanceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetServiceInstance args: %v", err))
+	}
+
+	result, err := mgr.GetServiceInstance(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	if result == nil {
+		return errorResponse("result returned nil")
+	}
+	data, err := json.Marshal(types.GetServiceInstanceResponse{
+		Instance: *result,
+	})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleRemoveServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.RemoveServiceInstanceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceInstance args: %v", err))
+	}
+	removed, err := mgr.RemoveServiceInstance(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(map[string]bool{"removed": removed})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{Success: true, Data: data}
+}
+
+func handleStartService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.StartServiceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodStartService args: %v", err))
+	}
+	pid, err := mgr.StartService(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(map[string]int{"pid": pid})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleRestartService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.RestartServiceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse("invalid MethodRestartService args")
+	}
+	gracePeriod, err := time.ParseDuration(args.GracePeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
+	}
+	tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
+	}
+	pid, err := mgr.RestartService(args.Name, gracePeriod, tickerPeriod)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(map[string]int{"pid": pid})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.StopServiceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse("invalid MethodStopService args")
+	}
+	gracePeriod, err := time.ParseDuration(args.GracePeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
+	}
+	tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
+	}
+	result, err := mgr.StopService(args.Name, gracePeriod, tickerPeriod)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(result)
+
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleForceStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.ForceStopServiceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
+	}
+	result, err := mgr.ForceStopService(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleAddServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.AddServiceCatalogEntryArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodAddServiceCatalogEntry args: %v", err))
+	}
+	err := mgr.AddServiceCatalogEntry(args.Service)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	return types.DaemonResponse{Success: true}
+}
+
+func handleGetAllServiceCatalogEntries(mgr manager.ServiceManager) types.DaemonResponse {
+	result, err := mgr.GetAllServiceCatalogEntries()
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleGetServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.GetServiceCatalogEntryArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetServiceCatalogEntry args: %v", err))
+	}
+	result, err := mgr.GetServiceCatalogEntry(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleIsServiceRegistered(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.IsServiceRegisteredArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodIsServiceRegistered args: %v", err))
+	}
+	result, err := mgr.IsServiceRegistered(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(map[string]bool{"exists": result})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleRemoveServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.RemoveServiceCatalogEntryArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceCatalogEntry args: %v", err))
+	}
+	removed, err := mgr.RemoveServiceCatalogEntry(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(map[string]bool{"removed": removed})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+
+	return types.DaemonResponse{Success: true, Data: data}
+}
+
+func handleUpdateServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.UpdateServiceCatalogEntryArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodUpdateServiceCatalogEntry args: %v", err))
+	}
+	err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	return types.DaemonResponse{Success: true}
+}
+
+func handleGetMostRecentProcessHistoryEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.GetMostRecentProcessHistoryEntryArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetMostRecentProcessHistoryEntry args: %v", err))
+	}
+	result, err := mgr.GetMostRecentProcessHistoryEntry(args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	if result == nil {
+		return errorResponse("no process history entry found")
+	}
+	data, err := json.Marshal(types.GetMostRecentProcessHistoryEntryResponse{
+		ProcessEntry: *result,
+	})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleNewServiceLogFiles(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.NewServiceLogFilesArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodNewServiceLogFiles args: %v", err))
+	}
+
+	logPath, errorLogPath, err := mgr.NewServiceLogFiles(args.ServiceName)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+
+	data, err := json.Marshal(map[string]string{"logPath": logPath, "errorLogPath": errorLogPath})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+
+	return types.DaemonResponse{Success: true, Data: data}
+}
+
+func handleGetServiceLogFilePath(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.GetServiceLogFilePathArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetServiceLogFilePath args: %v", err))
+	}
+
+	filepath, err := mgr.GetServiceLogFilePath(args.ServiceName, args.ErrorLog)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+
+	data, err := json.Marshal(map[string]*string{"filepath": filepath})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+
+	return types.DaemonResponse{Success: true, Data: data}
 }
 
 func errorResponse(message string) types.DaemonResponse {
