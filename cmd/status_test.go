@@ -17,7 +17,7 @@ import (
 )
 
 func TestStatusCommand(t *testing.T) {
-	cmd, _, errBuf, _ := setupCmd(t)
+	cmd, _, errBuf, tempDir := setupCmd(t)
 	cmd.SetArgs([]string{"status"})
 
 	err := cmd.ExecuteContext(t.Context())
@@ -29,6 +29,9 @@ func TestStatusCommand(t *testing.T) {
 
 	if !strings.Contains(output, "error no services are registered") {
 		t.Errorf("Expected status to show 'error no services are registered', got: %s", output)
+	}
+	if !strings.Contains(output, "base dir: "+tempDir) {
+		t.Errorf("Expected status to show resolved base dir %q, got: %s", tempDir, output)
 	}
 }
 
