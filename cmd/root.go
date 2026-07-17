@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -378,6 +379,24 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	return limit
 }
 
+// newLocalManagerWithCleanup opens the database directly and returns an
+// in-process manager plus a cleanup that closes the connection. Used for both
+// --no-daemon and the "no standalone daemon configured" cases.
+func newLocalManagerWithCleanup(ctx context.Context, baseDir string, verbose bool, sinkRegistry map[string]types.LogSink) (manager.ServiceManager, func(), error) {
+	db, err := database.NewDB(ctx, baseDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting to database: %w", err)
+	}
+	mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose), manager.WithSinkRegistry(sinkRegistry))
+	cleanup := func() {
+		if closeErr := db.CloseDBConnection(); closeErr != nil {
+			fmt.Printf("closing database connection on cleanup: %v\n", closeErr)
+			os.Exit(1)
+		}
+	}
+	return mgr, cleanup, nil
+}
+
 func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig, sinkRegistry map[string]types.LogSink) (mgr manager.ServiceManager, cleanUp func(), err error) {
 	ctx := rootCmd.Context()
 	noDaemon, err := rootCmd.Flags().GetBool("no-daemon")
@@ -386,37 +405,8 @@ func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.Daem
 	}
 	verbose, _ := rootCmd.Flags().GetBool("verbose")
 
-	if noDaemon {
-		db, dbErr := database.NewDB(ctx, baseDir)
-		if dbErr != nil {
-			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
-		}
-
-		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose), manager.WithSinkRegistry(sinkRegistry))
-		cleanup := func() {
-			err = db.CloseDBConnection()
-			if err != nil {
-				fmt.Printf("closing database connection on cleanup: %v\n", err)
-				os.Exit(1)
-			}
-		}
-		return mgr, cleanup, nil
-	}
-
-	if daemonConfig.Standalone == nil {
-		db, dbErr := database.NewDB(ctx, baseDir)
-		if dbErr != nil {
-			return nil, nil, fmt.Errorf("connecting to database: %w", dbErr)
-		}
-		mgr := manager.NewLocalManager(db, baseDir, ctx, logutil.NewTextLogger(os.Stderr, verbose), manager.WithSinkRegistry(sinkRegistry))
-		cleanup := func() {
-			err = db.CloseDBConnection()
-			if err != nil {
-				fmt.Printf("closing database connection on cleanup: %v\n", err)
-				os.Exit(1)
-			}
-		}
-		return mgr, cleanup, nil
+	if noDaemon || daemonConfig.Standalone == nil {
+		return newLocalManagerWithCleanup(ctx, baseDir, verbose, sinkRegistry)
 	}
 
 	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout, verbose)

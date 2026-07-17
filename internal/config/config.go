@@ -196,8 +196,13 @@ func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) (bo
 // If no unit file exists in either location (not installed yet), it falls
 // back to the caller's privilege level: root defaults to the system scope,
 // non-root defaults to the user scope.
-func ResolveSystemdScope(systemDir string) (dir string, isManaged bool, userUnit bool, err error) {
-	systemManaged, err := IsSystemdManaged(systemDir, SystemdTargetFileName)
+// resolveScope implements the shared systemd/launchd scope resolution: it prefers
+// whichever domain (system or per-user) actually has the eos unit installed on
+// disk, and otherwise falls back to the caller's privilege level (root→system,
+// non-root→user). isManaged reports whether the unit exists in a given dir;
+// userDir resolves the per-user directory (already error-wrapped by the caller).
+func resolveScope(systemDir string, userDir func() (string, error), isManaged func(dir string) (bool, error)) (dir string, managed bool, userScope bool, err error) {
+	systemManaged, err := isManaged(systemDir)
 	if err != nil {
 		return "", false, false, err
 	}
@@ -205,22 +210,35 @@ func ResolveSystemdScope(systemDir string) (dir string, isManaged bool, userUnit
 		return systemDir, true, false, nil
 	}
 
-	userDir, err := UserSystemdDir()
+	uDir, err := userDir()
 	if err != nil {
-		return "", false, false, fmt.Errorf("resolving user systemd dir: %w", err)
+		return "", false, false, err
 	}
-	userManaged, err := IsSystemdManaged(userDir, SystemdTargetFileName)
+	userManaged, err := isManaged(uDir)
 	if err != nil {
 		return "", false, false, err
 	}
 	if userManaged {
-		return userDir, true, true, nil
+		return uDir, true, true, nil
 	}
 
 	if os.Getuid() != 0 {
-		return userDir, false, true, nil
+		return uDir, false, true, nil
 	}
 	return systemDir, false, false, nil
+}
+
+func ResolveSystemdScope(systemDir string) (dir string, isManaged bool, userUnit bool, err error) {
+	return resolveScope(systemDir,
+		func() (string, error) {
+			d, dirErr := UserSystemdDir()
+			if dirErr != nil {
+				return "", fmt.Errorf("resolving user systemd dir: %w", dirErr)
+			}
+			return d, nil
+		},
+		func(dir string) (bool, error) { return IsSystemdManaged(dir, SystemdTargetFileName) },
+	)
 }
 
 // UserLaunchAgentsDir returns the per-user LaunchAgents directory, e.g. ~/Library/LaunchAgents/.
@@ -257,30 +275,16 @@ func IsLaunchdManaged(launchdTargetDir string, launchdPlistFileName string) (boo
 // If no plist exists in either location (not installed yet), it falls back to the
 // caller's privilege level: root defaults to the system scope, non-root to the user scope.
 func ResolveLaunchdScope(systemDir string) (dir string, isManaged bool, userAgent bool, err error) {
-	systemManaged, err := IsLaunchdManaged(systemDir, LaunchdPlistFileName)
-	if err != nil {
-		return "", false, false, err
-	}
-	if systemManaged {
-		return systemDir, true, false, nil
-	}
-
-	userDir, err := UserLaunchAgentsDir()
-	if err != nil {
-		return "", false, false, fmt.Errorf("resolving user launch agents dir: %w", err)
-	}
-	userManaged, err := IsLaunchdManaged(userDir, LaunchdPlistFileName)
-	if err != nil {
-		return "", false, false, err
-	}
-	if userManaged {
-		return userDir, true, true, nil
-	}
-
-	if os.Getuid() != 0 {
-		return userDir, false, true, nil
-	}
-	return systemDir, false, false, nil
+	return resolveScope(systemDir,
+		func() (string, error) {
+			d, dirErr := UserLaunchAgentsDir()
+			if dirErr != nil {
+				return "", fmt.Errorf("resolving user launch agents dir: %w", dirErr)
+			}
+			return d, nil
+		},
+		func(dir string) (bool, error) { return IsLaunchdManaged(dir, LaunchdPlistFileName) },
+	)
 }
 
 // EosConfig is the shape of ~/.eos/config.yaml.

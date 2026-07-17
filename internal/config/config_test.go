@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -10,6 +11,77 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
+
+func TestResolveScope(t *testing.T) {
+	const sysDir = "/etc/systemd/system/"
+	const usrDir = "/home/u/.config/systemd/user/"
+
+	t.Run("system managed wins", func(t *testing.T) {
+		dir, managed, userScope, err := resolveScope(sysDir,
+			func() (string, error) { return usrDir, nil },
+			func(d string) (bool, error) { return d == sysDir, nil })
+		if err != nil || dir != sysDir || !managed || userScope {
+			t.Fatalf("got dir=%q managed=%v user=%v err=%v", dir, managed, userScope, err)
+		}
+	})
+
+	t.Run("user managed when system is not", func(t *testing.T) {
+		dir, managed, userScope, err := resolveScope(sysDir,
+			func() (string, error) { return usrDir, nil },
+			func(d string) (bool, error) { return d == usrDir, nil })
+		if err != nil || dir != usrDir || !managed || !userScope {
+			t.Fatalf("got dir=%q managed=%v user=%v err=%v", dir, managed, userScope, err)
+		}
+	})
+
+	t.Run("system check error propagates", func(t *testing.T) {
+		wantErr := errors.New("stat boom")
+		if _, _, _, err := resolveScope(sysDir,
+			func() (string, error) { return usrDir, nil },
+			func(string) (bool, error) { return false, wantErr }); !errors.Is(err, wantErr) {
+			t.Fatalf("expected system check error, got %v", err)
+		}
+	})
+
+	t.Run("user dir error propagates", func(t *testing.T) {
+		wantErr := errors.New("home boom")
+		if _, _, _, err := resolveScope(sysDir,
+			func() (string, error) { return "", wantErr },
+			func(string) (bool, error) { return false, nil }); !errors.Is(err, wantErr) {
+			t.Fatalf("expected user dir error, got %v", err)
+		}
+	})
+
+	t.Run("user check error propagates", func(t *testing.T) {
+		wantErr := errors.New("user stat boom")
+		if _, _, _, err := resolveScope(sysDir,
+			func() (string, error) { return usrDir, nil },
+			func(d string) (bool, error) {
+				if d == usrDir {
+					return false, wantErr
+				}
+				return false, nil
+			}); !errors.Is(err, wantErr) {
+			t.Fatalf("expected user check error, got %v", err)
+		}
+	})
+
+	t.Run("unmanaged falls back to privilege level", func(t *testing.T) {
+		dir, managed, userScope, err := resolveScope(sysDir,
+			func() (string, error) { return usrDir, nil },
+			func(string) (bool, error) { return false, nil })
+		if err != nil || managed {
+			t.Fatalf("expected unmanaged, got managed=%v err=%v", managed, err)
+		}
+		if os.Getuid() == 0 {
+			if dir != sysDir || userScope {
+				t.Fatalf("root should fall back to system scope, got dir=%q user=%v", dir, userScope)
+			}
+		} else if dir != usrDir || !userScope {
+			t.Fatalf("non-root should fall back to user scope, got dir=%q user=%v", dir, userScope)
+		}
+	})
+}
 
 func TestGetBaseDir_EnvOverride(t *testing.T) {
 	dir := t.TempDir()
