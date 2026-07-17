@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"gopkg.in/yaml.v3"
 )
@@ -111,11 +112,12 @@ type ShutdownConfig struct {
 }
 
 type SystemConfig struct {
-	Daemon       DaemonConfig   `json:"daemon" yaml:"daemon"`
-	Health       HealthConfig   `json:"health" yaml:"health"`
-	Shutdown     ShutdownConfig `json:"shutdown" yaml:"shutdown"`
-	UnderSystemd bool           `json:"under_systemd" yaml:"underSystemd"`
-	Verbose      bool           `json:"verbose" yaml:"verbose"`
+	Sinks        map[string]types.LogSink `json:"sinks" yaml:"sinks"`
+	Daemon       DaemonConfig             `json:"daemon" yaml:"daemon"`
+	Health       HealthConfig             `json:"health" yaml:"health"`
+	Shutdown     ShutdownConfig           `json:"shutdown" yaml:"shutdown"`
+	UnderSystemd bool                     `json:"under_systemd" yaml:"underSystemd"`
+	Verbose      bool                     `json:"verbose" yaml:"verbose"`
 }
 
 func UserSystemdDir() (string, error) {
@@ -283,8 +285,9 @@ func ResolveLaunchdScope(systemDir string) (dir string, isManaged bool, userAgen
 
 // EosConfig is the shape of ~/.eos/config.yaml.
 type EosConfig struct {
-	Health EosHealthConfig `yaml:"health"`
-	Log    EosLogConfig    `yaml:"log"`
+	Sinks  map[string]types.LogSink `yaml:"sinks"`
+	Health EosHealthConfig          `yaml:"health"`
+	Log    EosLogConfig             `yaml:"log"`
 }
 
 type EosHealthConfig struct {
@@ -333,7 +336,7 @@ func DefaultEosConfig() EosConfig {
 }
 
 // Validate checks that all EosConfig values are within acceptable ranges.
-func (c EosConfig) Validate() error {
+func (c *EosConfig) Validate() error {
 	m := c.Health.Memory
 	if m.WarningThreshold <= 0 || m.WarningThreshold >= 1 {
 		return fmt.Errorf("health.memory.warningThreshold must be between 0 and 1, got %.2f", m.WarningThreshold)
@@ -355,6 +358,14 @@ func (c EosConfig) Validate() error {
 	}
 	if c.Health.Backoff.MaxMs <= c.Health.Backoff.BaseMs {
 		return fmt.Errorf("health.backoff.maxMs must be greater than baseMs")
+	}
+	for name := range c.Sinks {
+		if name == "" {
+			return fmt.Errorf("sinks: registry entry has an empty name")
+		}
+		if c.Sinks[name].Type == "" {
+			return fmt.Errorf("sinks.%s: type is required", name)
+		}
 	}
 	return nil
 }

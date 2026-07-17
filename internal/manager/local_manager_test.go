@@ -685,6 +685,63 @@ func TestStopServiceWithSignal_deadPGID(t *testing.T) {
 	}
 }
 
+// TestStopServiceWithSignal_reusedPGID verifies that a history entry whose PGID
+// is alive but whose recorded start time no longer matches (i.e. the kernel
+// recycled the PGID onto an unrelated, later process) is treated as already
+// dead and never signaled. Without the start-time guard, StopService would
+// SIGTERM a bystander process — killing it if it's ours, or erroring with
+// EPERM if it belongs to another user, which surfaced as a flaky
+// "graceful stop failed" in the api stop tests.
+func TestStopServiceWithSignal_reusedPGID(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	// Launch a real, live process group to stand in for the recycled PGID.
+	bystander := exec.Command("/bin/sh", "-c", "sleep 30")
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("starting bystander: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(bystander.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = bystander.Process.Wait()
+	})
+
+	realTicks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "reused-pgid-svc"
+	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	// Record a start time that deliberately does NOT match the live process,
+	// simulating a stale record left behind after PGID reuse.
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, realTicks+1, name, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	result, err := mgr.stopServiceWithSignal(name, syscall.SIGTERM)
+	if err != nil {
+		t.Fatalf("stopServiceWithSignal: %v", err)
+	}
+	if _, ok := result.AlreadyDead[pgid]; !ok {
+		t.Errorf("expected reused pgid %d in AlreadyDead, got %+v", pgid, result)
+	}
+	if len(result.Errored) != 0 || len(result.Pending) != 0 {
+		t.Errorf("expected no errored/pending, got %+v", result)
+	}
+	// The bystander must be untouched — it was never the process we started.
+	if !procutil.IsAliveMatching(pgid, realTicks) {
+		t.Errorf("bystander process (pgid %d) was signaled but should have been left alone", pgid)
+	}
+}
+
 func TestStopService_noLiveProcesses(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
