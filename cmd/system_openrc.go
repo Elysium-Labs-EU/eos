@@ -152,7 +152,7 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 }
 
 // openrcUnstartupCmd is the OpenRC counterpart to unstartupCmd.
-func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
+func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -199,7 +199,7 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 		return nil
 	}
 
-	if err := forkDaemon(ctx, config.DaemonPIDFile, false); err != nil {
+	if err := forkDaemon(ctx, config.DaemonPIDFile, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return helpers.ErrCommandFailed

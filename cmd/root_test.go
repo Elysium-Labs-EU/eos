@@ -62,7 +62,7 @@ func TestHelpCommand(t *testing.T) {
 
 func TestNewSystemConfigHelper(t *testing.T) {
 	t.Setenv("EOS_BASE_DIR", t.TempDir())
-	_, baseDir, _, err := newSystemConfig()
+	_, baseDir, _, _, err := newSystemConfig()
 
 	if err != nil {
 		t.Fatalf("Creating the system config should not throw an error")

@@ -19,6 +19,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -61,8 +62,12 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
 
-	testDaemonConfig := func() (string, *config.SystemConfig, error) {
+	testDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		testBaseDir := os.TempDir()
+		identity, err := userutil.ResolveIdentity()
+		if err != nil {
+			return "", nil, userutil.Identity{}, err
+		}
 		return testBaseDir, &config.SystemConfig{
 			Daemon: config.DaemonConfig{
 				Standalone: &config.StandaloneDaemonConfig{
@@ -77,7 +82,7 @@ eos is a service supervisor.
 				RestartCounterResetWindow: 15 * time.Minute,
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
-		}, nil
+		}, identity, nil
 	}
 	rootCmd.AddCommand(newDaemonCmd(testDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
@@ -99,7 +104,7 @@ func newRootCmd() *cobra.Command {
 
 	lazyInit := func() {
 		once.Do(func() {
-			_, baseDir, c, err := newSystemConfig()
+			_, baseDir, c, _, err := newSystemConfig()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
@@ -157,9 +162,9 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
 
-	getDaemonConfig := func() (string, *config.SystemConfig, error) {
-		_, baseDir, c, err := newSystemConfig()
-		return baseDir, c, err
+	getDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
+		_, baseDir, c, identity, err := newSystemConfig()
+		return baseDir, c, identity, err
 	}
 	rootCmd.AddCommand(newDaemonCmd(getDaemonConfig))
 	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
@@ -227,17 +232,22 @@ func newDaemonConfigLaunchd(baseDir string, isLaunchdManaged bool, underLaunchd 
 	}
 }
 
-func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, err error) {
-	baseDir, err = config.CreateBaseDir()
+func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, identity userutil.Identity, err error) {
+	identity, err = userutil.ResolveIdentity()
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, userutil.Identity{}, fmt.Errorf("resolving identity: %w", err)
+	}
+
+	baseDir, err = config.CreateBaseDir(identity)
+	if err != nil {
+		return "", "", nil, userutil.Identity{}, err
 	}
 
 	installDir = config.GetInstallDir()
 
 	eosCfg, err := config.LoadEosConfig(baseDir)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("loading eos config: %w", err)
+		return "", "", nil, userutil.Identity{}, fmt.Errorf("loading eos config: %w", err)
 	}
 
 	// Env vars win over config.yaml values.
@@ -250,13 +260,13 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	if runtime.GOOS == "darwin" {
 		launchdDir, isLaunchdManaged, userAgent, launchdErr := config.ResolveLaunchdScope(overrideStringConfigValue("EOS_LAUNCHD_TARGET_DIR", config.LaunchdTargetDir))
 		if launchdErr != nil {
-			return "", "", nil, fmt.Errorf("resolving launchd scope: %w", launchdErr)
+			return "", "", nil, userutil.Identity{}, fmt.Errorf("resolving launchd scope: %w", launchdErr)
 		}
 		daemonConfig = newDaemonConfigLaunchd(baseDir, isLaunchdManaged, config.IsUnderLaunchd(), launchdDir, userAgent, logCfg)
 	} else {
 		systemdDir, isSystemdManaged, userUnit, systemdErr := config.ResolveSystemdScope(overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir))
 		if systemdErr != nil {
-			return "", "", nil, fmt.Errorf("resolving systemd scope: %w", systemdErr)
+			return "", "", nil, userutil.Identity{}, fmt.Errorf("resolving systemd scope: %w", systemdErr)
 		}
 		daemonConfig = newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), systemdDir, userUnit, logCfg)
 	}
@@ -298,7 +308,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		Verbose:      overrideBoolConfigValue("EOS_VERBOSE", false),
 	}
 
-	return installDir, baseDir, systemConfig, nil
+	return installDir, baseDir, systemConfig, identity, nil
 }
 
 func overrideStringConfigValue(envKey string, defaultValue string) string {

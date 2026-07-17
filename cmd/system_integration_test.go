@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 // Integration tests require:
@@ -129,10 +130,15 @@ WantedBy=multi-user.target`
 	// confirm unstartup, decline restart standalone
 	setStdin(c, "y\nn\n")
 
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
 	unstartupCmd(ctx, c, config.SystemdConfig{
 		SystemdTargetDir:      systemdDir,
 		SystemdTargetFileName: systemdFile,
-	}, false, false, detectActiveSystemRuntime, execRunCmd)
+	}, false, false, detectActiveSystemRuntime, execRunCmd, identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())

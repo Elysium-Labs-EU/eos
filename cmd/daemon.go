@@ -31,6 +31,7 @@ type DaemonController interface {
 
 type standaloneDaemonController struct {
 	baseDir      string
+	identity     userutil.Identity
 	cfg          config.StandaloneDaemonConfig
 	health       config.HealthConfig
 	shutdown     config.ShutdownConfig
@@ -39,7 +40,7 @@ type standaloneDaemonController struct {
 
 func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error {
 	if detach && !c.underSystemd {
-		return forkDaemon(ctx, c.cfg.PIDFile, verbose)
+		return forkDaemon(ctx, c.cfg.PIDFile, verbose, c.identity)
 	}
 	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
 }
@@ -322,7 +323,7 @@ func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
 }
 
-func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool) (DaemonController, error) {
+func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool, identity userutil.Identity) (DaemonController, error) {
 	if cfg.Standalone != nil {
 		return &standaloneDaemonController{
 			cfg:          *cfg.Standalone,
@@ -330,6 +331,7 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 			health:       *health,
 			shutdown:     shutdown,
 			underSystemd: underSystemd,
+			identity:     identity,
 		}, nil
 	}
 	if cfg.Systemd != nil {
@@ -471,7 +473,7 @@ Otherwise, starts the daemon directly. By default runs in the foreground and str
 	daemonCmd.AddCommand(stopCmd)
 }
 
-func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra.Command {
+func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	var ctrl DaemonController
 
 	daemonCmd := &cobra.Command{
@@ -479,12 +481,12 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, error)) *cobra
 		Short: "Manage the deployment daemon",
 		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			baseDir, systemConfig, err := getConfig()
+			baseDir, systemConfig, identity, err := getConfig()
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)
@@ -510,7 +512,7 @@ func envWithout(env []string, key string) []string {
 }
 
 // Stay in sync with "startDaemonProcess"
-func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
+func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity userutil.Identity) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
@@ -528,21 +530,13 @@ func forkDaemon(ctx context.Context, pidFile string, verbose bool) error {
 	cmd.Stderr = stderr
 
 	if os.Getuid() == 0 {
-		u, err := userutil.EffectiveUser()
-		if err != nil {
-			return fmt.Errorf("resolving effective user: %w", err)
-		}
-		uid, gid, err := userutil.UserCredentials(u)
-		if err != nil {
-			return fmt.Errorf("resolving user credentials: %w", err)
-		}
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: identity.UID(), Gid: identity.GID()}
 
-		// The child drops to u's uid/gid, but without this it would inherit
+		// The child drops to identity's uid/gid, but without this it would inherit
 		// root's HOME from the parent's environment (sudo sets HOME=/root).
 		// os.UserHomeDir() and friends would then resolve paths under /root,
 		// which the dropped-privilege child can't even stat (root's home is 0700).
-		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+u.HomeDir)
+		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+identity.HomeDir())
 	}
 
 	if err := cmd.Start(); err != nil {

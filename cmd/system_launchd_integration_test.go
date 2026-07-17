@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 // Integration tests require:
@@ -139,11 +140,16 @@ func TestUnstartupCmdLaunchdIntegration(t *testing.T) {
 	// confirm unstartup, decline restart standalone
 	setStdin(c, "y\nn\n")
 
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
 	unstartupCmdLaunchd(ctx, c, config.LaunchdConfig{
 		LaunchdTargetDir:     launchdDir,
 		LaunchdPlistFileName: plistFileName,
 		UserAgent:            true,
-	}, true, false, execRunCmd)
+	}, true, false, execRunCmd, identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())

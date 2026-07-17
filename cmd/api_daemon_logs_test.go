@@ -11,9 +11,10 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
-func runAPIDaemonLogs(t *testing.T, getConfig func() (string, *config.SystemConfig, error), args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
+func runAPIDaemonLogs(t *testing.T, getConfig func() (string, *config.SystemConfig, userutil.Identity, error), args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 	t.Helper()
 	cmd := newAPIDaemonCmd(getConfig)
 	var outBuf, errBuf bytes.Buffer
@@ -25,8 +26,8 @@ func runAPIDaemonLogs(t *testing.T, getConfig func() (string, *config.SystemConf
 }
 
 func TestAPIDaemonLogs_ConfigError(t *testing.T) {
-	getConfig := func() (string, *config.SystemConfig, error) {
-		return "", nil, errors.New("config broke")
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
+		return "", nil, userutil.Identity{}, errors.New("config broke")
 	}
 
 	_, errBuf, err := runAPIDaemonLogs(t, getConfig)
@@ -39,10 +40,10 @@ func TestAPIDaemonLogs_ConfigError(t *testing.T) {
 }
 
 func TestAPIDaemonLogs_SystemdManagedIsError(t *testing.T) {
-	getConfig := func() (string, *config.SystemConfig, error) {
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		return t.TempDir(), &config.SystemConfig{
 			Daemon: config.DaemonConfig{Systemd: &config.SystemdConfig{}},
-		}, nil
+		}, userutil.Identity{}, nil
 	}
 
 	_, errBuf, err := runAPIDaemonLogs(t, getConfig)
@@ -55,10 +56,10 @@ func TestAPIDaemonLogs_SystemdManagedIsError(t *testing.T) {
 }
 
 func TestAPIDaemonLogs_InvalidLineCount(t *testing.T) {
-	getConfig := func() (string, *config.SystemConfig, error) {
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		return t.TempDir(), &config.SystemConfig{
 			Daemon: config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{}},
-		}, nil
+		}, userutil.Identity{}, nil
 	}
 
 	_, errBuf, err := runAPIDaemonLogs(t, getConfig, "--lines", "-1")
@@ -71,12 +72,12 @@ func TestAPIDaemonLogs_InvalidLineCount(t *testing.T) {
 }
 
 func TestAPIDaemonLogs_LogFileMissing(t *testing.T) {
-	getConfig := func() (string, *config.SystemConfig, error) {
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		return t.TempDir(), &config.SystemConfig{
 			Daemon: config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{
 				Log: config.DaemonLogConfig{LogFileName: "daemon.log"},
 			}},
-		}, nil
+		}, userutil.Identity{}, nil
 	}
 
 	_, errBuf, err := runAPIDaemonLogs(t, getConfig)
@@ -99,12 +100,12 @@ func TestAPIDaemonLogs_Success(t *testing.T) {
 		t.Fatalf("writing log file: %v", err)
 	}
 
-	getConfig := func() (string, *config.SystemConfig, error) {
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		return baseDir, &config.SystemConfig{
 			Daemon: config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{
 				Log: config.DaemonLogConfig{LogFileName: "daemon.log"},
 			}},
-		}, nil
+		}, userutil.Identity{}, nil
 	}
 
 	outBuf, _, err := runAPIDaemonLogs(t, getConfig, "--lines", "2")

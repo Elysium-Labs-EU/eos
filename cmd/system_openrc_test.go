@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 )
 
 func TestOpenrcStartupCmdNonOpenRCRuntime(t *testing.T) {
@@ -117,7 +118,11 @@ func TestOpenrcStartupCmdFullRestartPath(t *testing.T) {
 func TestOpenrcUnstartupCmdNonOpenRCRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls, got: %v", calls)
@@ -132,7 +137,11 @@ func TestOpenrcUnstartupCmdDeclineConfirmation(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls when declined, got: %v", calls)
@@ -154,7 +163,11 @@ func TestOpenrcUnstartupCmdRemovesScriptAndDisables(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
-	_ = openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+	_ = openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
