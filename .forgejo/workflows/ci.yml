@@ -110,6 +110,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -122,3 +124,5 @@ jobs:
 
       - name: Run go-crap change-risk analysis
         run: make crap
+        env:
+          GO_CRAP_BASE: origin/${{ github.base_ref }}

@@ -134,10 +134,14 @@ nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.or
 	@command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: make setup"; exit 1; }
 	nilaway ./...
 
-crap: test-coverage-check ## Run go-crap change-risk analysis (hard gate, requires: go install github.com/padiazg/go-crap@latest)
+crap: test-coverage-check ## Run go-crap change-risk analysis (hard gate on changed functions only, requires: go install github.com/padiazg/go-crap@latest)
 	@echo "Running go-crap change-risk analysis..."
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
-	go-crap scan . --exclude '.*_test\.go' --fail-above
+	bash scripts/go-crap-gate.sh .
+
+crap-report: ## Full whole-repo go-crap debt report (informational, no gate)
+	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
+	go-crap scan . --exclude '.*_test\.go'
 
 leak-test: ## Run tests with goroutine leak detection (-count=1, no -race to keep goleak output clean)
 	@echo "Running tests with goroutine leak detection..."
