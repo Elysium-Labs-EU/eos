@@ -2275,3 +2275,214 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 		t.Errorf("expected no restart (PGID unchanged), got new PGID %d", unchanged.PGID)
 	}
 }
+
+func TestHealthMonitor_CheckCronRestart_EmptyExprNoop(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "cron-noop-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+
+	entry := &types.ServiceCatalogEntry{Name: serviceName}
+	hm.checkCronRestart(t.Context(), entry, instance, "")
+
+	unchanged, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || unchanged == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if unchanged.NextRestartAt != nil {
+		t.Errorf("expected NextRestartAt to stay nil when cron_restart is empty, got %v", unchanged.NextRestartAt)
+	}
+}
+
+func TestHealthMonitor_CheckCronRestart_SchedulesFirstFireTime(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "cron-schedule-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if instance.NextRestartAt != nil {
+		t.Fatalf("test setup invalid: expected nil NextRestartAt, got %v", instance.NextRestartAt)
+	}
+
+	entry := &types.ServiceCatalogEntry{Name: serviceName}
+	hm.checkCronRestart(t.Context(), entry, instance, "0 3 * * *")
+
+	updated, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updated == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if updated.NextRestartAt == nil {
+		t.Fatal("expected NextRestartAt to be scheduled, got nil")
+	}
+	if !updated.NextRestartAt.After(time.Now()) {
+		t.Errorf("expected NextRestartAt to be in the future, got %v", updated.NextRestartAt)
+	}
+}
+
+func TestHealthMonitor_CheckCronRestart_NotDueYet(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "cron-not-due-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	future := time.Now().Add(1 * time.Hour)
+	instance.NextRestartAt = &future
+
+	entry := &types.ServiceCatalogEntry{Name: serviceName}
+	// serviceName is not a registered catalog entry with a config file, so a
+	// RestartService call here would error - if checkCronRestart tried to
+	// restart despite not being due, this test would surface it.
+	hm.checkCronRestart(t.Context(), entry, instance, "0 3 * * *")
+
+	unchanged, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || unchanged == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if unchanged.NextRestartAt != nil {
+		t.Errorf("expected DB NextRestartAt to remain unset (no write when not due), got %v", unchanged.NextRestartAt)
+	}
+}
+
+func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	const serviceName = "cron-due-svc"
+	fullDirPath := filepath.Join(tempDir, "cron-due-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCronRestart("0 3 * * *"),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start, got: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	})
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	past := time.Now().Add(-1 * time.Hour)
+	instance.NextRestartAt = &past
+
+	hm.checkCronRestart(t.Context(), serviceCatalogEntry, instance, "0 3 * * *")
+	t.Cleanup(func() {
+		if latest, latestErr := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName); latestErr == nil && latest != nil {
+			_ = syscall.Kill(-latest.PGID, syscall.SIGKILL)
+		}
+	})
+
+	newProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || newProcess == nil {
+		t.Fatalf("failed to get process history after cron restart: %v", err)
+	}
+	if newProcess.PGID == pgid {
+		t.Errorf("expected a new PGID after cron restart, still %d", pgid)
+	}
+
+	updated, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updated == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	if updated.NextRestartAt == nil {
+		t.Fatal("expected NextRestartAt to be recomputed after restart, got nil")
+	}
+	if !updated.NextRestartAt.After(time.Now()) {
+		t.Errorf("expected recomputed NextRestartAt to be in the future, got %v", updated.NextRestartAt)
+	}
+}

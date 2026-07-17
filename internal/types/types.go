@@ -79,6 +79,7 @@ type ServiceConfig struct {
 	Name          string       `json:"name"                     yaml:"name"`
 	Command       string       `json:"command"                  yaml:"command"`
 	EnvFile       string       `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
+	CronRestart   string       `json:"cron_restart,omitempty"   yaml:"cron_restart,omitempty"`
 	LogSinks      []LogSinkRef `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
 	Port          int          `json:"port,omitempty"           yaml:"port,omitempty"`
 	MemoryLimitMb int          `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
@@ -89,6 +90,7 @@ type ServiceInstance struct {
 	LastHealthCheck *time.Time `json:"last_health_check,omitempty" yaml:"last_health_check,omitempty"`
 	StartedAt       *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
 	UpdatedAt       *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	NextRestartAt   *time.Time `json:"next_restart_at,omitempty" yaml:"next_restart_at,omitempty"`
 	Name            string     `json:"name" yaml:"name"`
 	RestartCount    int        `json:"restart_count,omitempty" yaml:"restart_count,omitempty"`
 }

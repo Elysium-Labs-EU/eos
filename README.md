@@ -87,6 +87,7 @@ command: "/home/user/start.sh"
 port: 1337
 env_file: "/home/user/.env"
 memory_limit_mb: 200
+cron_restart: "0 3 * * *"
 runtime:
   type: "nodejs"
   path: "/usr/local/bin"

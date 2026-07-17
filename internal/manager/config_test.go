@@ -405,6 +405,83 @@ func TestValidateServiceConfig_valid(t *testing.T) {
 	}
 }
 
+func TestValidateCronRestart_empty(t *testing.T) {
+	if err := ValidateCronRestart(""); err != nil {
+		t.Errorf("expected no error for empty cron_restart, got: %v", err)
+	}
+}
+
+func TestValidateCronRestart_valid(t *testing.T) {
+	if err := ValidateCronRestart("0 3 * * *"); err != nil {
+		t.Errorf("expected no error for valid cron_restart, got: %v", err)
+	}
+}
+
+func TestValidateCronRestart_invalid(t *testing.T) {
+	if err := ValidateCronRestart("not a cron expression"); err == nil {
+		t.Error("expected an error for invalid cron_restart, got nil")
+	}
+}
+
+func TestValidateServiceConfig_invalidCronRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	config := &types.ServiceConfig{
+		Name:        "svc",
+		Command:     "./start.sh",
+		CronRestart: "not a cron expression",
+	}
+	yamlData, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	if err := os.WriteFile(configFile, yamlData, 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	_, errs := ValidateServiceConfig(configFile)
+	if len(errs) == 0 {
+		t.Fatal("expected an error for invalid cron_restart, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "cron_restart:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a cron_restart error, got: %v", errs)
+	}
+}
+
+func TestLoadServiceConfigWithCronRestart(t *testing.T) {
+	expectedConfig := &types.ServiceConfig{
+		Name:        "website",
+		Command:     "pnpm start",
+		CronRestart: "0 3 * * *",
+	}
+	yamlData, err := yaml.Marshal(expectedConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+
+	err = os.WriteFile(configFile, yamlData, 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test config file: %v", err)
+	}
+
+	config, err := LoadServiceConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadServiceConfig should not error: %v", err)
+	}
+	if config.CronRestart != "0 3 * * *" {
+		t.Errorf("Expected cron_restart '0 3 * * *' got %q", config.CronRestart)
+	}
+}
+
 func TestDetectSelfDetachRisk(t *testing.T) {
 	tests := []struct {
 		name         string
