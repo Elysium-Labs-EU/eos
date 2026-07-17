@@ -11,9 +11,6 @@ on:
         required: false
         default: "v1.0.0"
 
-permissions:
-  contents: write
-
 jobs:
   lint:
     runs-on: codeberg-small
