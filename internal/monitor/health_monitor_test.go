@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -1804,74 +1803,6 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 	}
 
 	return limit
-}
-
-func TestScanStatusFieldBytes_found(t *testing.T) {
-	contents := []byte("Name:\tmy-proc\nVmRSS:\t12345 kB\nNSpgid:\t42\n")
-	got := scanStatusFieldBytes(contents, []byte("VmRSS:\t"))
-	if got == nil {
-		t.Fatal("expected to find VmRSS field, got nil")
-	}
-	if string(got) != "12345 kB" {
-		t.Errorf("got %q, want %q", string(got), "12345 kB")
-	}
-}
-
-func TestScanStatusFieldBytes_notFound(t *testing.T) {
-	contents := []byte("Name:\tmy-proc\nVmRSS:\t12345 kB\n")
-	got := scanStatusFieldBytes(contents, []byte("NSpgid:\t"))
-	if got != nil {
-		t.Errorf("expected nil for missing field, got %q", got)
-	}
-}
-
-func TestScanStatusFieldBytes_lastLine(t *testing.T) {
-	contents := []byte("Name:\tmy-proc\nNSpgid:\t99")
-	got := scanStatusFieldBytes(contents, []byte("NSpgid:\t"))
-	if got == nil {
-		t.Fatal("expected to find NSpgid at last line (no trailing newline)")
-	}
-	if string(got) != "99" {
-		t.Errorf("got %q, want %q", string(got), "99")
-	}
-}
-
-func TestScanStatusFieldBytes_empty(t *testing.T) {
-	got := scanStatusFieldBytes([]byte{}, []byte("VmRSS:\t"))
-	if got != nil {
-		t.Errorf("expected nil for empty contents, got %q", got)
-	}
-}
-
-func TestCheckMemoryLinux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("checkMemoryLinux only runs on Linux")
-	}
-
-	tempDir := t.TempDir()
-	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t)
-	shutdownConfig := newTestShutdownConfig(t)
-
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
-	if err != nil {
-		t.Fatalf("failed to setup logger: %v", err)
-	}
-
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
-
-	pgid, err := syscall.Getpgid(os.Getpid())
-	if err != nil {
-		t.Fatalf("failed to get pgid: %v", err)
-	}
-
-	rss := hm.checkMemoryLinux(pgid)
-	if rss <= 0 {
-		t.Errorf("expected positive RSS for own process group, got %d", rss)
-	}
 }
 
 func TestCheckUnknownProcess_alive(t *testing.T) {

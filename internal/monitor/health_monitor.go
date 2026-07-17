@@ -8,10 +8,9 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -51,6 +50,7 @@ type HealthMonitor struct {
 	procBuf                   [4096]byte
 	maxRestartCount           int
 	timeoutEnable             bool
+	rssUnsupportedWarnOnce    sync.Once
 }
 
 func NewHealthMonitor(
@@ -522,103 +522,28 @@ func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
 	return true
 }
 
-// scanStatusFieldBytes finds a field in /proc/N/status without allocating.
-// Returns a slice into contents for the value after "field:\t", or nil if not found.
-func scanStatusFieldBytes(contents []byte, field []byte) []byte {
-	remaining := contents
-	for len(remaining) > 0 {
-		newline := bytes.IndexByte(remaining, '\n')
-		var line []byte
-		if newline < 0 {
-			line = remaining
-			remaining = nil
-		} else {
-			line = remaining[:newline]
-			remaining = remaining[newline+1:]
-		}
-		if !bytes.HasPrefix(line, field) {
-			continue
-		}
-		return bytes.TrimSpace(line[len(field):])
-	}
-	return nil
-}
-
-// measureRSS returns (rssKb, true) when a sample was taken,
-// or (0, false) when the throttle interval has not elapsed.
+// measureRSS returns (rssKb, true) when a sample was taken, or (0, false)
+// when the throttle interval has not elapsed or the platform has no RSS
+// reader (readProcessRSSKb returned ErrRSSUnsupported, logged once via
+// warnRSSUnsupportedOnce).
 func (hm *HealthMonitor) measureRSS(pgid int, serviceName string) (int64, bool) {
 	if time.Since(hm.lastMemSample[serviceName]) < hm.memSampleInterval {
 		return 0, false
 	}
 	hm.lastMemSample[serviceName] = time.Now()
 
-	if runtime.GOOS == "linux" {
-		return hm.checkMemoryLinux(pgid), true
+	rssKb, err := readProcessRSSKb(pgid, hm.procBuf[:])
+	if err != nil {
+		hm.warnRSSUnsupportedOnce()
+		return 0, false
 	}
-	return 0, true
+	return rssKb, true
 }
 
-var (
-	procStatusNSpgid = []byte("NSpgid:\t")
-	procStatusVMRSS  = []byte("VmRSS:\t")
-)
-
-func (hm *HealthMonitor) checkMemoryLinux(pgid int) int64 {
-	totalRssMemory := int64(0)
-
-	procDir, err := os.Open("/proc")
-	if err != nil {
-		hm.logger.Error("error reading /proc dir", "error", err)
-		return 0
-	}
-	names, err := procDir.Readdirnames(-1)
-	_ = procDir.Close()
-	if err != nil {
-		return 0
-	}
-
-	var pgidBuf [16]byte
-	pgidBytes := strconv.AppendInt(pgidBuf[:0], int64(pgid), 10)
-
-	var pathBuf [32]byte
-	for _, name := range names {
-		pid, err := strconv.Atoi(name)
-		if err != nil {
-			continue
-		}
-
-		path := fmt.Appendf(pathBuf[:0], "/proc/%d/status", pid)
-		fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
-		if err != nil {
-			continue
-		}
-		n, _ := syscall.Read(fd, hm.procBuf[:])
-		_ = syscall.Close(fd)
-		if n <= 0 {
-			continue
-		}
-		contents := hm.procBuf[:n]
-
-		if !bytes.Equal(scanStatusFieldBytes(contents, procStatusNSpgid), pgidBytes) {
-			continue
-		}
-
-		vmRSSValue := scanStatusFieldBytes(contents, procStatusVMRSS)
-		if vmRSSValue == nil {
-			continue
-		}
-		// vmRSSValue is "1234 kB" — parse the numeric prefix only
-		spaceIdx := bytes.IndexByte(vmRSSValue, ' ')
-		if spaceIdx <= 0 {
-			continue
-		}
-		kb, err := strconv.Atoi(string(vmRSSValue[:spaceIdx]))
-		if err != nil {
-			continue
-		}
-		totalRssMemory += int64(kb)
-	}
-	return totalRssMemory
+func (hm *HealthMonitor) warnRSSUnsupportedOnce() {
+	hm.rssUnsupportedWarnOnce.Do(func() {
+		hm.logger.Debug("RSS memory measurement unsupported on this platform; memory thresholds will not trigger", "os", runtime.GOOS)
+	})
 }
 
 type RestartReason int

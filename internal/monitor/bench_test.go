@@ -8,23 +8,6 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 )
 
-// procStatusFixture is a synthetic /proc/[pid]/status body, hand-built to mimic
-// the real kernel format (tab-separated fields, "kB"-suffixed memory values) so
-// scanStatusFieldBytes can be benchmarked without touching the real /proc.
-var procStatusFixture = []byte(
-	"Name:\tbash\nState:\tS (sleeping)\nPid:\t1234\nPPid:\t1233\n" +
-		"NStgid:\t1234\nNSpid:\t1234\nNSpgid:\t1234\nNSsid:\t1234\n" +
-		"VmPeak:\t 22084 kB\nVmSize:\t 22084 kB\nVmRSS:\t  5436 kB\n" +
-		"Threads:\t1\n",
-)
-
-func BenchmarkScanStatusFieldBytes(b *testing.B) {
-	for b.Loop() {
-		_ = scanStatusFieldBytes(procStatusFixture, procStatusNSpgid)
-		_ = scanStatusFieldBytes(procStatusFixture, procStatusVMRSS)
-	}
-}
-
 func BenchmarkIsProcessAlive(b *testing.B) {
 	hm := &HealthMonitor{}
 	pgid := syscall.Getpgrp()
@@ -34,12 +17,12 @@ func BenchmarkIsProcessAlive(b *testing.B) {
 	}
 }
 
-func BenchmarkCheckMemoryLinux(b *testing.B) {
+func BenchmarkReadProcessRSSKb(b *testing.B) {
 	hm := &HealthMonitor{}
 	pgid := syscall.Getpgrp()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = hm.checkMemoryLinux(pgid)
+		_, _ = readProcessRSSKb(pgid, hm.procBuf[:])
 	}
 }
 
