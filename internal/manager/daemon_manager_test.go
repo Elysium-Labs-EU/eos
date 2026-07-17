@@ -444,3 +444,50 @@ func TestCapturedWriter_MultipleWritesRespectCap(t *testing.T) {
 		t.Errorf("expected buffer capped at %d bytes across writes, got %d", maxCapturedStderr, len(cw.String()))
 	}
 }
+
+func TestWaitForPIDFileReadyReturnsNil(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+	// A PID file naming this live test process makes isDaemonRunning report
+	// running, so waitForPIDFile should succeed on the first tick.
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644); err != nil {
+		t.Fatalf("failed to write pid file: %v", err)
+	}
+
+	if err := waitForPIDFile(context.Background(), pidFile, &CapturedWriter{}); err != nil {
+		t.Errorf("waitForPIDFile should return nil when the daemon is running, got %v", err)
+	}
+}
+
+func TestWaitForPIDFileCanceledContext(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+	// No PID file on disk, so isDaemonRunning stays false; a canceled context
+	// must make waitForPIDFile return promptly with the context error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := waitForPIDFile(ctx, pidFile, &CapturedWriter{})
+	if err == nil {
+		t.Fatal("waitForPIDFile should return an error when the context is canceled")
+	}
+	if !strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Errorf("expected canceled context error, got %v", err)
+	}
+}
+
+func TestPIDFileTimeoutErrIncludesStderr(t *testing.T) {
+	cw := &CapturedWriter{}
+	if _, err := cw.Write([]byte("boom happened")); err != nil {
+		t.Fatalf("write to capture buffer: %v", err)
+	}
+
+	err := pidFileTimeoutErr("/tmp/some.pid", cw)
+	if !strings.Contains(err.Error(), "boom happened") {
+		t.Errorf("expected captured stderr in error, got %v", err)
+	}
+
+	if err := pidFileTimeoutErr("/tmp/some.pid", &CapturedWriter{}); strings.Contains(err.Error(), "child stderr") {
+		t.Errorf("expected no stderr section when capture empty, got %v", err)
+	}
+}

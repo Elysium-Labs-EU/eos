@@ -93,8 +93,9 @@ func isDaemonRunning(pidFile string) bool {
 	return err == nil
 }
 
-// Stay in sync with "forkDaemon"
-func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error {
+// removeStalePIDFile clears a leftover PID file whose process is already dead.
+// It errors if a live daemon still owns the file.
+func removeStalePIDFile(pidFile string) error {
 	if _, err := os.Stat(pidFile); err == nil {
 		if isDaemonRunning(pidFile) {
 			return fmt.Errorf("daemon already running (PID file: %s)", pidFile)
@@ -103,12 +104,13 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 			return fmt.Errorf("removing stale PID file: %w", err)
 		}
 	}
+	return nil
+}
 
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("can't find executable path: %w", err)
-	}
-
+// buildDaemonCommand constructs the detached `eos daemon start` command. Its
+// stderr is captured so a fork that dies before writing its PID file can still
+// surface a diagnostic.
+func buildDaemonCommand(ctx context.Context, exePath string, verbose bool) (*exec.Cmd, *CapturedWriter) {
 	args := []string{"daemon", "start", "--log-to-file-and-console"}
 	if verbose {
 		args = append(args, "--verbose")
@@ -119,13 +121,22 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 	cmd.Stdout = nil
 	stderr := &CapturedWriter{}
 	cmd.Stderr = stderr
+	return cmd, stderr
+}
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting daemon process: %w", err)
+// pidFileTimeoutErr builds the "timed out waiting for PID file" error, folding
+// in any captured child stderr when present.
+func pidFileTimeoutErr(pidFile string, stderr *CapturedWriter) error {
+	if output := strings.TrimSpace(stderr.String()); output != "" {
+		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
 	}
+	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
+}
 
-	// Wait for child to write PID file before parent exits.
-	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+// waitForPIDFile blocks until the forked daemon reports running via its PID
+// file, the context is canceled, or the 5s deadline elapses (in which case any
+// captured child stderr is folded into the error).
+func waitForPIDFile(ctx context.Context, pidFile string, stderr *CapturedWriter) error {
 	deadline := time.Now().Add(5 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -138,13 +149,31 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 				return nil
 			}
 			if time.Now().After(deadline) {
-				if output := strings.TrimSpace(stderr.String()); output != "" {
-					return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
-				}
-				return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
+				return pidFileTimeoutErr(pidFile, stderr)
 			}
 		}
 	}
+}
+
+// Stay in sync with "forkDaemon"
+func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error {
+	if err := removeStalePIDFile(pidFile); err != nil {
+		return err
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("can't find executable path: %w", err)
+	}
+
+	cmd, stderr := buildDaemonCommand(ctx, exePath, verbose)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting daemon process: %w", err)
+	}
+
+	// Wait for child to write PID file before parent exits.
+	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+	return waitForPIDFile(ctx, pidFile, stderr)
 }
 
 func waitForSocket(ctx context.Context, socketPath string, timeout time.Duration) error {
