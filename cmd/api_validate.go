@@ -14,6 +14,7 @@ type apiValidateResult struct {
 	Path       string   `json:"path"`
 	ConfigFile string   `json:"config_file"`
 	Errors     []string `json:"errors,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
 	Valid      bool     `json:"valid"`
 }
 
@@ -30,6 +31,7 @@ Output schema (stdout, JSON):
     "path":        string    -- absolute path to the service directory
     "config_file": string    -- config filename
     "errors":      []string  -- validation errors (omitted when valid)
+    "warnings":    []string  -- non-fatal warnings, e.g. self-detaching commands (omitted when none)
   }
 
 Error schema (stderr, JSON):
@@ -66,6 +68,7 @@ Exit codes:
 			}
 			if config != nil {
 				result.Name = config.Name
+				result.Warnings = manager.DetectSelfDetachRisk(config.Command)
 			}
 			if len(errs) > 0 {
 				result.Errors = make([]string, len(errs))

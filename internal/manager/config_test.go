@@ -324,3 +324,31 @@ func TestValidateServiceConfig_valid(t *testing.T) {
 		t.Errorf("expected loaded config with name 'svc', got: %+v", cfg)
 	}
 }
+
+func TestDetectSelfDetachRisk(t *testing.T) {
+	tests := []struct {
+		name         string
+		command      string
+		wantWarnings int
+	}{
+		{"plain command", "npm start", 0},
+		{"setsid leading", "setsid npm start", 1},
+		{"nohup leading", "nohup ./start.sh &", 1},
+		{"disown leading", "disown ./start.sh", 1},
+		{"mentioned mid-arg, not a leading command", "echo nohup is not scary", 0},
+		{"second segment after &&", "echo hi && setsid npm start", 1},
+		{"second segment after semicolon", "echo hi; nohup npm start", 1},
+		{"piped segment", "npm start | nohup tee out.log", 1},
+		{"multiple risky segments", "setsid npm start && nohup npm run worker", 2},
+		{"empty command", "", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := DetectSelfDetachRisk(tt.command)
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("DetectSelfDetachRisk(%q) = %v, want %d warning(s)", tt.command, warnings, tt.wantWarnings)
+			}
+		})
+	}
+}
