@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -64,6 +64,8 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 	go install github.com/evilmartians/lefthook@latest
 	@echo "Installing nilaway (nil pointer static analysis)..."
 	go install go.uber.org/nilaway/cmd/nilaway@latest
+	@echo "Installing go-crap (change-risk analysis)..."
+	go install github.com/padiazg/go-crap@latest
 	@echo "Installing benchstat (benchmark comparison)..."
 	go install golang.org/x/perf/cmd/benchstat@latest
 	@echo "Installing git hooks..."
@@ -132,6 +134,11 @@ nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.or
 	@command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: make setup"; exit 1; }
 	nilaway ./...
 
+crap: test-coverage-check ## Run go-crap change-risk analysis (hard gate, requires: go install github.com/padiazg/go-crap@latest)
+	@echo "Running go-crap change-risk analysis..."
+	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
+	go-crap scan . --exclude '.*_test\.go' --fail-above
+
 leak-test: ## Run tests with goroutine leak detection (-count=1, no -race to keep goleak output clean)
 	@echo "Running tests with goroutine leak detection..."
 	@echo "Note: add 'defer goleak.VerifyNone(t)' or goleak.VerifyTestMain(m) to catch leaks."
@@ -152,7 +159,7 @@ sg-test: ## Run ast-grep rule tests
 sg-rules: ## List all ast-grep rules
 	@find rules -name '*.yml' ! -path '*__tests__*' | sort
 
-ci: test lint sg nilcheck test-coverage-check ## Run all CI checks locally
+ci: test lint sg nilcheck test-coverage-check crap ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)

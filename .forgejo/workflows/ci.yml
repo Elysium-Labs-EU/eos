@@ -104,3 +104,21 @@ jobs:
       - name: Verify code compiles
         run: go build -v ./...
 
+  crap:
+    name: Change-Risk Analysis (go-crap)
+    runs-on: codeberg-small
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install go-crap
+        run: go install github.com/padiazg/go-crap@latest
+
+      - name: Run go-crap change-risk analysis
+        run: make crap
