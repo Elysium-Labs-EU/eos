@@ -78,6 +78,7 @@ jobs:
 
       - name: Upload snapshot
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v3
         with:
           name: bench-mem-${{ github.sha }}
