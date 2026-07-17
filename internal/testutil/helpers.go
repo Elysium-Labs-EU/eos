@@ -83,7 +83,21 @@ func WithEnvFile(envFile string) ServiceConfigOption {
 
 func WithLogSinks(sinks ...types.LogSink) ServiceConfigOption {
 	return func(sc *types.ServiceConfig) {
-		sc.LogSinks = sinks
+		refs := make([]types.LogSinkRef, len(sinks))
+		for i := range sinks {
+			refs[i] = types.LogSinkRef{Inline: &sinks[i]}
+		}
+		sc.LogSinks = refs
+	}
+}
+
+func WithLogSinkRefs(names ...string) ServiceConfigOption {
+	return func(sc *types.ServiceConfig) {
+		refs := make([]types.LogSinkRef, len(names))
+		for i, name := range names {
+			refs[i] = types.LogSinkRef{Name: name}
+		}
+		sc.LogSinks = refs
 	}
 }
 
