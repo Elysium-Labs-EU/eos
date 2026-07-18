@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -86,11 +85,10 @@ func TestDaemonE2E_Degraded_DaemonDownWarning(t *testing.T) {
 // ProcessStateStopped branch is a no-op, so updated_at freezes at stop time
 // while the daemon (and its monitor) keep running to serve the status query.
 //
-// A second, still-running service acts as the negative control, but only on
-// Linux: the monitor only rewrites a running row's updated_at when it samples
-// RSS/CPU, and that sampling reads /proc, so on non-Linux hosts even a healthy
-// running service legitimately stops being refreshed. The integration suite
-// targets Linux (make test-integration); the negative assertion is gated to it.
+// A second, still-running service acts as the negative control: the monitor
+// heartbeats a confirmed-alive running service's updated_at on every health
+// tick (independent of the throttled RSS/CPU sampling), so it must never read
+// as stale on any platform.
 func TestDaemonE2E_Degraded_StaleProcessHistory(t *testing.T) {
 	bin := buildEosBinary(t)
 	baseDir := e2eTempDir(t)
@@ -136,12 +134,8 @@ func TestDaemonE2E_Degraded_StaleProcessHistory(t *testing.T) {
 	if liveLine == "" {
 		t.Fatalf("livesvc not present in status output:\n%s", out)
 	}
-	if runtime.GOOS == "linux" {
-		if strings.Contains(liveLine, "(stale)") {
-			t.Errorf("running livesvc should not be flagged stale (monitor refreshes it via /proc sampling), got row:\n%s", liveLine)
-		}
-	} else {
-		t.Logf("skipping running-service negative control on %s: monitor cannot sample /proc, so a running row is not refreshed here. Row was:\n%s", runtime.GOOS, liveLine)
+	if strings.Contains(liveLine, "(stale)") {
+		t.Errorf("running livesvc should not be flagged stale (monitor heartbeats its updated_at each tick), got row:\n%s", liveLine)
 	}
 
 	stopDaemon(t, bin, baseDir)

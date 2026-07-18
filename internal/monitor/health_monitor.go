@@ -389,8 +389,22 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 	case ReasonForceRestart:
 		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "force", 1*time.Second, 10*time.Millisecond)
 	case ReasonNone:
-		if rssPtr != nil || cpuPtr != nil {
-			hm.updateProcessEntry(ctx, pgid, rssPtr, cpuPtr, serviceName)
+		// Heartbeat: a confirmed-alive running service bumps updated_at on every
+		// health tick, so `eos status` never flags a healthy service (stale)
+		// (see helpers.IsProcessHistoryStale). RSS/CPU sampling is throttled to
+		// memSampleInterval (~30s), which is far longer than the stale threshold
+		// (3*checkInterval, ~6s); gating the row update on a fresh sample left
+		// updated_at frozen between samples. Reaffirming State=Running is
+		// idempotent and always supplies a field, so the write never hits
+		// UpdateProcessHistoryEntry's "no fields to update" guard; rss/cpu still
+		// ride along only when this tick actually sampled them.
+		err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+			State:       new(types.ProcessStateRunning),
+			RssMemoryKb: rssPtr,
+			CPUPercent:  cpuPtr,
+		})
+		if err != nil {
+			hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
 		}
 	}
 }
