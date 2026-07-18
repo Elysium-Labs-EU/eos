@@ -4,6 +4,7 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -474,12 +475,48 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 		_, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
 		if err != nil {
-			hm.logger.Error("failed to restart", "service", serviceName, "error", err)
+			hm.handleRestartFailure(ctx, serviceName, pgid, restartCount, maxRestartCount, err)
 		}
 		return
 	}
 
 	hm.markProcessRunning(ctx, pgid, serviceName)
+}
+
+// handleRestartFailure records a restart attempt that never launched. It surfaces
+// the real cause in the service's error field so `eos status` shows e.g. a
+// permission error instead of the generic "died during startup", and it throttles
+// further attempts. A permission error (unwritable log files) is non-transient and
+// won't heal on its own, so the restart counter is capped to stop the loop until a
+// human intervenes; any other error bumps the counter and refreshes stopped_at so
+// the exponential backoff grows instead of retrying every tick.
+func (hm *HealthMonitor) handleRestartFailure(ctx context.Context, serviceName string, pgid, restartCount, maxRestartCount int, restartErr error) {
+	hm.logger.Error("failed to restart", "service", serviceName, "error", restartErr)
+
+	update := database.ProcessHistoryUpdate{}
+	var errMsg string
+	if errors.Is(restartErr, os.ErrPermission) {
+		errMsg = fmt.Sprintf("[%s] cannot start: %v (needs intervention)", serviceName, restartErr)
+		capped := maxRestartCount
+		if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &capped}); err != nil {
+			hm.logger.Error("failed to halt restart loop", "service", serviceName, "error", err)
+		}
+	} else {
+		errMsg = fmt.Sprintf("[%s] restart failed: %v", serviceName, restartErr)
+		next := restartCount + 1
+		if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &next}); err != nil {
+			hm.logger.Error("failed to bump restart counter", "service", serviceName, "error", err)
+		}
+		update.StoppedAt = new(time.Now())
+	}
+
+	update.Error = &errMsg
+	if logErr := hm.mgr.LogToServiceStderr(serviceName, errMsg); logErr != nil {
+		hm.logger.Debug("failed to log restart error to service", "service", serviceName, "error", logErr)
+	}
+	if err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, update); err != nil {
+		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+	}
 }
 
 func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory) {

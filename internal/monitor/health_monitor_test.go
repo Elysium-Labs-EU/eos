@@ -3,6 +3,7 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -2551,5 +2552,128 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	}
 	if !updated.NextRestartAt.After(time.Now()) {
 		t.Errorf("expected recomputed NextRestartAt to be in the future, got %v", updated.NextRestartAt)
+	}
+}
+
+// restartFailManager wraps a monitorManager and forces RestartService to return a
+// configured error, to exercise checkFailedProcess's restart-failure handling.
+type restartFailManager struct {
+	monitorManager
+	restartErr error
+}
+
+func (m *restartFailManager) RestartService(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
+	return 0, m.restartErr
+}
+
+// TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop reproduces issue
+// #145: when a restart fails because the service's log files are unwritable
+// (EACCES), the real permission error must surface in the process history error
+// field, and the restart counter must be capped to stop the tight 2s loop.
+func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	maxRestartCount := healthConfig.MaxRestart
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Failed to setup logger: %v", err)
+	}
+
+	// A wrapped log-open failure that carries os.ErrPermission, exactly as the
+	// manager reports an unwritable log file.
+	permErr := fmt.Errorf("preparing log files for logbench: %w", fmt.Errorf("could not open log file: %w", os.ErrPermission))
+	mgr := &restartFailManager{monitorManager: realMgr, restartErr: permErr}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	serviceName := "unwritable-log-service"
+	fullDirPath := filepath.Join(tempDir, "unwritable-log-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Could not create project directory: %v", mkdirErr)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithRuntimePath(""),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("Failed to register service instance: %v", err)
+	}
+
+	// A dead PGID in Failed state, stopped long enough ago that backoff allows a
+	// restart attempt.
+	fakePGID := 999999
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed); err != nil {
+		t.Fatalf("Failed to register fake process history: %v", err)
+	}
+	if err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
+		State:     new(types.ProcessStateFailed),
+		StartedAt: new(time.Now().Add(-30 * time.Second)),
+		StoppedAt: new(time.Now().Add(-10 * time.Second)),
+		Error:     new("[unwritable-log-service] died during startup (PGID 999999)"),
+	}); err != nil {
+		t.Fatalf("Failed to update fake process history: %v", err)
+	}
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
+
+	// The generic "died during startup" is replaced by the real permission cause.
+	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updatedEntry == nil {
+		t.Fatal("Failed to get updated process history")
+	}
+	if updatedEntry.Error == nil {
+		t.Fatal("Expected an error to be surfaced, got nil")
+	}
+	for _, want := range []string{"permission denied", "needs intervention"} {
+		if !strings.Contains(*updatedEntry.Error, want) {
+			t.Errorf("Expected error to contain %q, got: %s", want, *updatedEntry.Error)
+		}
+	}
+	if strings.Contains(*updatedEntry.Error, "died during startup") {
+		t.Errorf("Expected generic startup error to be replaced, still present: %s", *updatedEntry.Error)
+	}
+
+	// The restart counter is capped so canRestart stops firing (no 2s loop).
+	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updatedInstance == nil {
+		t.Fatal("Failed to get updated service instance")
+	}
+	if updatedInstance.RestartCount != maxRestartCount {
+		t.Errorf("Expected restart count capped at %d to halt the loop, got %d", maxRestartCount, updatedInstance.RestartCount)
+	}
+	if canRestart(updatedInstance.RestartCount, maxRestartCount, updatedEntry.StoppedAt, hm.backoff) {
+		t.Error("Expected canRestart to be false after halting on permission error")
 	}
 }
