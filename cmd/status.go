@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(*cobra.Command)) *cobra.Command {
 	var watch bool
 	var interval int
 
@@ -35,6 +35,10 @@ func newStatusCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Probe daemon liveness before getManager: in standalone mode
+			// getManager auto-starts the daemon, which would mask an outage.
+			warnDaemonDown(cmd)
+
 			mgr := getManager()
 
 			if !watch {

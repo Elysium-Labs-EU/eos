@@ -5,6 +5,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,11 @@ import (
 	"testing"
 	"time"
 )
+
+// daemonDownMarker is a stable substring of the daemon-down banner. Asserting on
+// the message body (not the styled label) keeps the test independent of ANSI
+// styling, which lipgloss strips anyway when stdout is a pipe.
+const daemonDownMarker = "eos daemon is not running"
 
 // e2eTempDir creates a short-path temp dir under /tmp.
 // Required on macOS: t.TempDir() paths under /var/folders are too long for Unix sockets
@@ -230,6 +236,78 @@ func TestDaemonE2E_VerboseOn_FullLifecycle(t *testing.T) {
 
 	// Service stop lifecycle.
 	assertDebugMsg(t, entries, "sending SIGTERM")
+}
+
+// waitForDaemonUnreachable polls until the daemon's Unix socket stops accepting
+// connections (up to 5s). It mirrors the CLI's own liveness probe (a socket dial)
+// rather than a fixed sleep, so it is robust whether or not the dying daemon
+// removes its socket file on the way out.
+func waitForDaemonUnreachable(t *testing.T, baseDir string) {
+	t.Helper()
+	sockFile := filepath.Join(baseDir, "eos.sock")
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", sockFile, 100*time.Millisecond)
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("daemon socket still reachable after 5s (daemon never went down)")
+}
+
+// TestDaemonE2E_DaemonDownBanner is the degraded-mode test: it proves that read
+// commands stay silent about liveness while the daemon is up, then surface the
+// daemon-down banner (to stderr) alongside last-known data once it is killed.
+//
+// The down-path assertions run with --no-daemon so the CLI reads the DB directly
+// via a LocalManager without auto-restarting the daemon — the exact read path a
+// systemd-managed install uses, and the one the reported phantom-"starting" bug
+// was observed on.
+func TestDaemonE2E_DaemonDownBanner(t *testing.T) {
+	bin := buildEosBinary(t)
+	baseDir := e2eTempDir(t)
+
+	t.Cleanup(func() { killDaemonPID(baseDir) })
+
+	startDaemon(t, bin, baseDir, false)
+
+	svcDir := writeTestService(t, "bannersvc")
+	if out, err := eosCmd(t, bin, baseDir, "add", svcDir); err != nil {
+		t.Fatalf("eos add: %v\n%s", err, out)
+	}
+	if out, err := eosCmd(t, bin, baseDir, "run", "bannersvc"); err != nil {
+		t.Fatalf("eos run: %v\n%s", err, out)
+	}
+
+	// Daemon up: no banner on status.
+	upOut, _ := eosCmd(t, bin, baseDir, "status")
+	if strings.Contains(upOut, daemonDownMarker) {
+		t.Errorf("status showed daemon-down banner while daemon was running:\n%s", upOut)
+	}
+	if !strings.Contains(upOut, "bannersvc") {
+		t.Errorf("status did not list the running service:\n%s", upOut)
+	}
+
+	// Kill the daemon and wait until its socket stops answering.
+	killDaemonPID(baseDir)
+	waitForDaemonUnreachable(t, baseDir)
+
+	// Daemon down: status shows the banner AND still renders last-known data.
+	statusOut, _ := eosCmd(t, bin, baseDir, "status", "--no-daemon")
+	if !strings.Contains(statusOut, daemonDownMarker) {
+		t.Errorf("status did not show daemon-down banner after kill:\n%s", statusOut)
+	}
+	if !strings.Contains(statusOut, "bannersvc") {
+		t.Errorf("status did not show last-known service data after kill:\n%s", statusOut)
+	}
+
+	// Daemon down: logs also shows the banner and still tails last-known logs.
+	logsOut, _ := eosCmd(t, bin, baseDir, "logs", "bannersvc", "--no-daemon")
+	if !strings.Contains(logsOut, daemonDownMarker) {
+		t.Errorf("logs did not show daemon-down banner after kill:\n%s", logsOut)
+	}
 }
 
 // TestDaemonE2E_VerboseOff_NoDebug starts the daemon without --verbose and asserts
