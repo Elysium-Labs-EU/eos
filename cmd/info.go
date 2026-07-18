@@ -72,6 +72,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				helpers.PrintKV(cmd, "pgid", fmt.Sprintf("%d", processEntry.PGID))
 				helpers.PrintKV(cmd, "uptime", helpers.DetermineUptimeHuman(processEntry))
 				helpers.PrintKV(cmd, "memory", helpers.DetermineProcessMemoryInMbHuman(processEntry.RssMemoryKb, status))
+				helpers.PrintKV(cmd, "peak memory", helpers.DetermineProcessPeakMemoryInMbHuman(processEntry.PeakRssMemoryKb))
 				if processEntry.Error == nil {
 					helpers.PrintKV(cmd, "error", "N/A")
 				} else {

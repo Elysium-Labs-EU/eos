@@ -114,6 +114,11 @@ type ProcessHistory struct {
 	ServiceName string       `json:"service_name" yaml:"service_name"`
 	State       ProcessState `json:"state" yaml:"state"`
 	RssMemoryKb int64        `json:"rss_memory_kb" yaml:"rss_memory_kb"`
+	// PeakRssMemoryKb is the highest RssMemoryKb sampled for this PGID since
+	// it started. It only ever grows within a PGID's lifetime — a crash or
+	// memory-threshold restart does not reset it, only a genuinely new PGID
+	// (a fresh row) does.
+	PeakRssMemoryKb int64 `json:"peak_rss_memory_kb" yaml:"peak_rss_memory_kb"`
 	// CPUPercent is the most recent per-service CPU usage, sampled on a health
 	// tick as the delta of accumulated CPU time (utime+stime) across the PGID
 	// over the sampling interval. 100.0 means one core fully busy; a service
