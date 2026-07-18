@@ -719,6 +719,121 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	}
 }
 
+// TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt verifies the
+// fix for the stale-flag bug (#146 follow-up to #143): a confirmed-alive running
+// service must bump process_history.updated_at on EVERY health tick, even when
+// the RSS/CPU sample throttle (memSampleInterval) has not elapsed. Otherwise
+// updated_at freezes between samples (~30s) while IsProcessHistoryStale flags
+// anything older than 3*checkInterval (~6s), so a healthy service reads "(stale)".
+func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	// 24h interval guarantees the RSS/CPU throttle fires (no fresh sample) on the tick.
+	healthConfig := newTestHealthConfig(t, WithMemSampleInterval(24*time.Hour))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+
+	fullDirPath := filepath.Join(tempDir, "heartbeat-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create heartbeat-project directory: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	const serviceName = "heartbeat-test-svc"
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0), // no port check, so ReasonNone is the only action
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("create service catalog entry failed: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("error registering service: %v", err)
+	}
+
+	pid, err := mgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get recent process history entry failed: %v", err)
+	}
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+	// Seed a known RSS value; the throttled heartbeat must preserve it, not zero it.
+	const knownRssKb = int64(54321)
+	if err = db.UpdateProcessHistoryEntry(t.Context(), pid, database.ProcessHistoryUpdate{
+		RssMemoryKb: &[]int64{knownRssKb}[0],
+	}); err != nil {
+		t.Fatalf("seed RSS value failed: %v", err)
+	}
+
+	// Mark the sample as just-taken so the throttle fires: no fresh RSS/CPU this tick.
+	hm.lastMemSample[serviceName] = time.Now()
+
+	serviceInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || serviceInstance == nil {
+		t.Fatalf("get service instance failed: %v", err)
+	}
+	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get process history entry failed: %v", err)
+	}
+	if processHistoryEntry.UpdatedAt == nil {
+		t.Fatal("expected seeded row to have a non-nil updated_at")
+	}
+	updatedBefore := *processHistoryEntry.UpdatedAt
+
+	// Ensure wall-clock advances so the heartbeat's updated_at is strictly newer.
+	time.Sleep(25 * time.Millisecond)
+
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance)
+
+	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("get process history entry after tick failed: %v", err)
+	}
+	if processHistoryEntry.UpdatedAt == nil {
+		t.Fatal("expected updated_at to be set after heartbeat tick")
+	}
+	if !processHistoryEntry.UpdatedAt.After(updatedBefore) {
+		t.Errorf("heartbeat did not advance updated_at on a throttled tick: before %v, after %v", updatedBefore, *processHistoryEntry.UpdatedAt)
+	}
+	// The heartbeat must not clobber the last-known RSS with a zero from the throttled sample.
+	if processHistoryEntry.RssMemoryKb != knownRssKb {
+		t.Errorf("heartbeat overwrote throttled RSS: want %d KB, got %d KB", knownRssKb, processHistoryEntry.RssMemoryKb)
+	}
+	// The service must still read as running after a heartbeat tick.
+	if processHistoryEntry.State != types.ProcessStateRunning {
+		t.Errorf("expected state to remain running after heartbeat, got %v", processHistoryEntry.State)
+	}
+}
+
 // TODO: untested gap — process stays alive but its port becomes unreachable;
 // checkRunningProcess has no port-reachability check to catch this case.
 

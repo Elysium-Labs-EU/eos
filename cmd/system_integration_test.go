@@ -23,10 +23,12 @@ import (
 func requireSystemd(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
+		t.Logf("SKIP %s: needs root to enable/disable a real systemd unit; run via `make test-integration` on Linux as root (e.g. OrbStack). This systemd path is NOT covered on this run.", t.Name())
 		t.Skip("requires root")
 	}
 	runtime, err := detectActiveSystemRuntime()
 	if err != nil || runtime != "systemd" {
+		t.Logf("SKIP %s: needs systemd as PID 1 (got %q, err: %v); this systemd path is NOT covered on this run.", t.Name(), runtime, err)
 		t.Skipf("requires systemd as PID 1 (got %q, err: %v)", runtime, err)
 	}
 }
