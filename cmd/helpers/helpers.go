@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"codeberg.org/Elysium_Labs/eos/internal/ui"
@@ -105,6 +106,32 @@ func DetermineProcessCPUHuman(cpuPercent float64, status types.ServiceStatus) st
 		return "-"
 	}
 	return fmt.Sprintf("%.1f%%", cpuPercent)
+}
+
+// StaleThresholdMultiplier scales the configured health-check interval into the
+// age past which a process_history row is considered stale. A healthy monitor
+// rewrites updated_at every CheckInterval; allowing 3 missed ticks before
+// flagging tolerates one-off scheduling jitter without hiding a frozen or
+// dead-monitor row.
+const StaleThresholdMultiplier = 3
+
+// IsProcessHistoryStale reports whether the most recent process_history row has
+// gone stale: its updated_at is older than StaleThresholdMultiplier times the
+// configured health-check interval. This is independent of daemon-liveness
+// detection; it only judges whether the monitor is still refreshing this row.
+//
+// Pure: caller passes the resolved interval and the reference time. Returns
+// false when there is nothing to judge (nil row, nil updated_at) or when the
+// interval is non-positive, so a missing threshold never marks every row stale.
+func IsProcessHistoryStale(mostRecentProcess *types.ProcessHistory, checkInterval time.Duration, now time.Time) bool {
+	if mostRecentProcess == nil || mostRecentProcess.UpdatedAt == nil {
+		return false
+	}
+	if checkInterval <= 0 {
+		return false
+	}
+	threshold := time.Duration(StaleThresholdMultiplier) * checkInterval
+	return now.Sub(*mostRecentProcess.UpdatedAt) > threshold
 }
 
 func DetermineError(errorStringPtr *string) string {

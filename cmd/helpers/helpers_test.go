@@ -167,6 +167,39 @@ func TestDetermineError(t *testing.T) {
 	}
 }
 
+func TestIsProcessHistoryStale(t *testing.T) {
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	interval := 2 * time.Second // threshold = 3 * interval = 6s
+	updated := func(d time.Duration) *types.ProcessHistory {
+		ts := now.Add(-d)
+		return &types.ProcessHistory{UpdatedAt: &ts}
+	}
+
+	tests := []struct {
+		proc     *types.ProcessHistory
+		name     string
+		interval time.Duration
+		want     bool
+	}{
+		{nil, "nil process", interval, false},
+		{&types.ProcessHistory{}, "nil updated_at", interval, false},
+		{updated(1 * time.Second), "fresh", interval, false},
+		{updated(6 * time.Second), "at threshold not stale", interval, false},
+		{updated(6*time.Second + time.Millisecond), "just past threshold", interval, true},
+		{updated(1 * time.Hour), "very stale", interval, true},
+		{updated(1 * time.Hour), "zero interval never stale", 0, false},
+		{updated(1 * time.Hour), "negative interval never stale", -time.Second, false},
+		{updated(20 * time.Second), "threshold scales with interval", 10 * time.Second, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsProcessHistoryStale(tt.proc, tt.interval, now); got != tt.want {
+				t.Errorf("IsProcessHistoryStale = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindServiceFileInDirectory(t *testing.T) {
 	dir := t.TempDir()
 

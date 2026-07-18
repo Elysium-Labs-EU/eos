@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
@@ -303,7 +304,7 @@ func TestRenderWatchFrame(t *testing.T) {
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
 
-	renderWatchFrame(cmd, mgr, 5)
+	renderWatchFrame(cmd, mgr, 5, 2*time.Second)
 
 	output := outBuf.String()
 	if !strings.Contains(output, "\033[2J\033[H") {
