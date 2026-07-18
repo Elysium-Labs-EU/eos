@@ -504,7 +504,10 @@ main() {
         step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
         
         local download_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/eos-linux-${arch}"
-        tmp_binary="/tmp/${BINARY_NAME}"
+        local tmp_dir
+        tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
+        trap 'rm -rf "$tmp_dir"' EXIT
+        tmp_binary="${tmp_dir}/${BINARY_NAME}"
         
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
             error "Download failed"
@@ -521,7 +524,7 @@ main() {
 
         step "Verifying checksum..."
         local checksums_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/sha256sums.txt"
-        local tmp_checksums="/tmp/${BINARY_NAME}_sha256sums.txt"
+        local tmp_checksums="${tmp_dir}/${BINARY_NAME}_sha256sums.txt"
 
         if ! download_file "$checksums_url" "$tmp_checksums" "$download_tool"; then
             error "Failed to download sha256sums.txt"
