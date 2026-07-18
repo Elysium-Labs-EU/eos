@@ -69,6 +69,39 @@ func socketResponds(ctx context.Context, socketPath string) bool {
 	return true
 }
 
+// warnDaemonDownBeforeStart prints a start-specific banner when the daemon is
+// confirmed offline, so `eos run` never silently leaves a service pinned in
+// 'starting'. Unlike warnIfDaemonDown it takes the already-resolved daemon
+// config and must be called AFTER getManager: in standalone mode getManager
+// auto-starts the daemon, so probing afterwards lets that self-heal path clear
+// the outage before we decide whether to warn. In systemd mode getManager
+// builds a local manager and never touches the separate daemon unit, so a down
+// unit still reads as down here — exactly the case that produces a stuck
+// 'starting' service.
+func warnDaemonDownBeforeStart(cmd *cobra.Command, daemon *config.DaemonConfig) {
+	if daemon == nil {
+		return
+	}
+	if daemonIsDown(cmd.Context(), daemon) {
+		printDaemonDownStartWarning(cmd)
+	}
+}
+
+// printDaemonDownStartWarning writes the run-time daemon-down banner to stderr.
+// It spells out the concrete consequence — the service stays in 'starting' with
+// no health checks, metrics, or log forwarding — and names the fix command, so
+// the operator knows the start "succeeded" but is unsupervised.
+func printDaemonDownStartWarning(cmd *cobra.Command) {
+	cmd.PrintErrf("%s %s\n",
+		ui.LabelWarning.Render("warning:"),
+		"eos daemon is not running - service will stay in 'starting' with no health checks, metrics, or log forwarding",
+	)
+	cmd.PrintErrf("  %s %s\n\n",
+		ui.TextMuted.Render("start the daemon with:"),
+		ui.TextCommand.Render("eos daemon start"),
+	)
+}
+
 // printDaemonDownBanner writes the daemon-down banner to stderr in the Rust-CLI
 // house style: a bold severity label, then an aligned hint line naming the exact
 // fix command. The ui styles collapse to plain text when stderr is not a TTY or

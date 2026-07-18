@@ -264,6 +264,12 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				return helpers.ErrCommandFailed
 			}
 
+			// mgr is already built (getManager ran above), so in standalone mode
+			// the daemon has been auto-started and this probe no longer fires;
+			// only a genuinely down supervisor (e.g. a stopped systemd unit) warns
+			// that the service will start but never leave 'starting'.
+			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
+
 			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
