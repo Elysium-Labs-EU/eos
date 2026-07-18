@@ -25,7 +25,7 @@ var (
 	streamLabelErr = lipgloss.NewStyle().Bold(true).Foreground(ui.ColorWarning).Render("err")
 )
 
-func newLogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newLogsCmd(getManager func() manager.ServiceManager, warnDaemonDown func(*cobra.Command)) *cobra.Command {
 	var lines int
 	var errorOnly bool
 	var outputOnly bool
@@ -49,6 +49,11 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 		SilenceErrors:     true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
+
+			// Probe daemon liveness before getManager: in standalone mode
+			// getManager auto-starts the daemon, which would mask an outage.
+			warnDaemonDown(cmd)
+
 			mgr := getManager()
 
 			exists, err := mgr.IsServiceRegistered(serviceName)

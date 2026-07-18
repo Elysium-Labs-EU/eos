@@ -53,13 +53,18 @@ eos is a service supervisor.
 		}
 	}
 
+	// Tests run against an in-memory mock manager, not a real daemon, so the
+	// liveness probe is a no-op here — otherwise every status/logs test would
+	// probe the host's real daemon and print a spurious banner.
+	noopWarnDaemonDown := func(*cobra.Command) {}
+
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
 	rootCmd.AddCommand(newEnvCmd(getManager))
-	rootCmd.AddCommand(newLogsCmd(getManager))
+	rootCmd.AddCommand(newLogsCmd(getManager, noopWarnDaemonDown))
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
-	rootCmd.AddCommand(newStatusCmd(getManager))
+	rootCmd.AddCommand(newStatusCmd(getManager, noopWarnDaemonDown))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
@@ -157,10 +162,10 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
 	rootCmd.AddCommand(newEnvCmd(getManager))
-	rootCmd.AddCommand(newLogsCmd(getManager))
+	rootCmd.AddCommand(newLogsCmd(getManager, warnIfDaemonDown))
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
-	rootCmd.AddCommand(newStatusCmd(getManager))
+	rootCmd.AddCommand(newStatusCmd(getManager, warnIfDaemonDown))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
