@@ -23,6 +23,67 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestHealthMonitor_MeasureCPU_SeedsThenSamples verifies the two-reading
+// contract: the first call seeds a baseline and reports "not sampled", a call
+// within the throttle interval is skipped without disturbing that baseline, and
+// a later call produces a non-negative percentage.
+func TestHealthMonitor_MeasureCPU_SeedsThenSamples(t *testing.T) {
+	pgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+
+	// Long interval: exercise seeding + throttle without racing the clock.
+	throttled := &HealthMonitor{
+		lastCPUSample:     make(map[string]cpuSample),
+		memSampleInterval: time.Hour,
+	}
+	if pct, sampled := throttled.measureCPU(pgid, "svc"); sampled || pct != 0 {
+		t.Fatalf("first measureCPU = (%v, %v), want (0, false) to seed baseline", pct, sampled)
+	}
+	seeded, ok := throttled.lastCPUSample["svc"]
+	if !ok {
+		t.Fatal("expected baseline stored after first measureCPU")
+	}
+	if pct, sampled := throttled.measureCPU(pgid, "svc"); sampled || pct != 0 {
+		t.Errorf("throttled measureCPU = (%v, %v), want (0, false)", pct, sampled)
+	}
+	if throttled.lastCPUSample["svc"].at != seeded.at {
+		t.Error("throttled call must not overwrite the baseline")
+	}
+
+	// Short interval against a dedicated busy child (its own group leader, so
+	// group membership is stable): the second reading should produce a real,
+	// positive sample.
+	busy := exec.Command("sh", "-c", "while :; do :; done")
+	busy.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if startErr := busy.Start(); startErr != nil {
+		t.Fatalf("start busy loop: %v", startErr)
+	}
+	busyPgid, err := syscall.Getpgid(busy.Process.Pid)
+	if err != nil {
+		_ = busy.Process.Kill()
+		t.Fatalf("Getpgid: %v", err)
+	}
+	t.Cleanup(func() { _ = busy.Process.Kill(); _ = busy.Wait() })
+
+	sampler := &HealthMonitor{
+		lastCPUSample:     make(map[string]cpuSample),
+		memSampleInterval: time.Millisecond,
+	}
+	if _, sampled := sampler.measureCPU(busyPgid, "svc"); sampled {
+		t.Fatal("first measureCPU should seed, not sample")
+	}
+	time.Sleep(50 * time.Millisecond)
+	pct, sampled := sampler.measureCPU(busyPgid, "svc")
+	if !sampled {
+		t.Fatal("second measureCPU after interval should sample")
+	}
+	if pct <= 0 {
+		t.Errorf("busy CPU percent = %v, want > 0", pct)
+	}
+}
+
 func TestHealthMonitor_Lifecycle(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
@@ -2102,7 +2163,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 		t.Fatalf("failed to get service instance: %v", err)
 	}
 
-	hm.dispatchMemoryAction(t.Context(), service, process, instance, ReasonWarning, pgid, 5000, true)
+	hm.dispatchMemoryAction(t.Context(), service, process, instance, ReasonWarning, pgid, 5000, true, 12.5, true)
 
 	logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
 	if err != nil {
@@ -2123,8 +2184,11 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	if updated.RssMemoryKb != 5000 {
 		t.Errorf("expected RssMemoryKb 5000 after warning dispatch, got %v", updated.RssMemoryKb)
 	}
+	if updated.CPUPercent != 12.5 {
+		t.Errorf("expected CPUPercent 12.5 after warning dispatch, got %v", updated.CPUPercent)
+	}
 
-	hm.dispatchMemoryAction(t.Context(), service, updated, instance, ReasonNone, pgid, 6000, true)
+	hm.dispatchMemoryAction(t.Context(), service, updated, instance, ReasonNone, pgid, 6000, true, 20.0, true)
 
 	afterNone, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || afterNone == nil {
@@ -2132,6 +2196,9 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	}
 	if afterNone.RssMemoryKb != 6000 {
 		t.Errorf("expected RssMemoryKb 6000 after sampled ReasonNone dispatch, got %v", afterNone.RssMemoryKb)
+	}
+	if afterNone.CPUPercent != 20.0 {
+		t.Errorf("expected CPUPercent 20.0 after sampled ReasonNone dispatch, got %v", afterNone.CPUPercent)
 	}
 }
 

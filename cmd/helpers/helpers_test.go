@@ -109,6 +109,29 @@ func TestDetermineProcessMemoryInMbHuman(t *testing.T) {
 	}
 }
 
+func TestDetermineProcessCPUHuman(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  types.ServiceStatus
+		want    string
+		percent float64
+	}{
+		{name: "failed status", percent: 50, status: types.ServiceStatusFailed, want: "-"},
+		{name: "stopped status", percent: 50, status: types.ServiceStatusStopped, want: "-"},
+		{name: "negative percent", percent: -1, status: types.ServiceStatusRunning, want: "-"},
+		{name: "idle running", percent: 0, status: types.ServiceStatusRunning, want: "0.0%"},
+		{name: "partial core", percent: 12.5, status: types.ServiceStatusRunning, want: "12.5%"},
+		{name: "over one core", percent: 143.2, status: types.ServiceStatusRunning, want: "143.2%"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetermineProcessCPUHuman(tt.percent, tt.status); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDetermineProcessMemoryInMbAPI(t *testing.T) {
 	if got := DetermineProcessMemoryInMbAPI(0, types.ServiceStatusRunning); got != nil {
 		t.Errorf("expected nil for 0 kb, got %v", got)

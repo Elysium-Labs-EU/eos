@@ -17,6 +17,7 @@ type apiStatusService struct {
 	Error        *string             `json:"error,omitempty"`
 	Name         string              `json:"name"`
 	MemoryMb     string              `json:"memory_mb"`
+	CPU          string              `json:"cpu"`
 	Uptime       string              `json:"uptime"`
 	Status       types.ServiceStatus `json:"status"`
 	PGID         int                 `json:"pgid"`
@@ -41,6 +42,7 @@ Output schema (stdout, JSON):
         "status":        string           -- current status
         "pgid":          int              -- process group ID (0 if not running)
         "memory_mb":     string           -- memory usage
+        "cpu":           string           -- CPU usage percent (e.g. "12.5%")
         "uptime":        string           -- human-readable uptime
         "restart_count": int              -- number of restarts
         "started_at":    string|omitted   -- RFC3339 start time
@@ -85,6 +87,7 @@ Exit codes:
 				if mostRecentProcess != nil {
 					entry.PGID = mostRecentProcess.PGID
 					entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
+					entry.CPU = helpers.DetermineProcessCPUHuman(mostRecentProcess.CPUPercent, entry.Status)
 					if mostRecentProcess.Error != nil {
 						entry.Error = mostRecentProcess.Error
 					}
@@ -92,6 +95,7 @@ Exit codes:
 					configPath := filepath.Join(reg.DirectoryPath, reg.ConfigFileName)
 					_ = configPath
 					entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(0, entry.Status)
+					entry.CPU = helpers.DetermineProcessCPUHuman(0, entry.Status)
 				}
 
 				serviceInstance, err := mgr.GetServiceInstance(reg.Name)

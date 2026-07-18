@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // IsAlive reports whether any live process exists in the given process group.
@@ -52,6 +53,16 @@ func IsAlive(pgid int) bool {
 // unrelated, later process that was assigned the same PGID.
 func StartTime(pid int) (int64, error) {
 	return platformStartTime(pid)
+}
+
+// CPUTime returns the cumulative CPU time (user+system) consumed by every live
+// process in the given process group, as a Duration. It is meant to be sampled
+// repeatedly: the difference between two readings over a wall-clock interval,
+// divided by that interval, is the group's CPU utilization (1.0 == one core
+// fully busy). Units are normalised across platforms so callers never handle
+// clock ticks or nanoseconds directly.
+func CPUTime(pgid int) (time.Duration, error) {
+	return platformCPUTime(pgid)
 }
 
 // IsAliveMatching reports whether pgid is alive and its current start time

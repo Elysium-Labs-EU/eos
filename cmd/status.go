@@ -114,6 +114,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 		Name         string
 		Status       types.ServiceStatus
 		MemoryMb     string
+		CPU          string
 		Started      string
 		Uptime       string
 		Error        string
@@ -159,11 +160,13 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 			Status:   helpers.DetermineServiceStatus(mostRecentProcess),
 			Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
 			MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
+			CPU:      helpers.DetermineProcessCPUHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
 		}
 		if mostRecentProcess != nil {
 			entry.PGID = mostRecentProcess.PGID
 			entry.Error = helpers.DetermineError(mostRecentProcess.Error)
 			entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
+			entry.CPU = helpers.DetermineProcessCPUHuman(mostRecentProcess.CPUPercent, entry.Status)
 		}
 		if serviceInstance != nil && serviceInstance.StartedAt != nil {
 			entry.Started = humanize.Time(*serviceInstance.StartedAt)
@@ -183,7 +186,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 	rows := [][]string{}
 
 	if len(activeServices) == 0 {
-		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-", "-"})
+		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-"})
 	} else {
 		for i := range activeServices {
 			svc := &activeServices[i]
@@ -192,6 +195,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 				helpers.PrintStatus(svc.Status),
 				fmt.Sprintf("%d", svc.PGID),
 				svc.MemoryMb,
+				svc.CPU,
 				svc.Uptime,
 				fmt.Sprintf("%d", svc.RestartCount),
 				svc.Started,
@@ -213,7 +217,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 			}
 			return ui.TableOddRowStyle
 		}).
-		Headers("name", "status", "pgid", "memory", "uptime", "restarts", "started", "next restart", "error").
+		Headers("name", "status", "pgid", "memory", "cpu", "uptime", "restarts", "started", "next restart", "error").
 		Rows(rows...)
 
 	cmd.Println(t)
