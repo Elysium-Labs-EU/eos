@@ -94,8 +94,17 @@ func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, te
 	return db, db.conn, nil
 }
 
+// dsnOptions configures the modernc.org/sqlite connection.
+//
+// _time_format=sqlite makes the driver bind time.Time args as
+// "2006-01-02 15:04:05.999999999-07:00". Without it the driver defaults to
+// time.Time.String(), which appends the monotonic-clock reading (" m=+0.000")
+// to values from time.Now(). That suffix is not a valid SQLite datetime, so
+// datetime(started_at) returns NULL. See issue #144.
+const dsnOptions = "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_time_format=sqlite"
+
 func openDB(ctx context.Context, dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	conn, err := sql.Open("sqlite", dbPath+dsnOptions)
 	if err != nil {
 		return nil, fmt.Errorf("could not open database: %w", err)
 	}

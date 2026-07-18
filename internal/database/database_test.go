@@ -1,6 +1,7 @@
 package database_test
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -383,6 +384,60 @@ func TestRegisterProcessHistoryEntry(t *testing.T) {
 	}
 	if entry.CreatedAt.IsZero() {
 		t.Error("expected CreatedAt to be set")
+	}
+}
+
+// TestProcessHistoryStartedAtHasNoMonotonicSuffix guards issue #144: time.Now()
+// carries a monotonic-clock reading, and the sqlite driver used to persist it
+// via time.Time.String(), appending " m=+0.000...". That is not a valid SQLite
+// datetime, so datetime(started_at) returned NULL. Both the INSERT and UPDATE
+// write paths must store a clean, SQLite-parseable timestamp.
+func TestProcessHistoryStartedAtHasNoMonotonicSuffix(t *testing.T) {
+	db, conn, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.RegisterServiceInstance(t.Context(), "web-api"); err != nil {
+		t.Fatalf("RegisterServiceInstance failed: %v", err)
+	}
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 1234, 0, "web-api", types.ProcessStateStarting); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
+	}
+
+	// Rewrite started_at through the UPDATE path too, covering both writers.
+	newStart := time.Now()
+	if err := db.UpdateProcessHistoryEntry(t.Context(), 1234, database.ProcessHistoryUpdate{StartedAt: &newStart}); err != nil {
+		t.Fatalf("UpdateProcessHistoryEntry failed: %v", err)
+	}
+
+	// CAST to TEXT to read the raw stored bytes, bypassing the driver's
+	// DATETIME auto-parsing (which would hide the suffix on read).
+	var raw string
+	if err := conn.QueryRowContext(t.Context(),
+		`SELECT CAST(started_at AS TEXT) FROM process_history WHERE pgid = ?`, 1234,
+	).Scan(&raw); err != nil {
+		t.Fatalf("read raw started_at: %v", err)
+	}
+	if strings.Contains(raw, "m=") {
+		t.Errorf("stored started_at has monotonic suffix: %q", raw)
+	}
+
+	// SQLite must be able to parse the stored value as a datetime.
+	var parsed *string
+	if err := conn.QueryRowContext(t.Context(),
+		`SELECT datetime(started_at) FROM process_history WHERE pgid = ?`, 1234,
+	).Scan(&parsed); err != nil {
+		t.Fatalf("datetime(started_at): %v", err)
+	}
+	if parsed == nil {
+		t.Errorf("datetime(started_at) returned NULL for stored value %q", raw)
+	}
+
+	// Existing readers still round-trip started_at into a time.Time.
+	entry, err := db.GetProcessHistoryEntryByPGID(t.Context(), 1234)
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntryByPGID failed: %v", err)
+	}
+	if entry.StartedAt == nil || entry.StartedAt.IsZero() {
+		t.Errorf("expected StartedAt to round-trip, got %v", entry.StartedAt)
 	}
 }
 
