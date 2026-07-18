@@ -31,4 +31,9 @@ var (
 	TableEvenRowStyle = TableCellStyle
 	TableOddRowStyle  = TableCellStyle.Faint(true)
 	TableMutedStyle   = TableCellStyle.Faint(true)
+
+	// TableStaleRowStyle dims a row whose process_history has stopped
+	// refreshing (see helpers.IsProcessHistoryStale), making a frozen or
+	// dead-monitor row visibly distinct from a live one.
+	TableStaleRowStyle = TableCellStyle.Faint(true).Foreground(ColorMuted)
 )

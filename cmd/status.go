@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(*cobra.Command)) *cobra.Command {
+func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(*cobra.Command), getConfig func() *config.SystemConfig) *cobra.Command {
 	var watch bool
 	var interval int
 
@@ -40,9 +40,10 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 			warnDaemonDown(cmd)
 
 			mgr := getManager()
+			checkInterval := resolveCheckInterval(getConfig)
 
 			if !watch {
-				printStatusTable(cmd, mgr)
+				printStatusTable(cmd, mgr, checkInterval)
 				return nil
 			}
 			if interval < 1 {
@@ -56,14 +57,14 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 			ticker := time.NewTicker(time.Duration(interval) * time.Second)
 			defer ticker.Stop()
 
-			renderWatchFrame(cmd, mgr, interval)
+			renderWatchFrame(cmd, mgr, interval, checkInterval)
 
 			for {
 				select {
 				case <-ctx.Done():
 					return nil
 				case <-ticker.C:
-					renderWatchFrame(cmd, mgr, interval)
+					renderWatchFrame(cmd, mgr, interval, checkInterval)
 				}
 			}
 		},
@@ -75,10 +76,23 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 	return cmd
 }
 
-func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval int) {
+func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval int, checkInterval time.Duration) {
 	cmd.Print("\033[2J\033[H")
 	cmd.Printf("Every %ds: eos status    %s\n\n", interval, time.Now().Format("15:04:05"))
-	printStatusTable(cmd, mgr)
+	printStatusTable(cmd, mgr, checkInterval)
+}
+
+// resolveCheckInterval reads the configured health-check interval at this
+// boundary so the pure staleness decision (helpers.IsProcessHistoryStale)
+// receives an already-resolved value. Falls back to the default interval when
+// config is unavailable or the interval is non-positive, so status never marks
+// every row stale off a missing config.
+func resolveCheckInterval(getConfig func() *config.SystemConfig) time.Duration {
+	checkInterval := time.Duration(config.HealthCheckIntervalMs) * time.Millisecond
+	if cfg := getConfig(); cfg != nil && cfg.Health.CheckInterval > 0 {
+		checkInterval = cfg.Health.CheckInterval
+	}
+	return checkInterval
 }
 
 // daemonIdentity describes which daemon answered the request, so "no
@@ -99,7 +113,7 @@ func daemonIdentity() string {
 	return fmt.Sprintf("for user %s (base dir: %s)", identity.Username(), baseDir)
 }
 
-func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
+func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInterval time.Duration) {
 	registeredServices, err := mgr.GetAllServiceCatalogEntries()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered services: %v", err))
@@ -125,8 +139,10 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 		NextRestart  string
 		PGID         int
 		RestartCount int
+		Stale        bool
 	}
 	var activeServices []StatusServiceEntry
+	now := time.Now()
 
 	for _, regService := range registeredServices {
 		configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
@@ -171,6 +187,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 			entry.Error = helpers.DetermineError(mostRecentProcess.Error)
 			entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
 			entry.CPU = helpers.DetermineProcessCPUHuman(mostRecentProcess.CPUPercent, entry.Status)
+			entry.Stale = helpers.IsProcessHistoryStale(mostRecentProcess, checkInterval, now)
 		}
 		if serviceInstance != nil && serviceInstance.StartedAt != nil {
 			entry.Started = humanize.Time(*serviceInstance.StartedAt)
@@ -188,15 +205,25 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 	}
 
 	rows := [][]string{}
+	// staleRows[i] tracks whether data row i has a stale process_history row,
+	// so the StyleFunc (which only sees row/col indices) can dim it. A stale
+	// row is one whose monitor stopped refreshing updated_at; this is
+	// independent of the status column's daemon-liveness reading.
+	staleRows := []bool{}
 
 	if len(activeServices) == 0 {
 		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-"})
+		staleRows = append(staleRows, false)
 	} else {
 		for i := range activeServices {
 			svc := &activeServices[i]
+			status := helpers.PrintStatus(svc.Status)
+			if svc.Stale {
+				status += " " + ui.TextMuted.Render("(stale)")
+			}
 			rows = append(rows, []string{
 				svc.Name,
-				helpers.PrintStatus(svc.Status),
+				status,
 				fmt.Sprintf("%d", svc.PGID),
 				svc.MemoryMb,
 				svc.CPU,
@@ -206,6 +233,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 				svc.NextRestart,
 				svc.Error,
 			})
+			staleRows = append(staleRows, svc.Stale)
 		}
 	}
 
@@ -215,6 +243,9 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager) {
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
 				return ui.TableHeaderStyle
+			}
+			if row >= 0 && row < len(staleRows) && staleRows[row] {
+				return ui.TableStaleRowStyle
 			}
 			if row%2 == 0 {
 				return ui.TableEvenRowStyle
