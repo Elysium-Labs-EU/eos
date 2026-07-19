@@ -14,6 +14,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/process"
+	"codeberg.org/Elysium_Labs/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -430,5 +431,147 @@ func TestDaemonStartDetachSuccessOutput(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "daemon started in background") {
 		t.Errorf("expected success message, got: %s", out.String())
+	}
+}
+
+// TestForkDaemonAlreadyRunning covers issue #156 bug 2: forkDaemon must refuse
+// to fork (and report a clear error) when a live daemon already holds the PID
+// file, instead of spawning a redundant child that fails to bind and reporting
+// false success.
+func TestForkDaemonAlreadyRunning(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644); err != nil {
+		t.Fatalf("failed to write pid file: %v", err)
+	}
+
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	cfg := &config.StandaloneDaemonConfig{PIDFile: pidFile, SocketPath: filepath.Join(tempDir, "eos.sock")}
+	err = forkDaemon(t.Context(), cfg, false, identity)
+	if err == nil {
+		t.Fatal("expected error when daemon is already running")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' error, got: %v", err)
+	}
+}
+
+// TestBuildForkCommandStderrIsRealFile covers issue #156 bug 1: the forked
+// child's stderr must be a real *os.File beside the PID file, not an
+// in-process io.Writer. A non-*os.File Stderr makes os/exec create a real OS
+// pipe whose read end lives in this (short-lived) process; once this process
+// exits, that pipe is orphaned and the detached child gets SIGPIPE'd on its
+// next stderr write.
+func TestBuildForkCommandStderrIsRealFile(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	cmd, stderrFile, err := buildForkCommand(t.Context(), "/bin/true", false, identity, pidFile)
+	if err != nil {
+		t.Fatalf("buildForkCommand should not error: %v", err)
+	}
+	defer func() { _ = stderrFile.Close() }()
+
+	if _, ok := cmd.Stderr.(*os.File); !ok {
+		t.Errorf("expected cmd.Stderr to be a real *os.File, got %T", cmd.Stderr)
+	}
+
+	wantPath := filepath.Join(tempDir, "fork-stderr.log")
+	if stderrFile.Name() != wantPath {
+		t.Errorf("expected stderr capture file at %s, got %s", wantPath, stderrFile.Name())
+	}
+}
+
+// TestWaitForForkPIDFileReadyReturnsNil is the fast-path companion to
+// TestWaitForForkPIDFileTimesOutOnDeadPID: a PID file naming a live process
+// must succeed immediately.
+func TestWaitForForkPIDFileReadyReturnsNil(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644); err != nil {
+		t.Fatalf("failed to write pid file: %v", err)
+	}
+
+	if err := waitForForkPIDFile(pidFile); err != nil {
+		t.Errorf("waitForForkPIDFile should return nil when the daemon is running, got %v", err)
+	}
+}
+
+// TestWaitForForkPIDFileTimesOutOnDeadPID covers issue #156 bug 1: a PID file
+// can exist for an instant before the process that wrote it dies (e.g. killed
+// by an orphaned stderr pipe). waitForForkPIDFile must re-verify the process is
+// actually alive rather than declaring success from mere file existence.
+func TestWaitForForkPIDFileTimesOutOnDeadPID(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	// A PID that almost certainly doesn't exist.
+	if err := os.WriteFile(pidFile, []byte("9999999"), 0644); err != nil {
+		t.Fatalf("failed to write pid file: %v", err)
+	}
+
+	err := waitForForkPIDFile(pidFile)
+	if err == nil {
+		t.Fatal("expected waitForForkPIDFile to time out for a pid file naming a dead process, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for PID file") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+// TestWaitForForkSocketTimesOutWhenNothingListens covers issue #156 bug 1's
+// second race: a PID file can exist — and its process still be alive — for a
+// brief window before an unrelated startup failure (e.g. a socket bind error)
+// kills it moments later. waitForForkSocket must not return until the socket
+// actually answers.
+func TestWaitForForkSocketTimesOutWhenNothingListens(t *testing.T) {
+	tempDir := t.TempDir()
+	socketPath := filepath.Join(tempDir, "eos.sock")
+
+	err := waitForForkSocket(t.Context(), socketPath)
+	if err == nil {
+		t.Fatal("expected waitForForkSocket to time out when nothing listens on the socket")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for daemon socket") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+// TestForkStartupErrFoldsCapturedStderr covers the diagnostic path: a fork
+// startup failure should fold its captured stderr into the returned error.
+func TestForkStartupErrFoldsCapturedStderr(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	stderrFile, err := manager.OpenForkStderrLog(pidFile)
+	if err != nil {
+		t.Fatalf("OpenForkStderrLog: %v", err)
+	}
+	if _, writeErr := stderrFile.WriteString("child boom"); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+	if closeErr := stderrFile.Close(); closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
+	}
+
+	wrapped := forkStartupErr(errors.New("timed out waiting for PID file: "+pidFile), pidFile)
+	if !strings.Contains(wrapped.Error(), "child boom") {
+		t.Errorf("expected captured stderr folded into error, got: %v", wrapped)
+	}
+
+	emptyPidFile := filepath.Join(t.TempDir(), "empty.pid")
+	if bare := forkStartupErr(errors.New("timed out"), emptyPidFile); strings.Contains(bare.Error(), "child stderr") {
+		t.Errorf("expected no stderr section when capture file doesn't exist, got %v", bare)
 	}
 }

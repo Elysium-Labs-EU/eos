@@ -402,46 +402,51 @@ func TestStartDaemonProcess_AlreadyRunning(t *testing.T) {
 // The stale-pidfile-then-exec success path spawns a real subprocess via os.Executable();
 // same Linux+root/e2e-territory exclusion as forkDaemon's success path, skip.
 
-func TestCapturedWriter_WriteAndString(t *testing.T) {
-	var cw CapturedWriter
-	n, err := cw.Write([]byte("hello"))
+func TestOpenForkStderrLog_TruncatesPreviousContent(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+
+	f1, err := OpenForkStderrLog(pidFile)
 	if err != nil {
-		t.Fatalf("Write should not error: %v", err)
+		t.Fatalf("OpenForkStderrLog should not error: %v", err)
 	}
-	if n != 5 {
-		t.Errorf("expected n=5, got %d", n)
+	if _, writeErr := f1.WriteString("stale output from a previous fork"); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
 	}
-	if cw.String() != "hello" {
-		t.Errorf("expected 'hello', got %q", cw.String())
+	if closeErr := f1.Close(); closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
+	}
+
+	f2, err := OpenForkStderrLog(pidFile)
+	if err != nil {
+		t.Fatalf("OpenForkStderrLog should not error on second open: %v", err)
+	}
+	defer func() { _ = f2.Close() }()
+
+	if got := ReadForkStderr(pidFile); got != "" {
+		t.Errorf("expected previous fork's stderr to be truncated, got %q", got)
 	}
 }
 
-func TestCapturedWriter_TruncatesPastMax(t *testing.T) {
-	var cw CapturedWriter
-	big := strings.Repeat("a", maxCapturedStderr+100)
-	n, err := cw.Write([]byte(big))
+func TestOpenForkStderrLog_SitsBesidePIDFile(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+
+	f, err := OpenForkStderrLog(pidFile)
 	if err != nil {
-		t.Fatalf("Write should not error: %v", err)
+		t.Fatalf("OpenForkStderrLog should not error: %v", err)
 	}
-	if n != len(big) {
-		t.Errorf("Write should report full length written (io.Writer contract), got %d want %d", n, len(big))
-	}
-	if len(cw.String()) != maxCapturedStderr {
-		t.Errorf("expected buffer capped at %d bytes, got %d", maxCapturedStderr, len(cw.String()))
+	defer func() { _ = f.Close() }()
+
+	wantPath := filepath.Join(tempDir, "fork-stderr.log")
+	if _, statErr := os.Stat(wantPath); statErr != nil {
+		t.Errorf("expected fork stderr log at %s, got stat error: %v", wantPath, statErr)
 	}
 }
 
-func TestCapturedWriter_MultipleWritesRespectCap(t *testing.T) {
-	var cw CapturedWriter
-	half := strings.Repeat("b", maxCapturedStderr/2+10)
-	if _, err := cw.Write([]byte(half)); err != nil {
-		t.Fatalf("first Write should not error: %v", err)
-	}
-	if _, err := cw.Write([]byte(half)); err != nil {
-		t.Fatalf("second Write should not error: %v", err)
-	}
-	if len(cw.String()) != maxCapturedStderr {
-		t.Errorf("expected buffer capped at %d bytes across writes, got %d", maxCapturedStderr, len(cw.String()))
+func TestReadForkStderr_MissingFileReturnsEmpty(t *testing.T) {
+	if got := ReadForkStderr("/nonexistent/dir/test.pid"); got != "" {
+		t.Errorf("expected empty string when fork stderr log doesn't exist, got %q", got)
 	}
 }
 
@@ -454,7 +459,7 @@ func TestWaitForPIDFileReadyReturnsNil(t *testing.T) {
 		t.Fatalf("failed to write pid file: %v", err)
 	}
 
-	if err := waitForPIDFile(context.Background(), pidFile, &CapturedWriter{}); err != nil {
+	if err := waitForPIDFile(context.Background(), pidFile); err != nil {
 		t.Errorf("waitForPIDFile should return nil when the daemon is running, got %v", err)
 	}
 }
@@ -467,7 +472,7 @@ func TestWaitForPIDFileCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := waitForPIDFile(ctx, pidFile, &CapturedWriter{})
+	err := waitForPIDFile(ctx, pidFile)
 	if err == nil {
 		t.Fatal("waitForPIDFile should return an error when the context is canceled")
 	}
@@ -477,17 +482,27 @@ func TestWaitForPIDFileCanceledContext(t *testing.T) {
 }
 
 func TestPIDFileTimeoutErrIncludesStderr(t *testing.T) {
-	cw := &CapturedWriter{}
-	if _, err := cw.Write([]byte("boom happened")); err != nil {
-		t.Fatalf("write to capture buffer: %v", err)
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "test.pid")
+
+	f, err := OpenForkStderrLog(pidFile)
+	if err != nil {
+		t.Fatalf("OpenForkStderrLog: %v", err)
+	}
+	if _, writeErr := f.WriteString("boom happened"); writeErr != nil {
+		t.Fatalf("write to capture file: %v", writeErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
 	}
 
-	err := pidFileTimeoutErr("/tmp/some.pid", cw)
+	err = pidFileTimeoutErr(pidFile)
 	if !strings.Contains(err.Error(), "boom happened") {
 		t.Errorf("expected captured stderr in error, got %v", err)
 	}
 
-	if err := pidFileTimeoutErr("/tmp/some.pid", &CapturedWriter{}); strings.Contains(err.Error(), "child stderr") {
-		t.Errorf("expected no stderr section when capture empty, got %v", err)
+	emptyPidFile := filepath.Join(t.TempDir(), "empty.pid")
+	if err := pidFileTimeoutErr(emptyPidFile); strings.Contains(err.Error(), "child stderr") {
+		t.Errorf("expected no stderr section when capture file doesn't exist, got %v", err)
 	}
 }

@@ -199,7 +199,7 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 		return nil
 	}
 
-	if err := forkDaemon(ctx, config.DaemonPIDFile, false, identity); err != nil {
+	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return helpers.ErrCommandFailed

@@ -2,7 +2,6 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,33 +22,38 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
-// maxCapturedStderr caps how much of a failed daemon fork's stderr we retain for error messages.
-const maxCapturedStderr = 4096
-
-// CapturedWriter is a concurrency-safe io.Writer that retains up to maxCapturedStderr bytes,
-// silently dropping anything past that (satisfies the io.Writer contract: never reports
-// short writes without an error).
-type CapturedWriter struct {
-	buf bytes.Buffer
-	mu  sync.Mutex
+// ForkStderrLogPath returns where a forked daemon's raw stderr is captured
+// during startup, so a fork that dies before writing its PID file still
+// leaves a diagnostic an operator (or the timeout error path) can read back.
+// It sits beside the PID file.
+func ForkStderrLogPath(pidFile string) string {
+	return filepath.Join(filepath.Dir(pidFile), "fork-stderr.log")
 }
 
-func (c *CapturedWriter) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if remaining := maxCapturedStderr - c.buf.Len(); remaining > 0 {
-		if remaining > len(p) {
-			remaining = len(p)
-		}
-		c.buf.Write(p[:remaining])
+// OpenForkStderrLog truncates and opens the fork stderr capture file fresh
+// for this fork attempt.
+//
+// The file is wired directly as the child's stderr rather than through an
+// in-process io.Writer: os/exec creates a real OS pipe for any Stderr that
+// isn't an *os.File, and the pipe's read end lives in this process. Once this
+// process exits — moments after reporting success back to the shell — that
+// pipe is orphaned, and the detached child gets SIGPIPE'd on its next stderr
+// write. A real file has no reader to lose: fork/exec gives the child its own
+// independent file descriptor.
+func OpenForkStderrLog(pidFile string) (*os.File, error) {
+	f, err := os.OpenFile(ForkStderrLogPath(pidFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 -- path derived from configured pidFile, not user input
+	if err != nil {
+		return nil, fmt.Errorf("opening fork stderr capture file: %w", err)
 	}
-	return len(p), nil
+	return f, nil
 }
 
-func (c *CapturedWriter) String() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.buf.String()
+// ReadForkStderr reads back a fork's captured stderr for a timeout diagnostic.
+// A read failure (e.g. the file was never created) just means no diagnostic
+// is available, not an error worth surfacing.
+func ReadForkStderr(pidFile string) string {
+	data, _ := os.ReadFile(ForkStderrLogPath(pidFile)) // #nosec G304 -- path derived from configured pidFile, not user input
+	return strings.TrimSpace(string(data))
 }
 
 type DaemonManager struct {
@@ -108,9 +112,9 @@ func removeStalePIDFile(pidFile string) error {
 }
 
 // buildDaemonCommand constructs the detached `eos daemon start` command. Its
-// stderr is captured so a fork that dies before writing its PID file can still
-// surface a diagnostic.
-func buildDaemonCommand(ctx context.Context, exePath string, verbose bool) (*exec.Cmd, *CapturedWriter) {
+// stderr is captured to a real file (see OpenForkStderrLog) so a fork that
+// dies before writing its PID file can still surface a diagnostic.
+func buildDaemonCommand(ctx context.Context, exePath string, verbose bool, pidFile string) (*exec.Cmd, *os.File, error) {
 	args := []string{"daemon", "start", "--log-to-file-and-console"}
 	if verbose {
 		args = append(args, "--verbose")
@@ -119,15 +123,19 @@ func buildDaemonCommand(ctx context.Context, exePath string, verbose bool) (*exe
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	stderr := &CapturedWriter{}
-	cmd.Stderr = stderr
-	return cmd, stderr
+
+	stderrFile, err := OpenForkStderrLog(pidFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stderr = stderrFile
+	return cmd, stderrFile, nil
 }
 
 // pidFileTimeoutErr builds the "timed out waiting for PID file" error, folding
 // in any captured child stderr when present.
-func pidFileTimeoutErr(pidFile string, stderr *CapturedWriter) error {
-	if output := strings.TrimSpace(stderr.String()); output != "" {
+func pidFileTimeoutErr(pidFile string) error {
+	if output := ReadForkStderr(pidFile); output != "" {
 		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
 	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
@@ -136,7 +144,7 @@ func pidFileTimeoutErr(pidFile string, stderr *CapturedWriter) error {
 // waitForPIDFile blocks until the forked daemon reports running via its PID
 // file, the context is canceled, or the 5s deadline elapses (in which case any
 // captured child stderr is folded into the error).
-func waitForPIDFile(ctx context.Context, pidFile string, stderr *CapturedWriter) error {
+func waitForPIDFile(ctx context.Context, pidFile string) error {
 	deadline := time.Now().Add(5 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -149,7 +157,7 @@ func waitForPIDFile(ctx context.Context, pidFile string, stderr *CapturedWriter)
 				return nil
 			}
 			if time.Now().After(deadline) {
-				return pidFileTimeoutErr(pidFile, stderr)
+				return pidFileTimeoutErr(pidFile)
 			}
 		}
 	}
@@ -166,14 +174,19 @@ func startDaemonProcess(ctx context.Context, pidFile string, verbose bool) error
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd, stderr := buildDaemonCommand(ctx, exePath, verbose)
+	cmd, stderrFile, err := buildDaemonCommand(ctx, exePath, verbose, pidFile)
+	if err != nil {
+		return fmt.Errorf("preparing daemon process: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
+		_ = stderrFile.Close()
 		return fmt.Errorf("starting daemon process: %w", err)
 	}
+	_ = stderrFile.Close() // child holds its own fd from the fork/exec dup; this process doesn't need one
 
 	// Wait for child to write PID file before parent exits.
 	// Required for Type=forking: systemd reads PID file immediately after parent exits.
-	return waitForPIDFile(ctx, pidFile, stderr)
+	return waitForPIDFile(ctx, pidFile)
 }
 
 func waitForSocket(ctx context.Context, socketPath string, timeout time.Duration) error {
