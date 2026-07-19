@@ -32,6 +32,7 @@ type DaemonController interface {
 type standaloneDaemonController struct {
 	baseDir      string
 	identity     userutil.Identity
+	telemetry    config.TelemetryConfig
 	cfg          config.StandaloneDaemonConfig
 	health       config.HealthConfig
 	shutdown     config.ShutdownConfig
@@ -42,7 +43,7 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 	if detach && !c.underSystemd {
 		return forkDaemon(ctx, &c.cfg, verbose, c.identity)
 	}
-	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
+	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.telemetry, c.underSystemd)
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
@@ -338,13 +339,14 @@ func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
 }
 
-func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, underSystemd bool, identity userutil.Identity) (DaemonController, error) {
+func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, telemetry config.TelemetryConfig, underSystemd bool, identity userutil.Identity) (DaemonController, error) {
 	if cfg.Standalone != nil {
 		return &standaloneDaemonController{
 			cfg:          *cfg.Standalone,
 			baseDir:      baseDir,
 			health:       *health,
 			shutdown:     shutdown,
+			telemetry:    telemetry,
 			underSystemd: underSystemd,
 			identity:     identity,
 		}, nil
@@ -512,7 +514,7 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Ident
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)

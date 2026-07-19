@@ -17,6 +17,7 @@ import (
 
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
+	"codeberg.org/Elysium_Labs/eos/internal/otelx"
 	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
@@ -27,6 +28,7 @@ type LocalManager struct {
 	executor     Executor
 	logger       *slog.Logger
 	sinkRegistry map[string]types.LogSink
+	telemetry    *otelx.Handles
 	baseDir      string
 	pipeWg       sync.WaitGroup
 }
@@ -57,8 +59,19 @@ func WithSinkRegistry(registry map[string]types.LogSink) LocalManagerOption {
 	}
 }
 
+// WithTelemetry sets the tracer and metric instruments the service lifecycle
+// (StartService/StopService/RestartService/ForceStopService) records
+// through. Callers that don't supply this get otelx.NoopHandles(), so
+// telemetry-less construction (every test, and any daemon with telemetry
+// disabled) costs nothing beyond a few no-op interface calls.
+func WithTelemetry(h *otelx.Handles) LocalManagerOption {
+	return func(m *LocalManager) {
+		m.telemetry = h
+	}
+}
+
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
-	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}}
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles()}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -526,6 +539,12 @@ func (m *LocalManager) recordRestartedInstance(service types.ServiceCatalogEntry
 }
 
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
+	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.start", name)
+	defer func() {
+		otelx.End(span, err)
+		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceStarts, name, err)
+	}()
+
 	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
 	if err != nil {
 		return 0, err
@@ -591,6 +610,12 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 }
 
 func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
+	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.restart", name)
+	defer func() {
+		otelx.End(span, err)
+		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceRestarts, name, err)
+	}()
+
 	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
 	if err != nil {
 		return 0, err
@@ -712,7 +737,13 @@ func (m *LocalManager) waitForPendingStops(name string, pending map[int]bool, er
 	}
 }
 
-func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
+func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (result StopServiceResult, err error) {
+	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.stop", name)
+	defer func() {
+		otelx.End(span, err)
+		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceStops, name, err)
+	}()
+
 	requestStartTime := time.Now()
 	m.logger.Debug("sending SIGTERM", "service", name)
 	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGTERM)
@@ -778,7 +809,13 @@ func isProcessAlive(pgid int) bool {
 	return procutil.IsAlive(pgid)
 }
 
-func (m *LocalManager) ForceStopService(name string) (StopServiceResult, error) {
+func (m *LocalManager) ForceStopService(name string) (result StopServiceResult, err error) {
+	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.force_stop", name)
+	defer func() {
+		otelx.End(span, err)
+		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceStops, name, err)
+	}()
+
 	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGKILL)
 	if err != nil {
 		return StopServiceResult{}, err

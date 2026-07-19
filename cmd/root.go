@@ -309,11 +309,21 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		GracePeriod: safeParseDuration(overrideStringConfigValue("SHUTDOWN_GRACE_PERIOD", config.ShutdownGracePeriod), time.Second*5),
 	}
 
+	telemetryConfig := config.TelemetryConfig{
+		Enable:   overrideBoolConfigValue("EOS_OTEL_ENABLE", eosCfg.Telemetry.Enable),
+		Endpoint: overrideStringConfigValue("EOS_OTEL_ENDPOINT", eosCfg.Telemetry.Endpoint),
+		Insecure: overrideBoolConfigValue("EOS_OTEL_INSECURE", eosCfg.Telemetry.Insecure),
+	}
+	if telemetryConfig.Enable && telemetryConfig.Endpoint == "" {
+		return "", "", nil, userutil.Identity{}, fmt.Errorf("telemetry is enabled but no OTLP endpoint is configured (set telemetry.endpoint in config.yaml or EOS_OTEL_ENDPOINT)")
+	}
+
 	systemConfig = &config.SystemConfig{
 		Sinks:        eosCfg.Sinks,
 		Health:       healthConfig,
 		Daemon:       daemonConfig,
 		Shutdown:     shutdownConfig,
+		Telemetry:    telemetryConfig,
 		UnderSystemd: config.IsUnderSystemd(),
 		Verbose:      overrideBoolConfigValue("EOS_VERBOSE", false),
 	}

@@ -20,8 +20,11 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/cronutil"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/otelx"
 	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // cpuSample is the previous CPU-time reading for a service, used to turn two
@@ -48,19 +51,20 @@ var _ monitorManager = (*manager.LocalManager)(nil)
 
 type HealthMonitor struct {
 	mgr                       monitorManager
-	db                        *database.DB
-	logger                    *slog.Logger
+	telemetry                 *otelx.Handles
 	lastMemSample             map[string]time.Time
 	lastCPUSample             map[string]cpuSample
+	db                        *database.DB
+	logger                    *slog.Logger
+	memory                    config.MemoryThresholdConfig
+	backoff                   config.BackoffConfig
 	checkInterval             time.Duration
-	memSampleInterval         time.Duration
 	timeoutLimit              time.Duration
+	memSampleInterval         time.Duration
 	restartCounterResetWindow time.Duration
 	shutdownGracePeriod       time.Duration
-	backoff                   config.BackoffConfig
-	memory                    config.MemoryThresholdConfig
-	procBuf                   [4096]byte
 	maxRestartCount           int
+	procBuf                   [4096]byte
 	timeoutEnable             bool
 }
 
@@ -70,6 +74,7 @@ func NewHealthMonitor(
 	logger *slog.Logger,
 	healthConfig *config.HealthConfig,
 	shutdownConfig config.ShutdownConfig,
+	telemetry *otelx.Handles,
 ) *HealthMonitor {
 	checkInterval := healthConfig.CheckInterval
 	if checkInterval <= 0 {
@@ -115,6 +120,7 @@ func NewHealthMonitor(
 		shutdownGracePeriod:       shutdownConfig.GracePeriod,
 		backoff:                   backoff,
 		memory:                    memory,
+		telemetry:                 telemetry,
 	}
 }
 
@@ -223,7 +229,7 @@ func (hm *HealthMonitor) checkStartProcess(
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 	}
 
-	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
+	activeRssMemoryKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
 	hm.logger.Debug("startup→running", "service", serviceName, "mem_kb", activeRssMemoryKb)
 	var rssPtr *int64
 	if sampled {
@@ -277,8 +283,8 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	hm.checkCronRestart(ctx, service, instance, config.CronRestart)
 	hm.resetRestartCounterIfStable(ctx, serviceName, process, instance)
 
-	rssKb, sampled := hm.measureRSS(pgid, serviceName)
-	cpuPct, cpuSampled := hm.measureCPU(pgid, serviceName)
+	rssKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
+	cpuPct, cpuSampled := hm.measureCPU(ctx, pgid, serviceName)
 
 	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
 	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled, cpuPct, cpuSampled)
@@ -440,7 +446,7 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 	// The restarted service has a new PGID; drop the old CPU baseline so the
 	// next tick reseeds instead of diffing against the dead process's total.
 	delete(hm.lastCPUSample, serviceName)
-	newRssKb, newSampled := hm.measureRSS(newPgid, serviceName)
+	newRssKb, newSampled := hm.measureRSS(ctx, newPgid, serviceName)
 	// A new PGID means a fresh process_history row: peak has no prior value to
 	// carry over, so it starts from this sample rather than the killed
 	// process's peak.
@@ -575,7 +581,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", err)
 	}
 
-	activeRssMemoryKb, sampled := hm.measureRSS(pgid, serviceName)
+	activeRssMemoryKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
 	var rssPtr *int64
 	if sampled {
 		rssPtr = &activeRssMemoryKb
@@ -696,7 +702,7 @@ func scanStatusFieldBytes(contents []byte, field []byte) []byte {
 // baseline and returns (0, false): a percentage needs a delta between two
 // cumulative CPU-time readings, so it can't be computed from a single sample.
 // CPU time is summed across the PGID, the same scope as measureRSS.
-func (hm *HealthMonitor) measureCPU(pgid int, serviceName string) (float64, bool) {
+func (hm *HealthMonitor) measureCPU(ctx context.Context, pgid int, serviceName string) (float64, bool) {
 	prev, hadPrev := hm.lastCPUSample[serviceName]
 	if hadPrev && time.Since(prev.at) < hm.memSampleInterval {
 		return 0, false
@@ -724,21 +730,24 @@ func (hm *HealthMonitor) measureCPU(pgid int, serviceName string) (float64, bool
 		// by an unrelated process. Treat it as a fresh baseline.
 		return 0, false
 	}
+	hm.telemetry.ServiceCPUPercent.Record(ctx, percent, metric.WithAttributes(attribute.String("eos.service.name", serviceName)))
 	return percent, true
 }
 
 // measureRSS returns (rssKb, true) when a sample was taken,
 // or (0, false) when the throttle interval has not elapsed.
-func (hm *HealthMonitor) measureRSS(pgid int, serviceName string) (int64, bool) {
+func (hm *HealthMonitor) measureRSS(ctx context.Context, pgid int, serviceName string) (int64, bool) {
 	if time.Since(hm.lastMemSample[serviceName]) < hm.memSampleInterval {
 		return 0, false
 	}
 	hm.lastMemSample[serviceName] = time.Now()
 
+	rssKb := int64(0)
 	if runtime.GOOS == "linux" {
-		return hm.checkMemoryLinux(pgid), true
+		rssKb = hm.checkMemoryLinux(pgid)
 	}
-	return 0, true
+	hm.telemetry.ServiceMemoryBytes.Record(ctx, rssKb*1024, metric.WithAttributes(attribute.String("eos.service.name", serviceName)))
+	return rssKb, true
 }
 
 var (

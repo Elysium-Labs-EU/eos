@@ -292,7 +292,7 @@ func TestNewDaemonController(t *testing.T) {
 
 	t.Run("standalone", func(t *testing.T) {
 		cfg := config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{PIDFile: "/tmp/eos.pid"}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -303,7 +303,7 @@ func TestNewDaemonController(t *testing.T) {
 
 	t.Run("systemd", func(t *testing.T) {
 		cfg := config.DaemonConfig{Systemd: &config.SystemdConfig{}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -314,7 +314,7 @@ func TestNewDaemonController(t *testing.T) {
 
 	t.Run("launchd", func(t *testing.T) {
 		cfg := config.DaemonConfig{Launchd: &config.LaunchdConfig{}}
-		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
+		ctrl, err := newDaemonController(cfg, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}, false, identity)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -324,7 +324,7 @@ func TestNewDaemonController(t *testing.T) {
 	})
 
 	t.Run("none set is an error", func(t *testing.T) {
-		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, false, identity)
+		_, err := newDaemonController(config.DaemonConfig{}, t.TempDir(), &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}, false, identity)
 		if err == nil {
 			t.Fatal("expected error when standalone, systemd, and launchd are all nil")
 		}

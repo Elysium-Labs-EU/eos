@@ -1,0 +1,4 @@
+telemetry:
+  enable: true
+  endpoint: "localhost:4317"
+  insecure: true

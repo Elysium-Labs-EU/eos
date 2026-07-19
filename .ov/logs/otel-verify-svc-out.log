@@ -1,0 +1,34 @@
+{"time":"2026-07-19T01:44:19.2489+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:20.255973+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:21.064628+02:00","level":"INFO","msg":"[otel-verify-svc] now running","service":"otel-verify-svc","source":"health"}
+{"time":"2026-07-19T01:44:21.265907+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:22.273327+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:23.282088+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:24.290724+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:25.298714+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:26.308384+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:27.32026+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:27.980654+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:28.989351+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:44:29.06336+02:00","level":"INFO","msg":"[otel-verify-svc] now running","service":"otel-verify-svc","source":"health"}
+{"time":"2026-07-19T01:44:29.997269+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:24.738312+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:25.066666+02:00","level":"INFO","msg":"[otel-verify-svc] now running","service":"otel-verify-svc","source":"health"}
+{"time":"2026-07-19T01:47:25.746007+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:26.75685+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:27.768357+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:28.774433+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:29.781976+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:30.79254+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:31.799233+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:32.810952+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:33.819723+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:34.827504+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:35.837942+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:36.84766+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:37.856683+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:38.865273+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:39.872503+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:40.882601+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:41.891683+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
+{"time":"2026-07-19T01:47:42.896921+02:00","level":"INFO","msg":"tick","service":"otel-verify-svc","source":"stdout"}
