@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 )
 
 // spawnDisposableChild starts a real, short-lived child process (`sleep 30`) so tests can

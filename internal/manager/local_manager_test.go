@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/procutil"
-	"codeberg.org/Elysium_Labs/eos/internal/testutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/procutil"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
 

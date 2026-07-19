@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 )
 
 // procStatusFixture is a synthetic /proc/[pid]/status body, hand-built to mimic

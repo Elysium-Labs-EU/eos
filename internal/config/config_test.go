@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 )
 
 func TestResolveScope(t *testing.T) {

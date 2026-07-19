@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 )
 
 // startServiceForLogsTest is a shared fixture for this file: it runs a real

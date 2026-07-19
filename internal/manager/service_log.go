@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
 )
 
 // joinLogPath joins filename onto logDir and refuses the result if it

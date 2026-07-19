@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 

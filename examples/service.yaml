@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json
 
 # Example: Node.js API server managed via nvm
 name: "api"
