@@ -482,6 +482,73 @@ func TestLoadServiceConfigWithCronRestart(t *testing.T) {
 	}
 }
 
+func TestValidateServiceName(t *testing.T) {
+	tests := []struct {
+		name    string
+		svcName string
+		wantErr bool
+	}{
+		{"simple lowercase", "cms", false},
+		{"with dash", "my-service", false},
+		{"with underscore", "my_service", false},
+		{"alphanumeric", "svc123", false},
+		{"empty", "", true},
+		{"path traversal unix", "../../pwned", true},
+		{"path traversal windows-style", "..\\..\\pwned", true},
+		{"absolute path", "/etc/passwd", true},
+		{"nested separator", "foo/bar", true},
+		{"dot only", "..", true},
+		{"single dot", ".", true},
+		{"leading dot hidden file", ".hidden", true},
+		{"contains space", "my service", true},
+		{"contains null byte", "svc\x00", true},
+		{"too long", strings.Repeat("a", maxServiceNameLength+1), true},
+		{"exactly max length", strings.Repeat("a", maxServiceNameLength), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateServiceName(tt.svcName)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateServiceName(%q) = nil, want error", tt.svcName)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateServiceName(%q) = %v, want no error", tt.svcName, err)
+			}
+		})
+	}
+}
+
+func TestLoadServiceConfig_pathTraversalName(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	if err := os.WriteFile(configFile, []byte("name: \"../../pwned\"\ncommand: \"./start.sh\"\n"), 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	if _, err := LoadServiceConfig(configFile); err == nil {
+		t.Error("expected LoadServiceConfig to reject a path-traversal name")
+	}
+}
+
+func TestValidateServiceConfig_pathTraversalName(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "service.yaml")
+	if err := os.WriteFile(configFile, []byte("name: \"../../pwned\"\ncommand: \"./start.sh\"\n"), 0644); err != nil {
+		t.Fatalf("writing test config file should not error: %v", err)
+	}
+
+	if _, errs := ValidateServiceConfig(configFile); len(errs) == 0 {
+		t.Error("expected ValidateServiceConfig to reject a path-traversal name")
+	}
+}
+
+func TestNewServiceCatalogEntryWithPathTraversalName(t *testing.T) {
+	if _, err := NewServiceCatalogEntry("../../pwned", "./test-files", "service.yaml"); err == nil {
+		t.Error("expected NewServiceCatalogEntry to reject a path-traversal name")
+	}
+}
+
 func TestDetectSelfDetachRisk(t *testing.T) {
 	tests := []struct {
 		name         string
