@@ -40,7 +40,7 @@ type standaloneDaemonController struct {
 
 func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error {
 	if detach && !c.underSystemd {
-		return forkDaemon(ctx, c.cfg.PIDFile, verbose, c.identity)
+		return forkDaemon(ctx, &c.cfg, verbose, c.identity)
 	}
 	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.underSystemd)
 }
@@ -541,7 +541,15 @@ func envWithout(env []string, key string) []string {
 // buildForkCommand constructs the detached `eos daemon start` command. When the
 // parent runs as root it drops the child to identity's uid/gid and strips root's
 // HOME so the child resolves paths under its own home, not /root.
-func buildForkCommand(ctx context.Context, exePath string, verbose bool, identity userutil.Identity) (*exec.Cmd, *manager.CapturedWriter) {
+//
+// The child's stderr is wired to a real file (manager.OpenForkStderrLog), not an
+// in-process io.Writer: os/exec creates a real OS pipe for any Stderr that isn't
+// an *os.File, and the pipe's read end lives in this process. Once this process
+// exits — moments after reporting success back to the shell — that pipe is
+// orphaned, and the detached child gets SIGPIPE'd on its next stderr write (see
+// issue #156). A real file has no reader to lose: fork/exec gives the child its
+// own independent file descriptor regardless of what this process does with it.
+func buildForkCommand(ctx context.Context, exePath string, verbose bool, identity userutil.Identity, pidFile string) (*exec.Cmd, *os.File, error) {
 	// --foreground is required here: the child inherits no flags, and "daemon start"
 	// now defaults to detach=true, so without it the child would fork again and again.
 	args := []string{"daemon", "start", "--foreground", "--log-to-file-and-console"}
@@ -552,8 +560,12 @@ func buildForkCommand(ctx context.Context, exePath string, verbose bool, identit
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	stderr := &manager.CapturedWriter{}
-	cmd.Stderr = stderr
+
+	stderrFile, err := manager.OpenForkStderrLog(pidFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stderr = stderrFile
 
 	if os.Getuid() == 0 {
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: identity.UID(), Gid: identity.GID()}
@@ -564,40 +576,117 @@ func buildForkCommand(ctx context.Context, exePath string, verbose bool, identit
 		// which the dropped-privilege child can't even stat (root's home is 0700).
 		cmd.Env = append(envWithout(os.Environ(), "HOME"), "HOME="+identity.HomeDir())
 	}
-	return cmd, stderr
+	return cmd, stderrFile, nil
 }
 
-// waitForForkPIDFile blocks until the forked daemon writes its PID file or the
-// 5s deadline elapses, folding any captured child stderr into the timeout error.
-func waitForForkPIDFile(pidFile string, stderr *manager.CapturedWriter) error {
+// waitForForkPIDFile blocks until the forked daemon is confirmed alive via its
+// PID file, or the 5s deadline elapses. It re-checks process liveness (not
+// just file existence): a PID file can exist for an instant before the
+// process that wrote it dies.
+func waitForForkPIDFile(pidFile string) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(pidFile); err == nil {
+		status, err := process.StatusStandaloneDaemon(&config.StandaloneDaemonConfig{PIDFile: pidFile})
+		if err == nil && status.Running {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-
-	if output := strings.TrimSpace(stderr.String()); output != "" {
-		return fmt.Errorf("timed out waiting for PID file: %s\nchild stderr: %s", pidFile, output)
-	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 }
 
-func forkDaemon(ctx context.Context, pidFile string, verbose bool, identity userutil.Identity) error {
+// waitForForkSocket blocks until the forked daemon's Unix socket accepts a
+// connection, or the 5s deadline elapses. A PID file can exist — and its
+// process still be alive — for a brief window before an unrelated startup
+// failure (e.g. a socket bind error) kills it moments later; confirming the
+// socket answers is what actually proves the daemon reached a running state,
+// not just that it forked (issue #156).
+func waitForForkSocket(ctx context.Context, socketPath string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if socketResponds(ctx, socketPath) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for daemon socket: %s", socketPath)
+}
+
+// forkDaemon starts a new detached daemon process: refuse if one is already
+// running, spawn the child, then confirm it is durably alive before
+// reporting success (issue #156). Each step is a small, independently tested
+// helper so this orchestrator stays a plain three-step sequence.
+func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose bool, identity userutil.Identity) error {
+	if err := ensureDaemonNotRunning(cfg); err != nil {
+		return err
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd, stderr := buildForkCommand(ctx, exePath, verbose, identity)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start daemon process: %w", err)
+	if err := spawnForkedDaemon(ctx, exePath, verbose, identity, cfg.PIDFile); err != nil {
+		return err
 	}
 
-	// Wait for child to write PID file before parent exits.
-	// Required for Type=forking: systemd reads PID file immediately after parent exits.
-	return waitForForkPIDFile(pidFile, stderr)
+	return confirmForkAlive(ctx, cfg)
+}
+
+// ensureDaemonNotRunning errors if a live daemon already holds cfg's PID
+// file. A fork while one is running spawns a child that fails to bind and
+// exits quietly, which previously looked identical to success (issue #156).
+func ensureDaemonNotRunning(cfg *config.StandaloneDaemonConfig) error {
+	status, err := process.StatusStandaloneDaemon(cfg)
+	if err != nil {
+		return fmt.Errorf("checking daemon status: %w", err)
+	}
+	if status.Running {
+		return fmt.Errorf("daemon already running (pid %d)", *status.Pid)
+	}
+	return nil
+}
+
+// spawnForkedDaemon starts the detached daemon child. Once cmd.Start()
+// returns, this process's copy of the child's stderr fd is no longer needed:
+// fork/exec already gave the child its own independent one (see
+// buildForkCommand).
+func spawnForkedDaemon(ctx context.Context, exePath string, verbose bool, identity userutil.Identity, pidFile string) error {
+	cmd, stderrFile, err := buildForkCommand(ctx, exePath, verbose, identity, pidFile)
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		_ = stderrFile.Close()
+		return fmt.Errorf("failed to start daemon process: %w", err)
+	}
+	_ = stderrFile.Close()
+	return nil
+}
+
+// confirmForkAlive waits for the forked child to become durably alive: PID
+// file liveness first (required for Type=forking: systemd reads the PID file
+// immediately after this process exits), then the daemon's socket actually
+// answering — a PID file can exist, and its process still be alive, for a
+// brief window before an unrelated startup failure (e.g. a socket bind
+// error) kills it moments later (issue #156).
+func confirmForkAlive(ctx context.Context, cfg *config.StandaloneDaemonConfig) error {
+	if err := waitForForkPIDFile(cfg.PIDFile); err != nil {
+		return forkStartupErr(err, cfg.PIDFile)
+	}
+	if err := waitForForkSocket(ctx, cfg.SocketPath); err != nil {
+		return forkStartupErr(err, cfg.PIDFile)
+	}
+	return nil
+}
+
+// forkStartupErr folds any captured child stderr into a fork startup failure,
+// whichever of the two readiness waits (PID file, socket) timed out first.
+func forkStartupErr(err error, pidFile string) error {
+	if output := manager.ReadForkStderr(pidFile); output != "" {
+		return fmt.Errorf("%w\nchild stderr: %s", err, output)
+	}
+	return err
 }
 
 func printAllDaemons(cmd *cobra.Command) error {
