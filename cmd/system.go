@@ -37,6 +37,11 @@ var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
+// updateUserAgent is sent on every request to the GitHub release API and asset
+// downloads. The GitHub REST API rejects requests without a User-Agent with a
+// 403, unlike the Gitea/Codeberg API this updater previously targeted.
+const updateUserAgent = "eos-updater"
+
 // supportedPlatforms lists the OS-arch combinations for which eos releases are published.
 // Keep this in sync with the build pipeline.
 var supportedPlatforms = []string{
@@ -200,7 +205,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	updateCmd := &cobra.Command{
 		Use:           "update",
 		Short:         "Apply new update if available",
-		Long:          `Check Codeberg for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
+		Long:          `Check GitHub for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
 		Example:       "  eos system update        # check and apply latest stable release\n  eos system update --pre  # include pre-releases",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -1329,14 +1334,16 @@ type Release struct {
 }
 
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
-	url := "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases/latest"
+	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
 	if includePre {
-		url = "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases"
+		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set("Accept", "application/vnd.github+json")
 
 	// #nosec G704
 	resp, err := httpClient.Do(req)
@@ -1408,12 +1415,12 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, LatestVersion: latest}, nil
 }
 
-// fetchAssetResponse validates the asset URL (https + codeberg.org), issues the
+// fetchAssetResponse validates the asset URL (https + github.com), issues the
 // GET, and returns a non-nil 200 response whose Body the caller must close. It
 // closes the body itself on any non-success path.
 func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response, error) {
 	parsedURL, err := url.Parse(latestAsset.BrowserDownloadURL)
-	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "github.com") {
 		return nil, fmt.Errorf("invalid URL")
 	}
 
@@ -1421,6 +1428,7 @@ func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
@@ -1520,7 +1528,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	}
 
 	parsedURL, err := url.Parse(checksumsAsset.BrowserDownloadURL)
-	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "github.com") {
 		return "", fmt.Errorf("invalid checksums URL")
 	}
 
@@ -1528,6 +1536,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	if err != nil {
 		return "", fmt.Errorf("building request: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
