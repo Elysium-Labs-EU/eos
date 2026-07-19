@@ -5,9 +5,24 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"codeberg.org/Elysium_Labs/eos/internal/logutil"
 )
+
+// joinLogPath joins filename onto logDir and refuses the result if it
+// resolves outside logDir. ValidateServiceName already forbids the path
+// separators and ".." segments that would make escape possible, but this is
+// the last place before a log file is actually created or opened on disk,
+// so it does not trust that upstream validation ran.
+func joinLogPath(logDir, filename string) (string, error) {
+	joined := filepath.Join(logDir, filename)
+	cleanDir := filepath.Clean(logDir)
+	if joined != cleanDir && !strings.HasPrefix(joined, cleanDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("resolved log path %q escapes log directory %q", joined, cleanDir)
+	}
+	return joined, nil
+}
 
 func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
 	logDir := CreateLogDirPath(m.baseDir)
@@ -17,8 +32,14 @@ func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, e
 		return "", "", fmt.Errorf("failed to create log directory %s: %w", logDir, err)
 	}
 
-	logPath = filepath.Join(logDir, CreateOutputLogFilename(serviceName))
-	errorLogPath = filepath.Join(logDir, CreateErrorOutputLogFilename(serviceName))
+	logPath, err = joinLogPath(logDir, CreateOutputLogFilename(serviceName))
+	if err != nil {
+		return "", "", err
+	}
+	errorLogPath, err = joinLogPath(logDir, CreateErrorOutputLogFilename(serviceName))
+	if err != nil {
+		return "", "", err
+	}
 
 	for _, path := range []string{logPath, errorLogPath} {
 		f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
@@ -45,21 +66,23 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 	logDir := CreateLogDirPath(m.baseDir)
 
 	if errorLog {
-		errorLogFilename := CreateErrorOutputLogFilename(serviceName)
-		errorLogPath := filepath.Join(logDir, errorLogFilename)
-		_, err := os.Stat(errorLogPath)
+		errorLogPath, err := joinLogPath(logDir, CreateErrorOutputLogFilename(serviceName))
 		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(errorLogPath); err != nil {
 			return nil, fmt.Errorf("describing error log file: %w", err)
 		}
 
 		return &errorLogPath, nil
 	}
 
-	logFilename := CreateOutputLogFilename(serviceName)
-	logPath := filepath.Join(logDir, logFilename)
-
-	_, err := os.Stat(logPath)
+	logPath, err := joinLogPath(logDir, CreateOutputLogFilename(serviceName))
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(logPath); err != nil {
 		return nil, fmt.Errorf("describing the log file: %w", err)
 	}
 

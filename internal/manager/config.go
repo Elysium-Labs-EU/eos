@@ -16,8 +16,8 @@ import (
 )
 
 func NewServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("received an empty name for the service")
+	if err := ValidateServiceName(name); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("received an empty path for the service")
@@ -50,14 +50,40 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yaml parsing failed with: %w", err)
 	}
-	if config.Name == "" {
-		return nil, fmt.Errorf("service name is required in %s", cleanedConfigFilePath)
+	if err := ValidateServiceName(config.Name); err != nil {
+		return nil, fmt.Errorf("invalid service name in %s: %w", cleanedConfigFilePath, err)
 	}
 	if config.Command == "" {
 		return nil, fmt.Errorf("service command is required in %s", cleanedConfigFilePath)
 	}
 
 	return &config, nil
+}
+
+// maxServiceNameLength keeps names well under typical filesystem filename
+// limits (255 bytes) even after CreateOutputLogFilename/CreateErrorOutputLogFilename
+// append their "-out.log"/"-error.log" suffixes.
+const maxServiceNameLength = 128
+
+var validServiceName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateServiceName checks that a service name is safe to use as a path
+// component: it becomes part of log filenames (CreateOutputLogFilename,
+// CreateErrorOutputLogFilename) and is joined onto the log directory with
+// filepath.Join. Restricting to a fixed charset (no '/', no '.') makes
+// directory traversal via a name like "../../pwned" impossible by
+// construction, rather than trying to blocklist "..".
+func ValidateServiceName(name string) error {
+	if name == "" {
+		return fmt.Errorf("service name is required")
+	}
+	if len(name) > maxServiceNameLength {
+		return fmt.Errorf("service name %q exceeds maximum length of %d characters", name, maxServiceNameLength)
+	}
+	if !validServiceName.MatchString(name) {
+		return fmt.Errorf("service name %q is invalid: only letters, digits, '_' and '-' are allowed", name)
+	}
+	return nil
 }
 
 func ValidateRuntimeBinary(runtime types.Runtime) error {
@@ -102,8 +128,8 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	}
 
 	var errs []error
-	if config.Name == "" {
-		errs = append(errs, fmt.Errorf("service name is required"))
+	if err := ValidateServiceName(config.Name); err != nil {
+		errs = append(errs, err)
 	}
 	if config.Command == "" {
 		errs = append(errs, fmt.Errorf("service command is required"))

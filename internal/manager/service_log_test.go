@@ -10,6 +10,56 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 )
 
+func TestJoinLogPath(t *testing.T) {
+	logDir := filepath.Join(t.TempDir(), "logs")
+
+	tests := []struct {
+		name     string
+		filename string
+		wantErr  bool
+	}{
+		{"normal filename", "svc-out.log", false},
+		{"traversal escapes logDir", "../../pwned-out.log", true},
+		{"traversal collapses back inside logDir", "sub/../svc-out.log", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, err := joinLogPath(logDir, tt.filename)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("joinLogPath(%q, %q) = %q, want error", logDir, tt.filename, path)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("joinLogPath(%q, %q) unexpected error: %v", logDir, tt.filename, err)
+			}
+			if !strings.HasPrefix(path, filepath.Clean(logDir)+string(filepath.Separator)) {
+				t.Errorf("joinLogPath(%q, %q) = %q, want prefix %q", logDir, tt.filename, path, logDir)
+			}
+		})
+	}
+}
+
+// NewServiceLogFiles takes a serviceName straight from ValidateServiceName's
+// safe charset in every real caller; this test bypasses that upstream
+// guarantee to exercise joinLogPath's own defense-in-depth check in
+// isolation, simulating what would happen if a future caller forgot to
+// validate the name first.
+func TestNewServiceLogFiles_rejectsPathTraversalName(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if _, _, err := mgr.NewServiceLogFiles("../../pwned"); err == nil {
+		t.Fatal("expected NewServiceLogFiles to reject a path-traversal service name")
+	}
+
+	if _, err := os.Stat(filepath.Join(tempDir, "..", "..", "pwned-out.log")); !os.IsNotExist(err) {
+		t.Errorf("expected no file to have escaped tempDir, stat err: %v", err)
+	}
+}
+
 func TestGetServiceLogFilePath(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
