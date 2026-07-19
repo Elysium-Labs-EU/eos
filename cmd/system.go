@@ -57,7 +57,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 				os.Exit(1)
 			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.UnderSystemd, identity)
+			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 				os.Exit(1)
@@ -317,7 +317,13 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 		cmd.Printf("  %s %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit, ui.TextMuted.Render("(not active)"))
 	}
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Shutdown"))
-	cmd.Printf("  %s %v\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
+	cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Telemetry"))
+	cmd.Printf("  %s %v\n", ui.TextMuted.Render("enabled:"), config.Telemetry.Enable)
+	if config.Telemetry.Enable {
+		cmd.Printf("  %s %s\n", ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
+		cmd.Printf("  %s %v\n", ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
+	}
 }
 
 // detectActiveSystemRuntime identifies the running init system by checking for

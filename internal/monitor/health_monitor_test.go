@@ -19,6 +19,7 @@ import (
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
+	"codeberg.org/Elysium_Labs/eos/internal/otelx"
 	"codeberg.org/Elysium_Labs/eos/internal/testutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 	"gopkg.in/yaml.v3"
@@ -36,17 +37,18 @@ func TestHealthMonitor_MeasureCPU_SeedsThenSamples(t *testing.T) {
 
 	// Long interval: exercise seeding + throttle without racing the clock.
 	throttled := &HealthMonitor{
+		telemetry:         otelx.NoopHandles(),
 		lastCPUSample:     make(map[string]cpuSample),
 		memSampleInterval: time.Hour,
 	}
-	if pct, sampled := throttled.measureCPU(pgid, "svc"); sampled || pct != 0 {
+	if pct, sampled := throttled.measureCPU(context.Background(), pgid, "svc"); sampled || pct != 0 {
 		t.Fatalf("first measureCPU = (%v, %v), want (0, false) to seed baseline", pct, sampled)
 	}
 	seeded, ok := throttled.lastCPUSample["svc"]
 	if !ok {
 		t.Fatal("expected baseline stored after first measureCPU")
 	}
-	if pct, sampled := throttled.measureCPU(pgid, "svc"); sampled || pct != 0 {
+	if pct, sampled := throttled.measureCPU(context.Background(), pgid, "svc"); sampled || pct != 0 {
 		t.Errorf("throttled measureCPU = (%v, %v), want (0, false)", pct, sampled)
 	}
 	if throttled.lastCPUSample["svc"].at != seeded.at {
@@ -69,14 +71,15 @@ func TestHealthMonitor_MeasureCPU_SeedsThenSamples(t *testing.T) {
 	t.Cleanup(func() { _ = busy.Process.Kill(); _ = busy.Wait() })
 
 	sampler := &HealthMonitor{
+		telemetry:         otelx.NoopHandles(),
 		lastCPUSample:     make(map[string]cpuSample),
 		memSampleInterval: time.Millisecond,
 	}
-	if _, sampled := sampler.measureCPU(busyPgid, "svc"); sampled {
+	if _, sampled := sampler.measureCPU(context.Background(), busyPgid, "svc"); sampled {
 		t.Fatal("first measureCPU should seed, not sample")
 	}
 	time.Sleep(50 * time.Millisecond)
-	pct, sampled := sampler.measureCPU(busyPgid, "svc")
+	pct, sampled := sampler.measureCPU(context.Background(), busyPgid, "svc")
 	if !sampled {
 		t.Fatal("second measureCPU after interval should sample")
 	}
@@ -99,7 +102,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	ctx, cancel := context.WithCancel(t.Context())
 
@@ -133,7 +136,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "test-service"
 
@@ -246,7 +249,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "startup-crash-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -368,7 +371,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 	serviceName := "timeout-test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -491,7 +494,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -631,7 +634,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 		t.Fatalf("unable to set up daemon logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -740,7 +743,7 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 		t.Fatalf("unable to set up daemon logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	fullDirPath := filepath.Join(tempDir, "heartbeat-project")
 	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
@@ -852,7 +855,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "test-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -981,7 +984,7 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "test-reset-service"
 	fullDirPath := filepath.Join(tempDir, "test-reset-project")
@@ -1082,7 +1085,7 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "test-no-reset-service"
 	fullDirPath := filepath.Join(tempDir, "test-no-reset-project")
@@ -1175,7 +1178,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 	serviceName := "max-restart-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
 
@@ -1407,7 +1410,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	// --- Helper to register a service ---
 	setupService := func(name string, port int) *types.ServiceCatalogEntry {
@@ -1610,7 +1613,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "recovery-service"
 	serviceDir := filepath.Join(tempDir, serviceName)
@@ -1736,7 +1739,7 @@ func TestHealthMonitor_CheckRunningProcess_PortUnreachable(t *testing.T) {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "port-drop-service"
 	fullDirPath := filepath.Join(tempDir, "port-drop-project")
@@ -1844,7 +1847,7 @@ func TestHealthMonitor_CheckAllServices_PanicInOneServiceDoesNotStopOthers(t *te
 
 	panicSvcName := "panic-svc"
 	mgr := &panicOnServiceManager{monitorManager: realMgr, panicFor: panicSvcName}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	if err = db.RegisterServiceInstance(t.Context(), panicSvcName); err != nil {
 		t.Fatalf("Failed to register panic-svc instance: %v", err)
@@ -2038,7 +2041,7 @@ func TestCheckMemoryLinux(t *testing.T) {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	pgid, err := syscall.Getpgid(os.Getpid())
 	if err != nil {
@@ -2064,7 +2067,7 @@ func TestCheckUnknownProcess_alive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	fullDirPath := filepath.Join(tempDir, "unknown-alive-project")
 	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
@@ -2131,7 +2134,7 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "unknown-dead-svc"
 	fullDirPath := filepath.Join(tempDir, "unknown-dead-project")
@@ -2200,7 +2203,7 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
 
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	if hm.checkInterval != 2*time.Second {
 		t.Errorf("expected default checkInterval 2s, got %v", hm.checkInterval)
@@ -2210,7 +2213,7 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 func TestEvaluateMemoryThresholds(t *testing.T) {
 	healthConfig := newTestHealthConfig(t)
 	shutdownConfig := newTestShutdownConfig(t)
-	hm := NewHealthMonitor(nil, nil, nil, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(nil, nil, nil, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const limitMb = 100
 	limitKb := int64(limitMb) * 1024
@@ -2255,7 +2258,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "dispatch-memory-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
@@ -2331,7 +2334,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	fullDirPath := filepath.Join(tempDir, "restart-threshold-project")
 	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
@@ -2418,7 +2421,7 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "restart-threshold-maxed-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
@@ -2472,7 +2475,7 @@ func TestHealthMonitor_CheckCronRestart_EmptyExprNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "cron-noop-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
@@ -2509,7 +2512,7 @@ func TestHealthMonitor_CheckCronRestart_SchedulesFirstFireTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "cron-schedule-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
@@ -2552,7 +2555,7 @@ func TestHealthMonitor_CheckCronRestart_NotDueYet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "cron-not-due-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
@@ -2594,7 +2597,7 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	const serviceName = "cron-due-svc"
 	fullDirPath := filepath.Join(tempDir, "cron-due-project")
@@ -2705,7 +2708,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	// manager reports an unwritable log file.
 	permErr := fmt.Errorf("preparing log files for logbench: %w", fmt.Errorf("could not open log file: %w", os.ErrPermission))
 	mgr := &restartFailManager{monitorManager: realMgr, restartErr: permErr}
-	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig)
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
 	serviceName := "unwritable-log-service"
 	fullDirPath := filepath.Join(tempDir, "unwritable-log-project")

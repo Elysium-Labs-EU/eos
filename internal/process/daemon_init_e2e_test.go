@@ -73,11 +73,11 @@ func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, true /* verbose */, dbDir, standalone)
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, true /* verbose */, dbDir, standalone, config.TelemetryConfig{})
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}
-	d.shutdown()
+	d.shutdown(ctx)
 
 	entries := readDaemonLog(t, standalone)
 
@@ -119,11 +119,11 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone)
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.TelemetryConfig{})
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}
-	d.shutdown()
+	d.shutdown(ctx)
 
 	for _, e := range readDaemonLog(t, standalone) {
 		if e["level"] == "DEBUG" {

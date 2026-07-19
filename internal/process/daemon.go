@@ -20,38 +20,50 @@ import (
 	"syscall"
 	"time"
 
+	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
 	"codeberg.org/Elysium_Labs/eos/internal/config"
 	"codeberg.org/Elysium_Labs/eos/internal/database"
 	"codeberg.org/Elysium_Labs/eos/internal/manager"
 	"codeberg.org/Elysium_Labs/eos/internal/monitor"
+	"codeberg.org/Elysium_Labs/eos/internal/otelx"
 	"codeberg.org/Elysium_Labs/eos/internal/procutil"
 	"codeberg.org/Elysium_Labs/eos/internal/types"
 )
 
 type daemon struct {
-	listener   net.Listener
-	ctx        context.Context
-	logger     *slog.Logger
-	db         *database.DB
-	mgr        *manager.LocalManager
-	stop       context.CancelFunc
-	sigChan    chan os.Signal
-	pidFile    string
-	socketPath string
+	listener     net.Listener
+	ctx          context.Context
+	logger       *slog.Logger
+	db           *database.DB
+	mgr          *manager.LocalManager
+	otelProvider *otelx.Provider
+	otelHandles  *otelx.Handles
+	stop         context.CancelFunc
+	sigChan      chan os.Signal
+	pidFile      string
+	socketPath   string
 }
 
-func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, underSystemd bool) error {
-	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig)
+// otelShutdownTimeout bounds how long daemon shutdown waits for the OTel SDK
+// to flush pending spans/metrics to the collector. Mirrors sinkShutdownTimeout
+// in internal/manager/sink_process.go, the same grace the OTLP logs sink uses
+// to flush before the daemon's own shutdown deadline.
+const otelShutdownTimeout = 3 * time.Second
+
+func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, telemetryConfig config.TelemetryConfig, underSystemd bool) error {
+	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig, telemetryConfig)
 	if err != nil {
 		return err
 	}
-	defer d.shutdown()
+	defer d.shutdown(ctx)
 
 	if addr := os.Getenv("EOS_PPROF_ADDR"); addr != "" {
 		go func() { _ = http.ListenAndServe(addr, nil) }() //nolint:gosec // addr is operator-controlled via env var
 	}
 
-	reconcileOrphans(ctx, d.db, d.logger)
+	reconcileCtx, reconcileSpan := d.otelHandles.Tracer.Start(ctx, "eos.daemon.reconcile_orphans")
+	reconcileOrphans(reconcileCtx, d.db, d.logger)
+	reconcileSpan.End()
 
 	if underSystemd {
 		err := d.recover()
@@ -144,7 +156,11 @@ func reconcileMarkStopped(ctx context.Context, db *database.DB, logger *slog.Log
 	}
 }
 
-func (d *daemon) shutdown() {
+// shutdown takes the pre-signal-handling ctx (StartStandaloneDaemon's own
+// parameter, not d.ctx) so the telemetry flush gets a fresh deadline: d.ctx
+// is already Done() by the time shutdown runs, since it's the context
+// signal.NotifyContext canceled on SIGTERM/SIGINT.
+func (d *daemon) shutdown(ctx context.Context) {
 	d.stop()
 	if err := d.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		d.logger.Error("closing listener", "error", err)
@@ -158,6 +174,11 @@ func (d *daemon) shutdown() {
 	if err := d.db.CloseDBConnection(); err != nil {
 		d.logger.Error("failed to close database", "error", err)
 	}
+	otelCtx, otelCancel := context.WithTimeout(ctx, otelShutdownTimeout)
+	defer otelCancel()
+	if err := d.otelProvider.Shutdown(otelCtx); err != nil {
+		d.logger.Error("flushing telemetry on shutdown", "error", err)
+	}
 }
 
 func (d *daemon) recover() error {
@@ -167,7 +188,7 @@ func (d *daemon) recover() error {
 func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig) {
 	go handleIncomingCommands(d.listener, d.mgr, d.logger)
 
-	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig)
+	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig, d.otelHandles)
 	go healthMonitor.Start(d.ctx)
 }
 
@@ -206,7 +227,9 @@ func removeExistingSocket(socketPath string, logger *slog.Logger) error {
 	return nil
 }
 
-func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig) (*daemon, error) {
+func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, telemetryConfig config.TelemetryConfig) (*daemon, error) {
+	startedAt := time.Now()
+
 	logger, err := manager.NewDaemonLogger(logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup daemon logger: %w", err)
@@ -255,19 +278,96 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	}
 	logger.Debug("database connected")
 
-	mgr := manager.NewLocalManager(db, baseDir, ctx, logger)
+	tel, err := setupDaemonTelemetry(ctx, telemetryConfig, db, baseDir, logger, startedAt)
+	if err != nil {
+		return nil, err
+	}
 
 	return &daemon{
-		logger:     logger,
-		db:         db,
-		mgr:        mgr,
-		listener:   listener,
-		ctx:        ctx,
-		stop:       stop,
-		sigChan:    sigChan,
-		pidFile:    pidFile,
-		socketPath: socketPath,
+		logger:       logger,
+		db:           db,
+		mgr:          tel.mgr,
+		otelProvider: tel.provider,
+		otelHandles:  tel.handles,
+		listener:     listener,
+		ctx:          ctx,
+		stop:         stop,
+		sigChan:      sigChan,
+		pidFile:      pidFile,
+		socketPath:   socketPath,
 	}, nil
+}
+
+// daemonTelemetry bundles the pieces setupDaemonTelemetry assembles: the
+// OTel provider (real or no-op), the instrument handles built from it, and
+// the LocalManager wired to record through them.
+type daemonTelemetry struct {
+	provider *otelx.Provider
+	handles  *otelx.Handles
+	mgr      *manager.LocalManager
+}
+
+// setupDaemonTelemetry builds the daemon's OTel provider, its instrument
+// handles, the LocalManager wired to them, and registers the daemon-level
+// observable gauges (uptime, services registered/running).
+//
+// Telemetry export is an add-on to process supervision, not a prerequisite
+// for it: a misconfigured collector shouldn't stop the daemon from managing
+// services, so a construction failure on the real provider falls back to the
+// disabled (no-op) one — cfg.Enable false, which otelx.NewProvider never
+// errors on — rather than failing daemon startup.
+func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
+	otelProvider, err := otelx.NewProvider(ctx, otelx.Config{
+		Enable:   telemetryConfig.Enable,
+		Endpoint: telemetryConfig.Endpoint,
+		Insecure: telemetryConfig.Insecure,
+	}, "eos", buildinfo.Version)
+	if err != nil {
+		logger.Error("telemetry setup failed, continuing without it", "error", err)
+		otelProvider, err = otelx.NewProvider(ctx, otelx.Config{}, "eos", buildinfo.Version)
+		if err != nil {
+			return daemonTelemetry{}, fmt.Errorf("failed to set up fallback telemetry provider: %w", err)
+		}
+	}
+
+	otelHandles, err := otelx.NewHandles(otelProvider.TracerProvider, otelProvider.MeterProvider)
+	if err != nil {
+		return daemonTelemetry{}, fmt.Errorf("failed to set up telemetry instruments: %w", err)
+	}
+
+	mgr := manager.NewLocalManager(db, baseDir, ctx, logger, manager.WithTelemetry(otelHandles))
+
+	if regErr := otelx.RegisterDaemonGauges(otelProvider.MeterProvider, startedAt,
+		func() int { return len(catalogEntriesOrEmpty(mgr, logger)) },
+		func() int { return len(serviceInstancesOrEmpty(mgr, logger)) },
+	); regErr != nil {
+		logger.Error("registering daemon telemetry gauges", "error", regErr)
+	}
+
+	return daemonTelemetry{provider: otelProvider, handles: otelHandles, mgr: mgr}, nil
+}
+
+// catalogEntriesOrEmpty and serviceInstancesOrEmpty back the daemon-level
+// registered/running gauge callbacks (see otelx.RegisterDaemonGauges): the
+// SDK polls these on its own export interval, well off the hot path, so a
+// query failure there is worth logging but never worth surfacing to the
+// exporter callback's own error return.
+func catalogEntriesOrEmpty(mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceCatalogEntry {
+	entries, err := mgr.GetAllServiceCatalogEntries()
+	if err != nil {
+		logger.Debug("telemetry: listing service catalog", "error", err)
+		return nil
+	}
+	return entries
+}
+
+func serviceInstancesOrEmpty(mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceInstance {
+	instances, err := mgr.GetAllServiceInstances()
+	if err != nil {
+		logger.Debug("telemetry: listing service instances", "error", err)
+		return nil
+	}
+	return instances
 }
 
 func (d *daemon) wait() {

@@ -111,9 +111,19 @@ type ShutdownConfig struct {
 	GracePeriod time.Duration `json:"grace_period" yaml:"gracePeriod"`
 }
 
+// TelemetryConfig controls the daemon's OTLP export of metrics and traces.
+// Disabled by default: with Enable false, the daemon never dials a collector
+// and uses no-op tracer/meter providers (see otelx.NewProvider).
+type TelemetryConfig struct {
+	Endpoint string `json:"endpoint" yaml:"endpoint"`
+	Enable   bool   `json:"enable" yaml:"enable"`
+	Insecure bool   `json:"insecure" yaml:"insecure"`
+}
+
 type SystemConfig struct {
-	Sinks        map[string]types.LogSink `json:"sinks" yaml:"sinks"`
 	Daemon       DaemonConfig             `json:"daemon" yaml:"daemon"`
+	Sinks        map[string]types.LogSink `json:"sinks" yaml:"sinks"`
+	Telemetry    TelemetryConfig          `json:"telemetry" yaml:"telemetry"`
 	Health       HealthConfig             `json:"health" yaml:"health"`
 	Shutdown     ShutdownConfig           `json:"shutdown" yaml:"shutdown"`
 	UnderSystemd bool                     `json:"under_systemd" yaml:"underSystemd"`
@@ -289,9 +299,17 @@ func ResolveLaunchdScope(systemDir string) (dir string, isManaged bool, userAgen
 
 // EosConfig is the shape of ~/.eos/config.yaml.
 type EosConfig struct {
-	Sinks  map[string]types.LogSink `yaml:"sinks"`
-	Health EosHealthConfig          `yaml:"health"`
-	Log    EosLogConfig             `yaml:"log"`
+	Sinks     map[string]types.LogSink `yaml:"sinks"`
+	Telemetry EosTelemetryConfig       `yaml:"telemetry"`
+	Health    EosHealthConfig          `yaml:"health"`
+	Log       EosLogConfig             `yaml:"log"`
+}
+
+// EosTelemetryConfig is the config.yaml shape of TelemetryConfig.
+type EosTelemetryConfig struct {
+	Endpoint string `yaml:"endpoint"`
+	Enable   bool   `yaml:"enable"`
+	Insecure bool   `yaml:"insecure"`
 }
 
 type EosHealthConfig struct {
@@ -370,6 +388,9 @@ func (c *EosConfig) Validate() error {
 		if c.Sinks[name].Type == "" {
 			return fmt.Errorf("sinks.%s: type is required", name)
 		}
+	}
+	if c.Telemetry.Enable && c.Telemetry.Endpoint == "" {
+		return fmt.Errorf("telemetry.enable is true but telemetry.endpoint is empty")
 	}
 	return nil
 }
