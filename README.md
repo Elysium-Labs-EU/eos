@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/logo.svg" alt="eos logo" width="120" height="120">
+</p>
+
 # eos - Service Supervisor
 
 [![GitHub](https://img.shields.io/badge/GitHub-eos-blue?logo=github)](https://github.com/Elysium-Labs-EU/eos)
