@@ -229,21 +229,24 @@ func (hm *HealthMonitor) checkStartProcess(
 	if sampled {
 		rssPtr = &activeRssMemoryKb
 	}
+	peakPtr := peakRssKbPtr(process.PeakRssMemoryKb, activeRssMemoryKb, sampled)
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-		State:       new(types.ProcessStateRunning),
-		Error:       new(""),
-		RssMemoryKb: rssPtr,
+		State:           new(types.ProcessStateRunning),
+		Error:           new(""),
+		RssMemoryKb:     rssPtr,
+		PeakRssMemoryKb: peakPtr,
 	})
 	if err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
 	}
 }
 
-func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, rssMemoryKb *int64, cpuPercent *float64, serviceName string) {
+func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, rssMemoryKb, peakRssMemoryKb *int64, cpuPercent *float64, serviceName string) {
 	err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-		RssMemoryKb: rssMemoryKb,
-		CPUPercent:  cpuPercent,
+		RssMemoryKb:     rssMemoryKb,
+		PeakRssMemoryKb: peakRssMemoryKb,
+		CPUPercent:      cpuPercent,
 	})
 	if err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
@@ -373,6 +376,7 @@ func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, servic
 func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, pgid int, rssKb int64, sampled bool, cpuPct float64, cpuSampled bool) {
 	serviceName := service.Name
 	rssPtr := rssKbPtr(rssKb, sampled)
+	peakPtr := peakRssKbPtr(process.PeakRssMemoryKb, rssKb, sampled)
 	cpuPtr := cpuPctPtr(cpuPct, cpuSampled)
 
 	switch action {
@@ -383,11 +387,11 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
 			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 		}
-		hm.updateProcessEntry(ctx, pgid, rssPtr, cpuPtr, serviceName)
+		hm.updateProcessEntry(ctx, pgid, rssPtr, peakPtr, cpuPtr, serviceName)
 	case ReasonSoftRestart:
-		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "soft", 5*time.Second, 200*time.Millisecond)
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, peakPtr, "soft", 5*time.Second, 200*time.Millisecond)
 	case ReasonForceRestart:
-		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, "force", 1*time.Second, 10*time.Millisecond)
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, peakPtr, "force", 1*time.Second, 10*time.Millisecond)
 	case ReasonNone:
 		// Heartbeat: a confirmed-alive running service bumps updated_at on every
 		// health tick, so `eos status` never flags a healthy service (stale)
@@ -399,9 +403,10 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 		// UpdateProcessHistoryEntry's "no fields to update" guard; rss/cpu still
 		// ride along only when this tick actually sampled them.
 		err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-			State:       new(types.ProcessStateRunning),
-			RssMemoryKb: rssPtr,
-			CPUPercent:  cpuPtr,
+			State:           new(types.ProcessStateRunning),
+			RssMemoryKb:     rssPtr,
+			PeakRssMemoryKb: peakPtr,
+			CPUPercent:      cpuPtr,
 		})
 		if err != nil {
 			hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
@@ -411,7 +416,7 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 
 // restartOnMemoryThreshold restarts a service that crossed a soft or force memory
 // threshold, using the grace/ticker periods appropriate to that threshold's urgency.
-func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, rssKb int64, rssPtr *int64, label string, gracePeriod, tickerPeriod time.Duration) {
+func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, rssKb int64, rssPtr, peakPtr *int64, label string, gracePeriod, tickerPeriod time.Duration) {
 	serviceName := service.Name
 
 	if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
@@ -421,7 +426,7 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
 	newPgid, err := hm.mgr.RestartService(service.Name, gracePeriod, tickerPeriod)
 	if err != nil {
-		hm.updateProcessEntry(ctx, pgid, rssPtr, nil, serviceName)
+		hm.updateProcessEntry(ctx, pgid, rssPtr, peakPtr, nil, serviceName)
 		hm.logger.Error("restarting on "+label+" restart threshold", "service", serviceName, "error", err)
 		return
 	}
@@ -436,7 +441,10 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 	// next tick reseeds instead of diffing against the dead process's total.
 	delete(hm.lastCPUSample, serviceName)
 	newRssKb, newSampled := hm.measureRSS(newPgid, serviceName)
-	hm.updateProcessEntry(ctx, newPgid, rssKbPtr(newRssKb, newSampled), nil, serviceName)
+	// A new PGID means a fresh process_history row: peak has no prior value to
+	// carry over, so it starts from this sample rather than the killed
+	// process's peak.
+	hm.updateProcessEntry(ctx, newPgid, rssKbPtr(newRssKb, newSampled), peakRssKbPtr(0, newRssKb, newSampled), nil, serviceName)
 }
 
 func rssKbPtr(rssKb int64, sampled bool) *int64 {
@@ -444,6 +452,18 @@ func rssKbPtr(rssKb int64, sampled bool) *int64 {
 		return nil
 	}
 	return &rssKb
+}
+
+// peakRssKbPtr returns the running peak (max of priorPeakKb and rssKb) when a
+// fresh RSS sample was taken, or nil when it wasn't — mirroring rssKbPtr's
+// "no fresh reading, no write" contract so a peak update never rides along on
+// a throttled tick.
+func peakRssKbPtr(priorPeakKb, rssKb int64, sampled bool) *int64 {
+	if !sampled {
+		return nil
+	}
+	peak := max(priorPeakKb, rssKb)
+	return &peak
 }
 
 func cpuPctPtr(cpuPct float64, sampled bool) *float64 {
@@ -494,7 +514,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 		return
 	}
 
-	hm.markProcessRunning(ctx, pgid, serviceName)
+	hm.markProcessRunning(ctx, pgid, serviceName, process.PeakRssMemoryKb)
 }
 
 // handleRestartFailure records a restart attempt that never launched. It surfaces
@@ -541,10 +561,10 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelWarn, fmt.Sprintf("[%s] is not running", serviceName))
 		return
 	}
-	hm.markProcessRunning(ctx, pgid, serviceName)
+	hm.markProcessRunning(ctx, pgid, serviceName, process.PeakRssMemoryKb)
 }
 
-func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, serviceName string) {
+func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, serviceName string, priorPeakRssKb int64) {
 	var msgBuf [128]byte
 	updateString := string(fmt.Appendf(msgBuf[:0], "[%s] is running", serviceName))
 
@@ -560,11 +580,13 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	if sampled {
 		rssPtr = &activeRssMemoryKb
 	}
+	peakPtr := peakRssKbPtr(priorPeakRssKb, activeRssMemoryKb, sampled)
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
-		State:       new(types.ProcessStateRunning),
-		Error:       new(""),
-		RssMemoryKb: rssPtr,
+		State:           new(types.ProcessStateRunning),
+		Error:           new(""),
+		RssMemoryKb:     rssPtr,
+		PeakRssMemoryKb: peakPtr,
 	})
 	if err != nil {
 		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)

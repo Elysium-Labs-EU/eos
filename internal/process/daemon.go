@@ -108,7 +108,8 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 			continue
 		}
 
-		for _, hist := range history {
+		for i := range history {
+			hist := &history[i]
 			if hist.PGID <= 0 {
 				continue
 			}

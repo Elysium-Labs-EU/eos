@@ -25,11 +25,12 @@ type apiInfoResult struct {
 }
 
 type apiInfoProcess struct {
-	Error    *string             `json:"error,omitempty"`
-	Status   types.ServiceStatus `json:"status"`
-	Uptime   string              `json:"uptime"`
-	MemoryMb string              `json:"memory_mb"`
-	PGID     int                 `json:"pgid"`
+	Error        *string             `json:"error,omitempty"`
+	Status       types.ServiceStatus `json:"status"`
+	Uptime       string              `json:"uptime"`
+	MemoryMb     string              `json:"memory_mb"`
+	PeakMemoryMb string              `json:"peak_memory_mb"`
+	PGID         int                 `json:"pgid"`
 }
 
 func newAPIInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -157,6 +158,7 @@ func compileProcessInfoObject(processEntry *types.ProcessHistory) *apiInfoProces
 	if memory != nil {
 		processInfo.MemoryMb = *memory
 	}
+	processInfo.PeakMemoryMb = helpers.DetermineProcessPeakMemoryInMbHuman(processEntry.PeakRssMemoryKb)
 
 	if processEntry.Error != nil {
 		processInfo.Error = processEntry.Error

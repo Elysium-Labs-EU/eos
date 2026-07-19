@@ -2385,7 +2385,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	}
 
 	rssKb := int64(1024)
-	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, pgid, rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
+	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, pgid, rssKb, &rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
 
 	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updatedInstance == nil {
@@ -2447,7 +2447,7 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 
 	entry := &types.ServiceCatalogEntry{Name: serviceName}
 	rssKb := int64(1024)
-	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, fakePGID, rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
+	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, fakePGID, rssKb, &rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
 
 	// canRestart should have short-circuited: no restart attempted, PGID unchanged.
 	unchanged, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)

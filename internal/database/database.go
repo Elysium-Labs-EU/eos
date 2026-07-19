@@ -284,7 +284,7 @@ var ErrProcessHistoryNotFound = errors.New("process history not found")
 
 func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, peak_rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE pgid = ?
 	`
@@ -297,6 +297,7 @@ func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types
 		&processHistory.ServiceName,
 		&processHistory.State,
 		&processHistory.RssMemoryKb,
+		&processHistory.PeakRssMemoryKb,
 		&processHistory.CPUPercent,
 		&processHistory.Error,
 		&processHistory.CreatedAt,
@@ -314,7 +315,7 @@ func (db *DB) GetProcessHistoryEntryByPGID(ctx context.Context, pgid int) (types
 
 func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, peak_rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
 	ORDER BY pgid
@@ -334,6 +335,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 			&processHistory.ServiceName,
 			&processHistory.State,
 			&processHistory.RssMemoryKb,
+			&processHistory.PeakRssMemoryKb,
 			&processHistory.CPUPercent,
 			&processHistory.Error,
 			&processHistory.CreatedAt,
@@ -355,7 +357,7 @@ func (db *DB) GetProcessHistoryEntriesByServiceName(ctx context.Context, service
 
 func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error) {
 	query := `
-	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
+	SELECT pgid, started_at_ticks, service_name, state, rss_memory_kb, peak_rss_memory_kb, cpu_percent, error, created_at, started_at, stopped_at, updated_at
 	FROM process_history
 	WHERE service_name = ?
 	ORDER BY started_at DESC NULLS LAST
@@ -368,6 +370,7 @@ func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, servic
 		&entry.ServiceName,
 		&entry.State,
 		&entry.RssMemoryKb,
+		&entry.PeakRssMemoryKb,
 		&entry.CPUPercent,
 		&entry.Error,
 		&entry.CreatedAt,
@@ -455,23 +458,24 @@ func (db *DB) RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (b
 }
 
 type ProcessHistoryUpdate struct {
-	Error       *string
-	RssMemoryKb *int64
-	CPUPercent  *float64
-	StartedAt   *time.Time
-	State       *types.ProcessState
-	StoppedAt   *time.Time
+	Error           *string
+	RssMemoryKb     *int64
+	PeakRssMemoryKb *int64
+	CPUPercent      *float64
+	StartedAt       *time.Time
+	State           *types.ProcessState
+	StoppedAt       *time.Time
 }
 
 var processHistoryValidColumns = map[string]bool{
 	"error": true, "started_at": true, "state": true,
-	"rss_memory_kb": true, "cpu_percent": true, "stopped_at": true, "updated_at": true,
+	"rss_memory_kb": true, "peak_rss_memory_kb": true, "cpu_percent": true, "stopped_at": true, "updated_at": true,
 }
 
 func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error {
-	setParts := make([]string, 0, 7)
-	args := make([]any, 0, 7)
-	requestedColumns := make([]string, 0, 7)
+	setParts := make([]string, 0, 8)
+	args := make([]any, 0, 8)
+	requestedColumns := make([]string, 0, 8)
 
 	if updates.Error != nil {
 		requestedColumns = append(requestedColumns, "error")
@@ -501,6 +505,12 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 		requestedColumns = append(requestedColumns, "rss_memory_kb")
 		setParts = append(setParts, "rss_memory_kb = ?")
 		args = append(args, *updates.RssMemoryKb)
+	}
+
+	if updates.PeakRssMemoryKb != nil {
+		requestedColumns = append(requestedColumns, "peak_rss_memory_kb")
+		setParts = append(setParts, "peak_rss_memory_kb = ?")
+		args = append(args, *updates.PeakRssMemoryKb)
 	}
 
 	if updates.CPUPercent != nil {

@@ -254,7 +254,8 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, errFileLogger 
 // livePGIDInHistory returns the PGID of the first Running or Starting history
 // entry that still has a live OS process, or 0 if none do.
 func livePGIDInHistory(history []types.ProcessHistory) int {
-	for _, p := range history {
+	for i := range history {
+		p := &history[i]
 		if p.State != types.ProcessStateRunning && p.State != types.ProcessStateStarting {
 			continue
 		}
@@ -410,7 +411,8 @@ func captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks int64, err error) 
 // otherwise self-heals stale rows whose processes are gone (Running->Stopped,
 // Starting->Failed) so status displays don't report phantom processes.
 func (m *LocalManager) reconcileStartHistory(name string, processHistory []types.ProcessHistory) error {
-	for _, p := range processHistory {
+	for i := range processHistory {
+		p := &processHistory[i]
 		switch p.State {
 		case types.ProcessStateRunning:
 			if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
@@ -846,7 +848,8 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 	alreadyDead := make(map[int]bool)
 	errored := make(map[int]string)
 
-	for _, p := range processHistory {
+	for i := range processHistory {
+		p := &processHistory[i]
 		processState := p.State
 		processPGID := p.PGID
 
