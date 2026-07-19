@@ -612,17 +612,13 @@ func waitForForkSocket(ctx context.Context, socketPath string) error {
 	return fmt.Errorf("timed out waiting for daemon socket: %s", socketPath)
 }
 
-// forkDaemon starts a new detached daemon process. It first checks that one
-// isn't already running: a fork while a live daemon still holds the PID file
-// spawns a child that fails to bind and exits quietly, which previously looked
-// identical to success (issue #156).
+// forkDaemon starts a new detached daemon process: refuse if one is already
+// running, spawn the child, then confirm it is durably alive before
+// reporting success (issue #156). Each step is a small, independently tested
+// helper so this orchestrator stays a plain three-step sequence.
 func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose bool, identity userutil.Identity) error {
-	status, err := process.StatusStandaloneDaemon(cfg)
-	if err != nil {
-		return fmt.Errorf("checking daemon status: %w", err)
-	}
-	if status.Running {
-		return fmt.Errorf("daemon already running (pid %d)", *status.Pid)
+	if err := ensureDaemonNotRunning(cfg); err != nil {
+		return err
 	}
 
 	exePath, err := os.Executable()
@@ -630,7 +626,33 @@ func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose
 		return fmt.Errorf("can't find executable path: %w", err)
 	}
 
-	cmd, stderrFile, err := buildForkCommand(ctx, exePath, verbose, identity, cfg.PIDFile)
+	if err := spawnForkedDaemon(ctx, exePath, verbose, identity, cfg.PIDFile); err != nil {
+		return err
+	}
+
+	return confirmForkAlive(ctx, cfg)
+}
+
+// ensureDaemonNotRunning errors if a live daemon already holds cfg's PID
+// file. A fork while one is running spawns a child that fails to bind and
+// exits quietly, which previously looked identical to success (issue #156).
+func ensureDaemonNotRunning(cfg *config.StandaloneDaemonConfig) error {
+	status, err := process.StatusStandaloneDaemon(cfg)
+	if err != nil {
+		return fmt.Errorf("checking daemon status: %w", err)
+	}
+	if status.Running {
+		return fmt.Errorf("daemon already running (pid %d)", *status.Pid)
+	}
+	return nil
+}
+
+// spawnForkedDaemon starts the detached daemon child. Once cmd.Start()
+// returns, this process's copy of the child's stderr fd is no longer needed:
+// fork/exec already gave the child its own independent one (see
+// buildForkCommand).
+func spawnForkedDaemon(ctx context.Context, exePath string, verbose bool, identity userutil.Identity, pidFile string) error {
+	cmd, stderrFile, err := buildForkCommand(ctx, exePath, verbose, identity, pidFile)
 	if err != nil {
 		return err
 	}
@@ -638,14 +660,20 @@ func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose
 		_ = stderrFile.Close()
 		return fmt.Errorf("failed to start daemon process: %w", err)
 	}
-	_ = stderrFile.Close() // child holds its own fd from the fork/exec dup; this process doesn't need one
+	_ = stderrFile.Close()
+	return nil
+}
 
-	// Wait for child to write PID file before parent exits.
-	// Required for Type=forking: systemd reads PID file immediately after parent exits.
+// confirmForkAlive waits for the forked child to become durably alive: PID
+// file liveness first (required for Type=forking: systemd reads the PID file
+// immediately after this process exits), then the daemon's socket actually
+// answering — a PID file can exist, and its process still be alive, for a
+// brief window before an unrelated startup failure (e.g. a socket bind
+// error) kills it moments later (issue #156).
+func confirmForkAlive(ctx context.Context, cfg *config.StandaloneDaemonConfig) error {
 	if err := waitForForkPIDFile(cfg.PIDFile); err != nil {
 		return forkStartupErr(err, cfg.PIDFile)
 	}
-
 	if err := waitForForkSocket(ctx, cfg.SocketPath); err != nil {
 		return forkStartupErr(err, cfg.PIDFile)
 	}

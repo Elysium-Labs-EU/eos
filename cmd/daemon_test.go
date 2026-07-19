@@ -461,6 +461,97 @@ func TestForkDaemonAlreadyRunning(t *testing.T) {
 	}
 }
 
+// TestEnsureDaemonNotRunning_NotRunningReturnsNil is the fast-path companion
+// to TestEnsureDaemonNotRunning_AlreadyRunning and
+// TestEnsureDaemonNotRunning_StatusError: no PID file at all must be a no-op.
+func TestEnsureDaemonNotRunning_NotRunningReturnsNil(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &config.StandaloneDaemonConfig{PIDFile: filepath.Join(tempDir, "eos.pid")}
+
+	if err := ensureDaemonNotRunning(cfg); err != nil {
+		t.Errorf("expected nil when no daemon is running, got %v", err)
+	}
+}
+
+// TestEnsureDaemonNotRunning_AlreadyRunning is the unit-level companion to
+// TestForkDaemonAlreadyRunning.
+func TestEnsureDaemonNotRunning_AlreadyRunning(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644); err != nil {
+		t.Fatalf("failed to write pid file: %v", err)
+	}
+
+	err := ensureDaemonNotRunning(&config.StandaloneDaemonConfig{PIDFile: pidFile})
+	if err == nil {
+		t.Fatal("expected error when daemon is already running")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' error, got: %v", err)
+	}
+}
+
+// TestEnsureDaemonNotRunning_StatusError covers the status-check-failed
+// branch: a PID file path that isn't a readable regular file (here, a
+// directory) must surface a wrapped error, not be treated as "not running".
+func TestEnsureDaemonNotRunning_StatusError(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &config.StandaloneDaemonConfig{PIDFile: tempDir} // a directory, not a file
+
+	err := ensureDaemonNotRunning(cfg)
+	if err == nil {
+		t.Fatal("expected error when the pid file path is unreadable")
+	}
+	if !strings.Contains(err.Error(), "checking daemon status") {
+		t.Errorf("expected status-check error wrapper, got: %v", err)
+	}
+}
+
+// TestSpawnForkedDaemon_BuildCommandError covers the buildForkCommand-failure
+// branch: a PID file in a nonexistent directory makes OpenForkStderrLog fail.
+func TestSpawnForkedDaemon_BuildCommandError(t *testing.T) {
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	pidFile := filepath.Join(t.TempDir(), "nonexistent-subdir", "eos.pid")
+	err = spawnForkedDaemon(t.Context(), "/usr/bin/true", false, identity, pidFile)
+	if err == nil {
+		t.Fatal("expected error when the fork stderr log can't be opened")
+	}
+}
+
+// TestSpawnForkedDaemon_StartError covers the cmd.Start()-failure branch: a
+// nonexistent executable path can't be exec'd.
+func TestSpawnForkedDaemon_StartError(t *testing.T) {
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+	nonexistentExe := filepath.Join(tempDir, "nonexistent-eos-binary")
+
+	err = spawnForkedDaemon(t.Context(), nonexistentExe, false, identity, pidFile)
+	if err == nil {
+		t.Fatal("expected error when exePath doesn't exist")
+	}
+	if !strings.Contains(err.Error(), "failed to start daemon process") {
+		t.Errorf("expected start-failure error, got: %v", err)
+	}
+}
+
+// spawnForkedDaemon's happy path (a real Start() that succeeds) is
+// intentionally not unit-tested here: os/exec's ctx-watcher goroutine only
+// exits once its context is done AND the process is Wait()'ed, which
+// spawnForkedDaemon deliberately never does (the daemon must outlive this
+// process) — exercising that path in-process leaks a goroutine that goleak
+// (cmd/main_test.go) flags. It's covered instead by the real-process manual
+// verification in this fix's PR description (build the binary, run
+// `eos daemon start --detach` end to end).
+
 // TestBuildForkCommandStderrIsRealFile covers issue #156 bug 1: the forked
 // child's stderr must be a real *os.File beside the PID file, not an
 // in-process io.Writer. A non-*os.File Stderr makes os/exec create a real OS
@@ -476,7 +567,7 @@ func TestBuildForkCommandStderrIsRealFile(t *testing.T) {
 		t.Fatalf("resolving identity: %v", err)
 	}
 
-	cmd, stderrFile, err := buildForkCommand(t.Context(), "/bin/true", false, identity, pidFile)
+	cmd, stderrFile, err := buildForkCommand(t.Context(), "/usr/bin/true", false, identity, pidFile)
 	if err != nil {
 		t.Fatalf("buildForkCommand should not error: %v", err)
 	}
