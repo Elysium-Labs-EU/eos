@@ -57,6 +57,12 @@ func TestAddCommand(t *testing.T) {
 	if !strings.Contains(output, "success") {
 		t.Errorf("Expected add to show 'success', got: %s", output)
 	}
+	if !strings.Contains(output, "eos run cms") {
+		t.Errorf("Expected add to hint 'eos run cms', got: %s", output)
+	}
+	if strings.Contains(output, "eos start") {
+		t.Errorf("Expected add not to reference removed 'eos start' command, got: %s", output)
+	}
 	isRegistered, err := db.IsServiceRegistered(t.Context(), "cms")
 	if err != nil {
 		t.Errorf("An error occurred during service registration check %s\n", err)

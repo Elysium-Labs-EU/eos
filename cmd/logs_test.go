@@ -109,6 +109,12 @@ func TestLogsNeverRanServiceCommand(t *testing.T) {
 	if !strings.Contains(output, "has never been started") {
 		t.Errorf("Expected 'has never been started', got: %s", output)
 	}
+	if !strings.Contains(output, "eos run cms") {
+		t.Errorf("Expected logs to hint 'eos run cms', got: %s", output)
+	}
+	if strings.Contains(output, "eos start") {
+		t.Errorf("Expected logs not to reference removed 'eos start' command, got: %s", output)
+	}
 }
 
 func TestLogsNonExistingServiceCommand(t *testing.T) {

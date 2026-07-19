@@ -68,7 +68,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(config.Name), "registered")
 			cmd.Printf("  %s %s\n", ui.TextMuted.Render("path:"), absPath)
 			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("config:"), filepath.Base(yamlFile))
-			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos start %s", config.Name)), ui.TextMuted.Render("→ start the service"))
+			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", config.Name)), ui.TextMuted.Render("→ start the service"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 			return nil
 		},
