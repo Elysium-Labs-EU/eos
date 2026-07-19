@@ -37,6 +37,11 @@ var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
+// updateUserAgent is sent on every request to the GitHub release API and asset
+// downloads. The GitHub REST API rejects requests without a User-Agent with a
+// 403, unlike the Gitea/Codeberg API this updater previously targeted.
+const updateUserAgent = "eos-updater"
+
 // supportedPlatforms lists the OS-arch combinations for which eos releases are published.
 // Keep this in sync with the build pipeline.
 var supportedPlatforms = []string{
@@ -1343,6 +1348,8 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set("Accept", "application/vnd.github+json")
 
 	// #nosec G704
 	resp, err := httpClient.Do(req)
@@ -1437,6 +1444,7 @@ func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
@@ -1544,6 +1552,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	if err != nil {
 		return "", fmt.Errorf("building request: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
