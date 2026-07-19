@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/cronutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/cronutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
 

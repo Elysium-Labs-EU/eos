@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 const (
@@ -295,7 +295,7 @@ func (s *sinkProcess) resolveBinary() (string, error) {
 	name := "eos-sink-" + s.sink.Type
 	path, err := exec.LookPath(name)
 	if err != nil {
-		return "", fmt.Errorf("%q not found on PATH; install a sink plugin from https://codeberg.org/Elysium_Labs/eos-plugins", name)
+		return "", fmt.Errorf("%q not found on PATH; install a sink plugin from https://github.com/Elysium-Labs-EU/eos-plugins", name)
 	}
 	return path, nil
 }

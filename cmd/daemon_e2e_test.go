@@ -39,7 +39,7 @@ func buildEosBinary(t *testing.T) string {
 	t.Helper()
 	dir := e2eTempDir(t)
 	binPath := filepath.Join(dir, "eos")
-	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, "codeberg.org/Elysium_Labs/eos").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, "github.com/Elysium-Labs-EU/eos").CombinedOutput()
 	if err != nil {
 		t.Fatalf("build eos binary: %v\n%s", err, out)
 	}

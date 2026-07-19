@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/spf13/cobra"
 )
 

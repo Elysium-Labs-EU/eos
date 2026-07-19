@@ -52,7 +52,7 @@ func EffectiveUser() *User  { if os.Geteuid() == 0 { ... } }  // site B, drifted
 u, err := userutil.EffectiveUser()
 baseDir := filepath.Join(u.HomeDir, ".eos")
 ```
-Real instance: [Elysium_Labs/eos#97](https://codeberg.org/Elysium_Labs/eos/issues/97).
+Real instance: [Elysium_Labs/eos#97](https://github.com/Elysium-Labs-EU/eos/issues/97).
 
 **Explicit composition, not embedding.**
 ```go

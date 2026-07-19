@@ -20,14 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/monitor"
-	"codeberg.org/Elysium_Labs/eos/internal/otelx"
-	"codeberg.org/Elysium_Labs/eos/internal/procutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/monitor"
+	"github.com/Elysium-Labs-EU/eos/internal/otelx"
+	"github.com/Elysium-Labs-EU/eos/internal/procutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 type daemon struct {

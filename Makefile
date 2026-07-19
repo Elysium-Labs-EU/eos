@@ -8,7 +8,7 @@ BENCHMARKS_DIR := __benchmarks__
 ORB_MACHINE ?= debian
 ORB_IP = $(shell orb ip -m $(ORB_MACHINE) 2>/dev/null)
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
-VERSION_PKG := codeberg.org/Elysium_Labs/eos/internal/buildinfo
+VERSION_PKG := github.com/Elysium-Labs-EU/eos/internal/buildinfo
 LDFLAGS := -ldflags "-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).GitCommit=$(COMMIT)' -X '$(VERSION_PKG).BuildDate=$(BUILD_DATE)' -w -s"
 
 BINARY_NAME=eos

@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
-const initSchemaHeader = "# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json\n\n"
+const initSchemaHeader = "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json\n\n"
 
 const initLogSinkHint = "\n# Optional: route logs to a sink plugin.\n# log_sinks:\n#   - type: logbench\n#     options:\n#       project_id: \"your-project-id\"\n"
 

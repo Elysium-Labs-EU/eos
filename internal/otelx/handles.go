@@ -16,7 +16,7 @@ import (
 // instrumentationName identifies eos as the source of every span and metric
 // it emits, per the OTel convention of naming the instrumentation scope
 // after the instrumenting module.
-const instrumentationName = "codeberg.org/Elysium_Labs/eos"
+const instrumentationName = "github.com/Elysium-Labs-EU/eos"
 
 // Handles bundles the tracer and per-service metric instruments the daemon
 // core and service lifecycle record through. Built once at daemon startup

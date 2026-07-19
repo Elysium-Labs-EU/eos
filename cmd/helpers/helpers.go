@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )

@@ -5,7 +5,7 @@
 package main
 
 import (
-	"codeberg.org/Elysium_Labs/eos/cmd"
+	"github.com/Elysium-Labs-EU/eos/cmd"
 )
 
 func main() {

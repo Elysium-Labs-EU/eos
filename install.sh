@@ -11,8 +11,8 @@ readonly DIM='\033[2m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly REPO="Elysium_Labs/eos"
-readonly CODEBERG_URL="https://codeberg.org"
+readonly REPO="Elysium-Labs-EU/eos"
+readonly GITHUB_URL="https://github.com"
 readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
@@ -48,7 +48,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --local <path>    Use a local binary instead of downloading from Codeberg"
+    echo "  --local <path>    Use a local binary instead of downloading from GitHub"
     echo "  --help            Show this help message"
     echo "  --yes, -y         Skip all confirmation prompts (non-interactive mode)"
     echo ""
@@ -460,7 +460,7 @@ main() {
         version="${EOS_VERSION:-}"
         if [ -z "$version" ]; then
             step "Fetching latest version..."
-            version=$(fetch_json_field "${CODEBERG_URL}/api/v1/repos/${REPO}/releases?limit=1" "tag_name" "$download_tool")
+            version=$(fetch_json_field "https://api.github.com/repos/${REPO}/releases?per_page=1" "tag_name" "$download_tool")
             
             if [ -z "$version" ]; then
                 error "Failed to fetch latest version"
@@ -482,7 +482,7 @@ main() {
     if [ -n "$local_binary" ]; then
         echo "  1. Use local binary: ${local_binary}"
     else
-        echo "  1. Download binary from Codeberg"
+        echo "  1. Download binary from GitHub"
     fi
     echo "  2. Install to ${INSTALL_DIR}/${BINARY_NAME}"
     echo "  3. Install SQLite3 (if needed)"
@@ -503,7 +503,7 @@ main() {
         echo ""
         step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
         
-        local download_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/eos-linux-${arch}"
+        local download_url="${GITHUB_URL}/${REPO}/releases/download/${version}/eos-linux-${arch}"
         local tmp_dir
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
         trap 'rm -rf "$tmp_dir"' EXIT
@@ -523,7 +523,7 @@ main() {
         success "Downloaded successfully"
 
         step "Verifying checksum..."
-        local checksums_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/sha256sums.txt"
+        local checksums_url="${GITHUB_URL}/${REPO}/releases/download/${version}/sha256sums.txt"
         local tmp_checksums="${tmp_dir}/${BINARY_NAME}_sha256sums.txt"
 
         if ! download_file "$checksums_url" "$tmp_checksums" "$download_tool"; then

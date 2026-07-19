@@ -1,8 +1,8 @@
 # eos - Service Supervisor
 
-[![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium_Labs/eos)
+[![GitHub](https://img.shields.io/badge/GitHub-eos-blue?logo=github)](https://github.com/Elysium-Labs-EU/eos)
 
-Codeberg is the canonical repository; this GitHub copy is a read-only mirror. Please open issues and PRs on Codeberg.
+GitHub is the canonical repository. The Codeberg copy is a read-only mirror. Please open issues and PRs on GitHub.
 
 ![eos demo](demo/eos-demo.gif)
 
@@ -22,19 +22,19 @@ If you've used PM2 and want something smaller and self-contained, eos covers the
 
 **curl**
 ```bash
-curl -sSL https://codeberg.org/Elysium_Labs/eos/raw/branch/main/install.sh -o install.sh
+curl -sSL https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 **wget**
 ```bash
-wget https://codeberg.org/Elysium_Labs/eos/raw/branch/main/install.sh
+wget https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/install.sh
 sudo bash install.sh
 ```
 
 **From source**
 ```bash
-git clone https://codeberg.org/Elysium_Labs/eos
+git clone https://github.com/Elysium-Labs-EU/eos
 cd eos
 go build -o eos
 ```
@@ -83,7 +83,7 @@ command: "/home/user/start.sh"
 With all options:
 
 ```yaml
-# yaml-language-server: $schema=https://codeberg.org/Elysium_Labs/eos/raw/branch/main/schemas/service.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json
 name: "cms"
 command: "/home/user/start.sh"
 port: 1337
