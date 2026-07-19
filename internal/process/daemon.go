@@ -278,26 +278,61 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	}
 	logger.Debug("database connected")
 
+	tel, err := setupDaemonTelemetry(ctx, telemetryConfig, db, baseDir, logger, startedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &daemon{
+		logger:       logger,
+		db:           db,
+		mgr:          tel.mgr,
+		otelProvider: tel.provider,
+		otelHandles:  tel.handles,
+		listener:     listener,
+		ctx:          ctx,
+		stop:         stop,
+		sigChan:      sigChan,
+		pidFile:      pidFile,
+		socketPath:   socketPath,
+	}, nil
+}
+
+// daemonTelemetry bundles the pieces setupDaemonTelemetry assembles: the
+// OTel provider (real or no-op), the instrument handles built from it, and
+// the LocalManager wired to record through them.
+type daemonTelemetry struct {
+	provider *otelx.Provider
+	handles  *otelx.Handles
+	mgr      *manager.LocalManager
+}
+
+// setupDaemonTelemetry builds the daemon's OTel provider, its instrument
+// handles, the LocalManager wired to them, and registers the daemon-level
+// observable gauges (uptime, services registered/running).
+//
+// Telemetry export is an add-on to process supervision, not a prerequisite
+// for it: a misconfigured collector shouldn't stop the daemon from managing
+// services, so a construction failure on the real provider falls back to the
+// disabled (no-op) one — cfg.Enable false, which otelx.NewProvider never
+// errors on — rather than failing daemon startup.
+func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
 	otelProvider, err := otelx.NewProvider(ctx, otelx.Config{
 		Enable:   telemetryConfig.Enable,
 		Endpoint: telemetryConfig.Endpoint,
 		Insecure: telemetryConfig.Insecure,
 	}, "eos", buildinfo.Version)
 	if err != nil {
-		// Telemetry export is an add-on to process supervision, not a
-		// prerequisite for it: a misconfigured collector shouldn't stop the
-		// daemon from managing services. Fall back to the disabled (no-op)
-		// providers — cfg.Enable false, which NewProvider never errors on.
 		logger.Error("telemetry setup failed, continuing without it", "error", err)
 		otelProvider, err = otelx.NewProvider(ctx, otelx.Config{}, "eos", buildinfo.Version)
 		if err != nil {
-			return nil, fmt.Errorf("failed to set up fallback telemetry provider: %w", err)
+			return daemonTelemetry{}, fmt.Errorf("failed to set up fallback telemetry provider: %w", err)
 		}
 	}
 
 	otelHandles, err := otelx.NewHandles(otelProvider.TracerProvider, otelProvider.MeterProvider)
 	if err != nil {
-		return nil, fmt.Errorf("failed to set up telemetry instruments: %w", err)
+		return daemonTelemetry{}, fmt.Errorf("failed to set up telemetry instruments: %w", err)
 	}
 
 	mgr := manager.NewLocalManager(db, baseDir, ctx, logger, manager.WithTelemetry(otelHandles))
@@ -309,19 +344,7 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 		logger.Error("registering daemon telemetry gauges", "error", regErr)
 	}
 
-	return &daemon{
-		logger:       logger,
-		db:           db,
-		mgr:          mgr,
-		otelProvider: otelProvider,
-		otelHandles:  otelHandles,
-		listener:     listener,
-		ctx:          ctx,
-		stop:         stop,
-		sigChan:      sigChan,
-		pidFile:      pidFile,
-		socketPath:   socketPath,
-	}, nil
+	return daemonTelemetry{provider: otelProvider, handles: otelHandles, mgr: mgr}, nil
 }
 
 // catalogEntriesOrEmpty and serviceInstancesOrEmpty back the daemon-level

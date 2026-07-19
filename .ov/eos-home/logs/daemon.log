@@ -1,3 +1,0 @@
-{"time":"2026-07-19T01:42:58.995182+02:00","level":"INFO","msg":"daemon logger started"}
-{"time":"2026-07-19T01:42:58.995343+02:00","level":"DEBUG","msg":"PID written","path":"/Users/rtuerlings/Coding/elysium-labs/eos/.claude/worktrees/feat-otlp-metrics-traces-138/.ov/eos-home/eos.pid","pid":46849}
-{"time":"2026-07-19T01:42:58.996067+02:00","level":"INFO","msg":"failed to create socket: listen unix /Users/rtuerlings/Coding/elysium-labs/eos/.claude/worktrees/feat-otlp-metrics-traces-138/.ov/eos-home/eos.sock: bind: invalid argument"}

@@ -1,2 +1,0 @@
-name: otel-verify-svc
-command: "sh -c 'while :; do echo tick; sleep 1; done'"
