@@ -151,7 +151,7 @@ log_sinks:
     address: ":9000"
 ```
 
-`type` maps to a binary on PATH named `eos-sink-<type>`. Available plugins (Loki, SSE, Logbench) are maintained at [codeberg.org/Elysium_Labs/eos-plugins](https://codeberg.org/Elysium_Labs/eos-plugins).
+`type` maps to a binary on PATH named `eos-sink-<type>`. Available plugins (Loki, SSE, Logbench) are maintained at [github.com/Elysium-Labs-EU/eos-plugins](https://github.com/Elysium-Labs-EU/eos-plugins).
 
 When multiple services share the same sink, register it once in `~/.eos/config.yaml` and reference it by name instead of repeating the config in every `service.yaml`:
 
