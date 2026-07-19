@@ -12,6 +12,45 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func TestNewDaemonConfigOpenRC(t *testing.T) {
+	logCfg := config.EosLogConfig{}
+
+	t.Run("managed and not under supervisor delegates to OpenRC", func(t *testing.T) {
+		cfg := newDaemonConfigOpenRC(t.TempDir(), true, false, "/etc/init.d/", "eos", logCfg)
+		if cfg.OpenRC == nil {
+			t.Fatal("expected OpenRC config when managed and not under supervisor")
+		}
+		if cfg.Standalone != nil {
+			t.Error("expected Standalone to be nil when delegating to OpenRC")
+		}
+		if cfg.OpenRC.InitDir != "/etc/init.d/" || cfg.OpenRC.InitFileName != "eos" {
+			t.Errorf("unexpected OpenRC config: %+v", cfg.OpenRC)
+		}
+	})
+
+	t.Run("under supervisor runs standalone", func(t *testing.T) {
+		// We ARE the supervised daemon: must run standalone in-process, not loop
+		// back into rc-service.
+		cfg := newDaemonConfigOpenRC(t.TempDir(), true, true, "/etc/init.d/", "eos", logCfg)
+		if cfg.OpenRC != nil {
+			t.Error("expected OpenRC to be nil when running under supervise-daemon")
+		}
+		if cfg.Standalone == nil {
+			t.Fatal("expected Standalone config when under supervise-daemon")
+		}
+	})
+
+	t.Run("not managed runs standalone", func(t *testing.T) {
+		cfg := newDaemonConfigOpenRC(t.TempDir(), false, false, "/etc/init.d/", "eos", logCfg)
+		if cfg.OpenRC != nil {
+			t.Error("expected OpenRC to be nil when no init script is installed")
+		}
+		if cfg.Standalone == nil {
+			t.Fatal("expected Standalone config when not OpenRC-managed")
+		}
+	})
+}
+
 func TestNewManagerLocalMode(t *testing.T) {
 	_, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
