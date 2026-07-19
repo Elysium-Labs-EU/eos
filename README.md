@@ -2,6 +2,8 @@
 
 [![Codeberg](https://img.shields.io/badge/Codeberg-eos-blue?logo=codeberg)](https://codeberg.org/Elysium_Labs/eos)
 
+Codeberg is the canonical repository; this GitHub copy is a read-only mirror. Please open issues and PRs on Codeberg.
+
 ![eos demo](demo/eos-demo.gif)
 
 Lightweight service supervisor for your VPS. Register services, start them, keep them running.
