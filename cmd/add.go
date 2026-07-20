@@ -60,6 +60,11 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", config.Name)), ui.TextMuted.Render("first to re-register"))
 				return helpers.ErrCommandFailed
 			}
+			if errors.Is(err, manager.ErrServiceNameCaseConflict) {
+				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(config.Name), "collides with an existing service that differs only in letter case")
+				cmd.PrintErrf("  %s\n\n", ui.TextMuted.Render("their log files would share one file on case-insensitive filesystems; pick a distinct name"))
+				return helpers.ErrCommandFailed
+			}
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("registering service: %v", err))
 				return helpers.ErrCommandFailed
