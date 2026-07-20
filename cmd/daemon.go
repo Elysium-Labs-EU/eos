@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -829,10 +830,38 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 		}
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
+	if version, err := systemdDaemonRunningVersion(cmd.Context(), userUnit); err == nil {
+		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
+	}
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
 	cmd.Println()
+}
+
+// systemdDaemonRunningVersion resolves the version string embedded in the binary
+// actually backing the running systemd-managed daemon process, by following
+// /proc/<pid>/exe rather than trusting the currently installed binary — the two
+// differ exactly when the unit hasn't been restarted since an update replaced the
+// binary on disk (the same drift StaleBinary detects for standalone daemons).
+func systemdDaemonRunningVersion(ctx context.Context, userUnit bool) (string, error) {
+	pidOut, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(userUnit, "show", "-p", "MainPID", "--value", "eos")...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	if err != nil {
+		return "", fmt.Errorf("querying systemd for daemon pid: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || pid <= 0 {
+		return "", errors.New("daemon is not running")
+	}
+	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return "", fmt.Errorf("resolving daemon binary: %w", err)
+	}
+	out, err := exec.CommandContext(ctx, exePath, "--version").Output() // #nosec G204 -- exePath resolved from the daemon's own /proc/<pid>/exe, not external input
+	if err != nil {
+		return "", fmt.Errorf("running %s --version: %w", exePath, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func printLaunchdDaemonDetails(cmd *cobra.Command, userAgent bool) {
