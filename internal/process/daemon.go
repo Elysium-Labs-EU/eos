@@ -215,6 +215,28 @@ func reclaimStalePIDFile(pidFile string, logger *slog.Logger) error {
 	return nil
 }
 
+// maxUnixSocketPathLen is the size of the kernel's sockaddr_un.sun_path field on
+// this platform (104 bytes on macOS/Darwin, 108 on Linux). A bound socket path
+// must fit within this field including a trailing NUL, so the usable path length
+// is one byte less.
+const maxUnixSocketPathLen = len(syscall.RawSockaddrUnix{}.Path)
+
+// validateSocketPathLength returns an actionable error when socketPath is too
+// long to bind as a Unix domain socket on this platform. bind(2) rejects an
+// over-long path with EINVAL, which otherwise surfaces only as a cryptic
+// "bind: invalid argument" with no hint that the path length is the cause.
+func validateSocketPathLength(socketPath string) error {
+	maxLen := maxUnixSocketPathLen - 1 // leave room for the trailing NUL
+	if len(socketPath) > maxLen {
+		return fmt.Errorf(
+			"socket path %q is %d bytes, exceeding the %d-byte maximum for a Unix domain socket on %s; "+
+				"set EOS_BASE_DIR to a shorter directory (the socket path is EOS_BASE_DIR + %q)",
+			socketPath, len(socketPath), maxLen, runtime.GOOS,
+			string(os.PathSeparator)+config.DaemonSocketPath)
+	}
+	return nil
+}
+
 // removeExistingSocket clears a leftover unix socket file so Listen can rebind.
 func removeExistingSocket(socketPath string, logger *slog.Logger) error {
 	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
@@ -238,6 +260,14 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	logger.Info("daemon logger started")
 	pidFile := standaloneDaemonConfig.PIDFile
 	socketPath := standaloneDaemonConfig.SocketPath
+
+	// Validate the socket path length before writing the pidfile or binding the
+	// socket, so an over-long EOS_BASE_DIR yields a clear error instead of a
+	// cryptic "bind: invalid argument" and leaves no stale pidfile behind.
+	if socketPathErr := validateSocketPathLength(socketPath); socketPathErr != nil {
+		logger.Info(socketPathErr.Error())
+		return nil, socketPathErr
+	}
 
 	if reclaimErr := reclaimStalePIDFile(pidFile, logger); reclaimErr != nil {
 		return nil, reclaimErr
