@@ -69,7 +69,13 @@ type DaemonLogConfig struct {
 type SystemdConfig struct {
 	SystemdTargetDir      string `json:"systemd_target_dir" yaml:"systemdTargetDir"`
 	SystemdTargetFileName string `json:"systemd_target_file_name" yaml:"systemdTargetFileName"`
-	UserUnit              bool   `json:"user_unit" yaml:"userUnit"`
+	// SocketPath is the Unix socket the systemd-managed daemon listens on for
+	// THIS base dir (baseDir/eos.sock). A systemd unit supervises exactly one
+	// base dir, so probing this socket is the only base-dir-scoped liveness
+	// signal; `systemctl is-active eos` is host-global and says nothing about
+	// which EOS_BASE_DIR the active unit serves (issue #12).
+	SocketPath string `json:"socket_path" yaml:"socketPath"`
+	UserUnit   bool   `json:"user_unit" yaml:"userUnit"`
 }
 
 // LaunchdConfig mirrors SystemdConfig for macOS: UserAgent plays the same role as
