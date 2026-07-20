@@ -209,6 +209,7 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, s
 			Systemd: &config.SystemdConfig{
 				SystemdTargetDir:      systemdDir,
 				SystemdTargetFileName: config.SystemdTargetFileName,
+				SocketPath:            filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
 				UserUnit:              userUnit,
 			},
 		}
