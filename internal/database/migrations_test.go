@@ -2,6 +2,7 @@ package database_test
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,46 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 )
+
+// TestMigrationsVersionAhead verifies the downgrade/rollback recovery path:
+// when the state database records a schema version newer than the highest
+// migration embedded in this binary, RunMigrations must return the distinct,
+// actionable ErrSchemaVersionAhead instead of the raw golang-migrate
+// "no migration found for version N" error. See issue #11.
+func TestMigrationsVersionAhead(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	db, rawDBConn, err := database.NewTestDB(t.Context(), dbPath, database.MigrationsFS, database.MigrationsPath)
+	if err != nil {
+		t.Fatalf("Unable to create test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.CloseDBConnection() })
+
+	// Bring the DB up to the latest known version first.
+	if migrationsErr := db.RunMigrations(database.MigrationsFS, database.MigrationsPath); migrationsErr != nil {
+		t.Fatalf("Failed to run up migrations: %v", migrationsErr)
+	}
+
+	latest := getExpectedVersion(t, database.MigrationsPath)
+
+	// Simulate a newer eos having migrated this DB, then a rollback to this
+	// (older) binary: force the recorded version past what we know about.
+	ahead := latest + 1
+	if _, execErr := rawDBConn.Exec(`UPDATE schema_migrations SET version = ?, dirty = 0`, ahead); execErr != nil {
+		t.Fatalf("Failed to bump schema version ahead: %v", execErr)
+	}
+
+	err = db.RunMigrations(database.MigrationsFS, database.MigrationsPath)
+	if err == nil {
+		t.Fatalf("Expected RunMigrations to fail when DB version %d exceeds latest %d, got nil", ahead, latest)
+	}
+	if !errors.Is(err, database.ErrSchemaVersionAhead) {
+		t.Fatalf("Expected ErrSchemaVersionAhead, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "no migration found for version") {
+		t.Errorf("Error should not leak the raw golang-migrate message, got: %v", err)
+	}
+}
 
 func TestMigrations(t *testing.T) {
 	tempDir := t.TempDir()

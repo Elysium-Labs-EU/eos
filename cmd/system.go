@@ -354,9 +354,18 @@ type unitData struct {
 }
 
 func renderUnitFile(installDir string, user string, userUnit bool) (string, error) {
+	// StartLimitIntervalSec/StartLimitBurst bound the crash-loop: without them,
+	// a persistent startup failure (e.g. a state database whose schema version
+	// is ahead of this binary after a rollback) restarts forever because the
+	// systemd default burst of 5 within a 10s window never trips at one restart
+	// every RestartSec=5s. Widening the window to 60s lets 5 restarts land
+	// inside it, so systemd gives up and enters "failed" instead of looping
+	// indefinitely. This mirrors OpenRC's supervise-daemon --respawn-max 5.
 	const systemUnitTemplate = `[Unit]
 Description=eos deployment daemon
 After=network.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -371,6 +380,8 @@ WantedBy=multi-user.target`
 	const userUnitTemplate = `[Unit]
 Description=eos deployment daemon
 After=network.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
