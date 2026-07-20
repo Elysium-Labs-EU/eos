@@ -126,7 +126,14 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 				continue
 			}
 
-			if procutil.IsAlive(hist.PGID) {
+			// Only kill a PGID we can positively confirm is still the same
+			// process eos recorded. IsAlive alone is unsafe: the kernel
+			// recycles PGID numbers, so a live PGID may now belong to an
+			// unrelated process. IsAliveMatching also compares the recorded
+			// start time, ruling out that collision. A non-positive
+			// StartedAtTicks means we never captured a verifiable start time,
+			// so treat it as not-ours and never kill on an unverifiable match.
+			if hist.StartedAtTicks > 0 && procutil.IsAliveMatching(hist.PGID, hist.StartedAtTicks) {
 				if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
 					logger.Info("reconcile orphans: kill PGID", "service", entry.Name, "pgid", hist.PGID, "error", killErr)
 				}
@@ -134,11 +141,16 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 				continue
 			}
 
+			// Reached here either because the PGID is gone, or because it's
+			// alive but its start time no longer matches — a recycled PGID
+			// belonging to some other process. In both cases our recorded
+			// process is dead, so reconcile a still-live-looking row to
+			// Stopped without sending any signal to a PGID that isn't ours.
 			switch hist.State {
 			case types.ProcessStateRunning, types.ProcessStateStarting, types.ProcessStateUnknown:
 				reconcileMarkStopped(ctx, db, logger, entry.Name, hist.PGID)
 			case types.ProcessStateStopped, types.ProcessStateFailed:
-				// already terminal and confirmed dead above — no-op
+				// already terminal and our process confirmed dead — no-op
 			}
 		}
 	}
