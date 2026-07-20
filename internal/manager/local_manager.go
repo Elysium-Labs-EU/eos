@@ -87,6 +87,19 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 		return ErrServiceAlreadyRegistered
 	}
 
+	// Reject a name that collides case-insensitively with an existing service.
+	// Log filenames are derived verbatim from the service name, so names like
+	// "Foo" and "foo" alias onto one log file on case-insensitive filesystems
+	// (macOS APFS), silently intermingling the two services' output. Distinct
+	// catalog identities must map to distinct log files. See issue #10.
+	existing, conflict, err := m.db.FindServiceNameCaseInsensitive(m.ctx, newServiceCatalogEntry.Name)
+	if err != nil {
+		return fmt.Errorf("check service name case collision: %w", err)
+	}
+	if conflict {
+		return fmt.Errorf("%w: %q conflicts with registered service %q", ErrServiceNameCaseConflict, newServiceCatalogEntry.Name, existing)
+	}
+
 	err = m.db.RegisterService(m.ctx, newServiceCatalogEntry.Name, newServiceCatalogEntry.DirectoryPath, newServiceCatalogEntry.ConfigFileName)
 	if err != nil {
 		return fmt.Errorf("failed to register service: %w", err)
