@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1109,5 +1110,119 @@ func TestRestartService_notRegistered(t *testing.T) {
 	_, err := manager.RestartService("no-such-service", time.Second, 50*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected error restarting an unregistered service")
+	}
+}
+
+// TestStartServiceConcurrentStartsSpawnOnce is the regression test for issue #1:
+// concurrent StartService calls for the same service used to race the
+// read-decide-act sequence (no per-service lock), each independently spawning a
+// live process group while only the last one stayed tracked — leaking the rest.
+// With the per-service mutex, exactly one call must win and start a process; the
+// rest must observe the winner's live instance and return ErrAlreadyRunning
+// without spawning anything. The invariant asserted here: across all concurrent
+// callers there is exactly one live process group, and it is the tracked one.
+func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	// A long-lived command so every winning start leaves a group alive long
+	// enough for the liveness assertions below.
+	testFile := &types.ServiceConfig{
+		Name:    "sleeper",
+		Command: "sleep 30",
+		Runtime: types.Runtime{Type: "nodejs"},
+	}
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	const concurrency = 8
+	var wg sync.WaitGroup
+	pgids := make([]int, concurrency)
+	errs := make([]error, concurrency)
+	start := make(chan struct{})
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			<-start // release all goroutines at once to maximize contention
+			pgids[idx], errs[idx] = manager.StartService("test-service")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// Guarantee no started group survives the test regardless of assertions.
+	t.Cleanup(func() {
+		for _, pgid := range pgids {
+			if pgid > 0 {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			}
+		}
+		manager.WaitPipes()
+	})
+
+	// Exactly one caller must succeed; the rest must be ErrAlreadyRunning.
+	successes := 0
+	var winnerPGID int
+	for i := 0; i < concurrency; i++ {
+		switch {
+		case errs[i] == nil:
+			successes++
+			winnerPGID = pgids[i]
+			if pgids[i] == 0 {
+				t.Errorf("successful start returned a zero PGID")
+			}
+		case errors.Is(errs[i], ErrAlreadyRunning):
+			if pgids[i] != 0 {
+				t.Errorf("ErrAlreadyRunning caller should not report a PGID, got %d", pgids[i])
+			}
+		default:
+			t.Errorf("unexpected error from concurrent StartService: %v", errs[i])
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly 1 successful concurrent start, got %d", successes)
+	}
+
+	// Exactly one live process group must exist across every reported PGID, and
+	// it must be the winner — i.e. no untracked group leaked.
+	liveCount := 0
+	for i := 0; i < concurrency; i++ {
+		if pgids[i] > 0 && procutil.IsAlive(pgids[i]) {
+			liveCount++
+			if pgids[i] != winnerPGID {
+				t.Errorf("found a live PGID %d that is not the tracked winner %d (leaked process)", pgids[i], winnerPGID)
+			}
+		}
+	}
+	if liveCount != 1 {
+		t.Fatalf("expected exactly 1 live process group, got %d", liveCount)
+	}
+
+	// The tracked instance in the DB must point at the single live winner.
+	instance, err := manager.GetServiceInstance("test-service")
+	if err != nil {
+		t.Fatalf("GetServiceInstance after concurrent starts: %v", err)
+	}
+	if instance == nil {
+		t.Fatal("expected a tracked service instance after concurrent starts")
 	}
 }

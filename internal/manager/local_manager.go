@@ -29,14 +29,42 @@ type LocalManager struct {
 	logger       *slog.Logger
 	sinkRegistry map[string]types.LogSink
 	telemetry    *otelx.Handles
-	baseDir      string
-	pipeWg       sync.WaitGroup
+	// serviceLocks holds one mutex per service name. It serializes the
+	// read-decide-act start/stop/restart sequence so concurrent `eos run`
+	// invocations for the same service can't each independently read state and
+	// spawn a competing process group (see issue #1). serviceLocksMu guards the
+	// map itself; the per-service mutex guards a single service's lifecycle.
+	serviceLocks   map[string]*sync.Mutex
+	baseDir        string
+	pipeWg         sync.WaitGroup
+	serviceLocksMu sync.Mutex
 }
 
 // WaitPipes blocks until all pipe-forwarding goroutines have exited.
 // Call this in test cleanup after stopping services to avoid goroutine leaks.
 func (m *LocalManager) WaitPipes() {
 	m.pipeWg.Wait()
+}
+
+// lockService acquires the per-service lifecycle mutex for name, creating it on
+// first use, and returns its unlock function. All of StartService,
+// RestartService, StopService, and ForceStopService take this lock so a
+// service's read-decide-act start/stop sequence runs to completion before a
+// concurrent invocation for the same service begins. This is what prevents
+// competing `eos run <name>` calls from each spawning an untracked process
+// group: the loser observes the winner's live instance and no-ops with
+// ErrAlreadyRunning instead of starting its own.
+func (m *LocalManager) lockService(name string) func() {
+	m.serviceLocksMu.Lock()
+	mu, ok := m.serviceLocks[name]
+	if !ok {
+		mu = &sync.Mutex{}
+		m.serviceLocks[name] = mu
+	}
+	m.serviceLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 type LocalManagerOption func(*LocalManager)
@@ -71,7 +99,7 @@ func WithTelemetry(h *otelx.Handles) LocalManagerOption {
 }
 
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
-	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles()}
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex)}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -552,6 +580,9 @@ func (m *LocalManager) recordRestartedInstance(service types.ServiceCatalogEntry
 }
 
 func (m *LocalManager) StartService(name string) (pgid int, err error) {
+	unlock := m.lockService(name)
+	defer unlock()
+
 	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.start", name)
 	defer func() {
 		otelx.End(span, err)
@@ -623,6 +654,9 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 }
 
 func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
+	unlock := m.lockService(name)
+	defer unlock()
+
 	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.restart", name)
 	defer func() {
 		otelx.End(span, err)
@@ -660,7 +694,10 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, binaryErr
 	}
 
-	stopResult, err := m.StopService(name, gracePeriod, tickerPeriod)
+	// Call the unlocked stop core directly: this goroutine already holds the
+	// per-service lock, and the mutex is not reentrant, so m.StopService (which
+	// re-acquires it) would deadlock.
+	stopResult, err := m.stopServiceLocked(name, gracePeriod, tickerPeriod)
 	if err != nil {
 		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
@@ -751,6 +788,16 @@ func (m *LocalManager) waitForPendingStops(name string, pending map[int]bool, er
 }
 
 func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (result StopServiceResult, err error) {
+	unlock := m.lockService(name)
+	defer unlock()
+	return m.stopServiceLocked(name, gracePeriod, tickerPeriod)
+}
+
+// stopServiceLocked is the stop core. The caller must already hold the
+// per-service lock (via lockService); StopService acquires it, and
+// RestartService calls this directly because it holds the lock for the whole
+// stop-then-start sequence.
+func (m *LocalManager) stopServiceLocked(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (result StopServiceResult, err error) {
 	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.stop", name)
 	defer func() {
 		otelx.End(span, err)
@@ -823,6 +870,9 @@ func isProcessAlive(pgid int) bool {
 }
 
 func (m *LocalManager) ForceStopService(name string) (result StopServiceResult, err error) {
+	unlock := m.lockService(name)
+	defer unlock()
+
 	_, span := m.telemetry.StartSpan(m.ctx, "eos.service.force_stop", name)
 	defer func() {
 		otelx.End(span, err)
