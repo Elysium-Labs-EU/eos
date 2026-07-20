@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/types"
@@ -65,7 +66,50 @@ func NewDB(ctx context.Context, baseDir string) (*DB, error) {
 		return nil, fmt.Errorf("database is in a dirty state: manual intervention required")
 	}
 
+	if err := alignDataFileOwnership(baseDir, dbPath); err != nil {
+		return nil, err
+	}
+
 	return db, nil
+}
+
+// alignDataFileOwnership makes state.db and its WAL/SHM sidecar files owned by
+// the same user that owns baseDir. Under sudo (euid 0) the sqlite driver creates
+// these files as root even though config.CreateBaseDir already chowned the base
+// directory to the invoking user; that mismatch leaves the DB unwritable to the
+// later User=<invoker> systemd daemon and any unprivileged CLI, surfacing as
+// SQLite "attempt to write a readonly database (8)" (see issue #14).
+//
+// The invoking user is derived from baseDir's owner rather than re-resolving the
+// sudo identity, so the whole base dir stays internally consistent and installs
+// created before this fix self-heal on the next root invocation. It is a no-op
+// when not running as root (the common non-sudo path) or on non-POSIX systems.
+func alignDataFileOwnership(baseDir, dbPath string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+
+	info, err := os.Stat(baseDir)
+	if err != nil {
+		return fmt.Errorf("stat base dir for ownership: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	uid, gid := int(stat.Uid), int(stat.Gid)
+
+	// WAL/SHM sidecars are created alongside state.db in WAL mode; chown them too
+	// so the daemon owns every file backing the database, not just the main file.
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if chownErr := os.Chown(path, uid, gid); chownErr != nil {
+			if os.IsNotExist(chownErr) {
+				continue
+			}
+			return fmt.Errorf("chown %s to uid %d gid %d: %w", path, uid, gid, chownErr)
+		}
+	}
+	return nil
 }
 
 func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, testMigrationsPath string) (*DB, *sql.DB, error) {
