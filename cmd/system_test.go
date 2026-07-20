@@ -188,6 +188,29 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	}
 }
 
+func TestRenderUnitFile_CapsCrashLoop(t *testing.T) {
+	// A version-ahead / rollback state database makes eos fail on every start.
+	// The generated unit must bound the restart burst so systemd eventually
+	// enters "failed" instead of looping forever. See issue #11.
+	for _, userUnit := range []bool{false, true} {
+		name := "system"
+		if userUnit {
+			name = "user"
+		}
+		t.Run(name, func(t *testing.T) {
+			unit, err := renderUnitFile("/usr/local/bin", "eos", userUnit)
+			if err != nil {
+				t.Fatalf("renderUnitFile returned error: %v", err)
+			}
+			for _, want := range []string{"StartLimitIntervalSec=60s", "StartLimitBurst=5", "Restart=always"} {
+				if !strings.Contains(unit, want) {
+					t.Errorf("expected unit to contain %q, got:\n%s", want, unit)
+				}
+			}
+		})
+	}
+}
+
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
