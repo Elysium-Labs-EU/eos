@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -514,6 +515,7 @@ func TestPrintSystemdDaemonDetails(t *testing.T) {
 		cmd := newTestRootCmd(nil)
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
+		cmd.SetContext(context.Background())
 
 		printSystemdDaemonDetails(cmd, userUnit)
 
@@ -560,6 +562,7 @@ func TestPrintSystemdDaemonDetails_WarnsWhenXDGRuntimeDirUnset(t *testing.T) {
 	cmd := newTestRootCmd(nil)
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
+	cmd.SetContext(context.Background())
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
 	printSystemdDaemonDetails(cmd, true)
@@ -600,6 +603,7 @@ func TestPrintSystemdDaemonDetails_NoWarningWhenXDGRuntimeDirAccessible(t *testi
 	cmd := newTestRootCmd(nil)
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
+	cmd.SetContext(context.Background())
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 
 	printSystemdDaemonDetails(cmd, true)

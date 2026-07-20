@@ -1163,7 +1163,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	errs := make([]error, concurrency)
 	start := make(chan struct{})
 	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		go func(idx int) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
@@ -1186,7 +1186,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	// Exactly one caller must succeed; the rest must be ErrAlreadyRunning.
 	successes := 0
 	var winnerPGID int
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		switch {
 		case errs[i] == nil:
 			successes++
@@ -1209,7 +1209,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	// Exactly one live process group must exist across every reported PGID, and
 	// it must be the winner — i.e. no untracked group leaked.
 	liveCount := 0
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		if pgids[i] > 0 && procutil.IsAlive(pgids[i]) {
 			liveCount++
 			if pgids[i] != winnerPGID {
