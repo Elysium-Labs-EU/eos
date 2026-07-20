@@ -52,8 +52,8 @@ const updateUserAgent = "eos-updater"
 // .github/workflows/release.yml (or build-and-release.yml) to sign at
 // release time — it is never checked into this repo.
 const releaseSigningPublicKeyPEM = `-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErOKaH8CMbhupu5eGKnlJIgsNPznf
-Q1RriMaj3XZbeF3fB1UO2IimuJ0OD3K9qScljrA1zTIxz37KoYSYFKZ6OQ==
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEByucQHF5ASSSrPSu6Gb5fvAuWdMw
+BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
 -----END PUBLIC KEY-----
 `
 
