@@ -16,7 +16,7 @@ func TestNewDaemonConfigOpenRC(t *testing.T) {
 	logCfg := config.EosLogConfig{}
 
 	t.Run("managed and not under supervisor delegates to OpenRC", func(t *testing.T) {
-		cfg := newDaemonConfigOpenRC(t.TempDir(), true, false, "/etc/init.d/", "eos", logCfg)
+		cfg := newDaemonConfigOpenRC(t.TempDir(), true, false, "/etc/init.d/", logCfg)
 		if cfg.OpenRC == nil {
 			t.Fatal("expected OpenRC config when managed and not under supervisor")
 		}
@@ -31,7 +31,7 @@ func TestNewDaemonConfigOpenRC(t *testing.T) {
 	t.Run("under supervisor runs standalone", func(t *testing.T) {
 		// We ARE the supervised daemon: must run standalone in-process, not loop
 		// back into rc-service.
-		cfg := newDaemonConfigOpenRC(t.TempDir(), true, true, "/etc/init.d/", "eos", logCfg)
+		cfg := newDaemonConfigOpenRC(t.TempDir(), true, true, "/etc/init.d/", logCfg)
 		if cfg.OpenRC != nil {
 			t.Error("expected OpenRC to be nil when running under supervise-daemon")
 		}
@@ -41,7 +41,7 @@ func TestNewDaemonConfigOpenRC(t *testing.T) {
 	})
 
 	t.Run("not managed runs standalone", func(t *testing.T) {
-		cfg := newDaemonConfigOpenRC(t.TempDir(), false, false, "/etc/init.d/", "eos", logCfg)
+		cfg := newDaemonConfigOpenRC(t.TempDir(), false, false, "/etc/init.d/", logCfg)
 		if cfg.OpenRC != nil {
 			t.Error("expected OpenRC to be nil when no init script is installed")
 		}

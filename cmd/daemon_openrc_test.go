@@ -15,9 +15,9 @@ import (
 // recordingRun captures the last rc-service invocation so tests can assert on the
 // exact command eos delegates to, and returns a scripted result.
 type recordingRun struct {
+	err    error
 	calls  [][]string
 	out    []byte
-	err    error
 	called bool
 }
 

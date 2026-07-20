@@ -342,7 +342,7 @@ func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 // openrcDaemonController is the OpenRC analog of systemdDaemonController. It
 // delegates the daemon lifecycle to rc-service so eos honors — rather than
 // fights — the supervise-daemon that OpenRC's init script installs (issue #13):
-// signalling the daemon PID directly only makes supervise-daemon respawn it
+// signaling the daemon PID directly only makes supervise-daemon respawn it
 // within respawn_delay, so a direct-signal "stop" reports a false success while
 // the daemon comes right back. Only "rc-service eos stop" actually stops it.
 //
@@ -350,9 +350,9 @@ func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 // tails the daemon's own rotated log file (see tailDaemonLogFile). The run field
 // is injectable so tests can drive Start/Stop without a real rc-service.
 type openrcDaemonController struct {
+	run     runCmdFn
 	cfg     config.OpenRCConfig
 	baseDir string
-	run     runCmdFn
 }
 
 // unit returns the OpenRC service name (the init script's file name).

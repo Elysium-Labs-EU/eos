@@ -245,12 +245,12 @@ func newDaemonConfigLaunchd(baseDir string, isLaunchdManaged bool, underLaunchd 
 // OpenRC's supervise-daemon (underOpenRC) we ARE the daemon process, so run
 // standalone in the foreground; only delegate to rc-service when a human calls
 // "eos daemon start/stop" from outside the supervisor.
-func newDaemonConfigOpenRC(baseDir string, isOpenRCManaged bool, underOpenRC bool, initDir, initFile string, logCfg config.EosLogConfig) config.DaemonConfig {
+func newDaemonConfigOpenRC(baseDir string, isOpenRCManaged bool, underOpenRC bool, initDir string, logCfg config.EosLogConfig) config.DaemonConfig {
 	if isOpenRCManaged && !underOpenRC {
 		return config.DaemonConfig{
 			OpenRC: &config.OpenRCConfig{
 				InitDir:      initDir,
-				InitFileName: initFile,
+				InitFileName: config.OpenRCTargetFileName,
 			},
 		}
 	}
@@ -279,7 +279,7 @@ func resolveLinuxDaemonConfig(baseDir string, logCfg config.EosLogConfig) (confi
 		return config.DaemonConfig{}, fmt.Errorf("resolving OpenRC scope: %w", openrcErr)
 	}
 	if isOpenRCManaged {
-		return newDaemonConfigOpenRC(baseDir, true, config.IsUnderOpenRC(), initDir, config.OpenRCTargetFileName, logCfg), nil
+		return newDaemonConfigOpenRC(baseDir, true, config.IsUnderOpenRC(), initDir, logCfg), nil
 	}
 
 	return newDaemonConfig(baseDir, false, config.IsUnderSystemd(), systemdDir, userUnit, logCfg), nil
