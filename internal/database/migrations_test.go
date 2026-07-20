@@ -35,8 +35,8 @@ func TestMigrationsVersionAhead(t *testing.T) {
 	// Simulate a newer eos having migrated this DB, then a rollback to this
 	// (older) binary: force the recorded version past what we know about.
 	ahead := latest + 1
-	if _, err := rawDBConn.Exec(`UPDATE schema_migrations SET version = ?, dirty = 0`, ahead); err != nil {
-		t.Fatalf("Failed to bump schema version ahead: %v", err)
+	if _, execErr := rawDBConn.Exec(`UPDATE schema_migrations SET version = ?, dirty = 0`, ahead); execErr != nil {
+		t.Fatalf("Failed to bump schema version ahead: %v", execErr)
 	}
 
 	err = db.RunMigrations(database.MigrationsFS, database.MigrationsPath)
