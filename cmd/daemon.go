@@ -339,6 +339,72 @@ func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool
 	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
 }
 
+// openrcDaemonController is the OpenRC analog of systemdDaemonController. It
+// delegates the daemon lifecycle to rc-service so eos honors — rather than
+// fights — the supervise-daemon that OpenRC's init script installs (issue #13):
+// signaling the daemon PID directly only makes supervise-daemon respawn it
+// within respawn_delay, so a direct-signal "stop" reports a false success while
+// the daemon comes right back. Only "rc-service eos stop" actually stops it.
+//
+// Like launchd, OpenRC has no unified journal to delegate log reads to, so Logs
+// tails the daemon's own rotated log file (see tailDaemonLogFile). The run field
+// is injectable so tests can drive Start/Stop without a real rc-service.
+type openrcDaemonController struct {
+	run     runCmdFn
+	cfg     config.OpenRCConfig
+	baseDir string
+}
+
+// unit returns the OpenRC service name (the init script's file name).
+func (c openrcDaemonController) unit() string {
+	if c.cfg.InitFileName != "" {
+		return c.cfg.InitFileName
+	}
+	return config.OpenRCTargetFileName
+}
+
+func (c openrcDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
+	if os.Getuid() != 0 {
+		return errors.New("requires root — run with sudo")
+	}
+	out, err := c.run(ctx, "rc-service", c.unit(), "start")
+	if err != nil {
+		return fmt.Errorf("starting OpenRC service: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c openrcDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
+	if os.Getuid() != 0 {
+		return false, errors.New("requires root — run with sudo")
+	}
+	unit := c.unit()
+	helpers.Debugf(cmd, verbose, "running: rc-service %s stop", unit)
+	out, err := c.run(ctx, "rc-service", unit, "stop")
+	if err != nil {
+		helpers.Debugf(cmd, verbose, "rc-service exited with error: %s", strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("stopping OpenRC service: %s", strings.TrimSpace(string(out)))
+	}
+	helpers.Debugf(cmd, verbose, "rc-service stop succeeded")
+	return true, nil
+}
+
+func (c openrcDaemonController) Remove() error {
+	return os.Remove(filepath.Join(c.cfg.InitDir, c.unit()))
+}
+
+func (c openrcDaemonController) Info(cmd *cobra.Command) {
+	printOpenRCDaemonDetails(cmd)
+}
+
+func (c openrcDaemonController) LogsHint() string {
+	return "eos daemon logs"
+}
+
+func (c openrcDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
+	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
+}
+
 func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config.HealthConfig, shutdown config.ShutdownConfig, telemetry config.TelemetryConfig, underSystemd bool, identity userutil.Identity) (DaemonController, error) {
 	if cfg.Standalone != nil {
 		return &standaloneDaemonController{
@@ -357,7 +423,10 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 	if cfg.Launchd != nil {
 		return launchdDaemonController{cfg: *cfg.Launchd, baseDir: baseDir}, nil
 	}
-	return nil, errors.New("invalid daemon config: standalone, systemd, and launchd are all nil")
+	if cfg.OpenRC != nil {
+		return openrcDaemonController{cfg: *cfg.OpenRC, baseDir: baseDir, run: execRunCmd}, nil
+	}
+	return nil, errors.New("invalid daemon config: standalone, systemd, launchd, and openrc are all nil")
 }
 
 // buildDaemonSubcmds attaches all daemon subcommands to daemonCmd.
@@ -370,6 +439,7 @@ func buildDaemonSubcmds(daemonCmd *cobra.Command, getCtrl func() DaemonControlle
 		Long: `Launch the deployment daemon.
 
 If a systemd unit file is installed, delegates to "systemctl start eos" (requires root).
+If an OpenRC init script is installed, delegates to "rc-service eos start" (requires root).
 
 Otherwise, starts the daemon detached in the background by default; control returns once the PID file is written (timeout: 5s). --detach (-d) is accepted for backward compatibility but is now a no-op. Pass --foreground (-f) to run in the foreground and stream output to the console instead — Ctrl-C will then stop the daemon.`,
 		SilenceUsage:  true,
@@ -423,7 +493,7 @@ Otherwise, starts the daemon detached in the background by default; control retu
 	stopCmd := &cobra.Command{
 		Use:           "stop",
 		Short:         "Stop the running daemon",
-		Long:          "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
+		Long:          "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root); if managed by OpenRC, delegates to rc-service stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -774,6 +844,14 @@ func printLaunchdDaemonDetails(cmd *cobra.Command, userAgent bool) {
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(fmt.Sprintf("daemon is launchd managed (%s)", scope)))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check launchd service status") + "\n")
+	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → tail daemon log file") + "\n")
+	cmd.Println()
+}
+
+func printOpenRCDaemonDetails(cmd *cobra.Command) {
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is OpenRC managed"))
+	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("rc-service eos status") + ui.TextMuted.Render(" → check OpenRC service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → tail daemon log file") + "\n")
 	cmd.Println()
