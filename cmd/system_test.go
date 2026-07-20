@@ -3,6 +3,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -1508,4 +1511,113 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 			t.Errorf("expected temp dir removed, stat err = %v", statErr)
 		}
 	})
+}
+
+func TestParseReleaseSigningPublicKey(t *testing.T) {
+	pub, err := parseReleaseSigningPublicKey()
+	if err != nil {
+		t.Fatalf("parseReleaseSigningPublicKey: %v", err)
+	}
+	if pub.Curve != elliptic.P256() {
+		t.Errorf("public key curve = %v, want P-256", pub.Curve)
+	}
+}
+
+// generateTestSigningKey returns a throwaway ECDSA P-256 key for signing
+// test fixtures — never the embedded production key, which has no private
+// half checked into this repo.
+func generateTestSigningKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating test signing key: %v", err)
+	}
+	return key
+}
+
+func TestVerifySignature(t *testing.T) {
+	key := generateTestSigningKey(t)
+	data := []byte("eos release checksums fixture")
+
+	digest := sha256.Sum256(data)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatalf("signing fixture: %v", err)
+	}
+
+	if err := verifySignature(&key.PublicKey, data, sig); err != nil {
+		t.Errorf("verifySignature with a valid signature: %v", err)
+	}
+
+	if err := verifySignature(&key.PublicKey, []byte("tampered data"), sig); err == nil {
+		t.Error("expected an error when the signed data doesn't match")
+	}
+
+	otherKey := generateTestSigningKey(t)
+	if err := verifySignature(&otherKey.PublicKey, data, sig); err == nil {
+		t.Error("expected an error when the signature was made by a different key")
+	}
+
+	if err := verifySignature(&key.PublicKey, data, []byte("not a signature")); err == nil {
+		t.Error("expected an error for a malformed signature")
+	}
+}
+
+func TestVerifyChecksumsSignatureRejectsForgedSignature(t *testing.T) {
+	// verifyChecksumsSignature always checks against the embedded production
+	// public key, so a signature not produced by its (deliberately absent)
+	// private key must be rejected regardless of content.
+	if err := verifyChecksumsSignature([]byte("sha256sums.txt contents"), []byte("forged signature bytes")); err == nil {
+		t.Error("expected an error for a signature not made by the production key")
+	}
+}
+
+func TestVerifyReleaseSignatureMissingAssetWarnsAndContinues(t *testing.T) {
+	useHTTPTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "sha256sums.txt") {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+	})
+
+	cmd, outBuf, _ := makeTestCmd(t)
+	result := UpdateResult{
+		LatestVersion:  "v1.0.0",
+		ChecksumsAsset: &Asset{Name: "sha256sums.txt", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"},
+		// SignatureAsset intentionally nil.
+	}
+
+	if err := verifyReleaseSignature(t.Context(), cmd, result); err != nil {
+		t.Fatalf("verifyReleaseSignature: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "has no signature") {
+		t.Errorf("output = %q, want a no-signature warning", outBuf.String())
+	}
+}
+
+func TestVerifyReleaseSignaturePresentButInvalidFails(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "sha256sums.txt.sig"):
+			_, _ = w.Write([]byte("not a real signature"))
+		case strings.HasSuffix(r.URL.Path, "sha256sums.txt"):
+			_, _ = w.Write([]byte("checksums"))
+		default:
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+	})
+
+	cmd, _, _ := makeTestCmd(t)
+	result := UpdateResult{
+		LatestVersion:  "v1.0.0",
+		ChecksumsAsset: &Asset{Name: "sha256sums.txt", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"},
+		SignatureAsset: &Asset{Name: "sha256sums.txt.sig", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt.sig"},
+	}
+
+	err := verifyReleaseSignature(t.Context(), cmd, result)
+	if err == nil {
+		t.Fatal("expected an error for an invalid signature")
+	}
+	if !strings.Contains(err.Error(), "signature verification failed") {
+		t.Errorf("error = %v, want a signature-verification-failed message", err)
+	}
 }
