@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
@@ -30,27 +29,29 @@ func warnIfDaemonDown(cmd *cobra.Command) {
 }
 
 // daemonIsDown reports whether the daemon is confirmed offline for the two
-// supervisors eos drives directly: systemd (authoritative "is-active" check) and
-// standalone (Unix-socket ping). Every other case — launchd, or no daemon
-// configured — is treated as "not confirmed down" so a banner never fires on an
-// ambiguous signal.
+// supervisors eos drives directly: systemd and standalone. Both are probed by
+// pinging the Unix socket under the ACTIVE base dir (baseDir/eos.sock), because
+// that is the only signal scoped to the EOS_BASE_DIR this CLI actually targets.
+// Every other case — launchd, or no daemon configured — is treated as "not
+// confirmed down" so a banner never fires on an ambiguous signal.
+//
+// For systemd this deliberately does NOT use `systemctl is-active eos`: that
+// check is host-global and reports "active" whenever ANY eos unit runs, even one
+// supervising a different base dir. It would wrongly suppress the daemon-down
+// warning for an alternate EOS_BASE_DIR whose daemon is not actually running,
+// leaving a service pinned in 'starting' with no supervision (issue #12). A
+// systemd unit serves exactly one base dir and listens on that base dir's socket,
+// so the socket probe gives systemd the same per-base-dir isolation standalone
+// already has.
 func daemonIsDown(ctx context.Context, daemon *config.DaemonConfig) bool {
 	switch {
 	case daemon.Systemd != nil:
-		return !systemdUnitActive(ctx, daemon.Systemd.UserUnit)
+		return !socketResponds(ctx, daemon.Systemd.SocketPath)
 	case daemon.Standalone != nil:
 		return !socketResponds(ctx, daemon.Standalone.SocketPath)
 	default:
 		return false
 	}
-}
-
-// systemdUnitActive shells out to `systemctl is-active eos`, reusing the same
-// systemctlArgs plumbing as the daemon controller. Only a literal "active"
-// counts as live; "inactive", "failed", missing systemctl, etc. all read as down.
-func systemdUnitActive(ctx context.Context, userUnit bool) bool {
-	out, _ := execRunCmd(ctx, "systemctl", systemctlArgs(userUnit, "is-active", "eos")...)
-	return strings.TrimSpace(string(out)) == "active"
 }
 
 // socketResponds reports whether the daemon's Unix socket accepts a connection.

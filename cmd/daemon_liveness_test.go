@@ -60,8 +60,11 @@ func TestWarnDaemonDownBeforeStart_SystemdDownWarns(t *testing.T) {
 	cmd.SetErr(&errBuf)
 	cmd.SetContext(t.Context())
 
-	// No active eos systemd unit in the test env -> confirmed down -> warns.
-	warnDaemonDownBeforeStart(cmd, &config.DaemonConfig{Systemd: &config.SystemdConfig{}})
+	// No socket for this base dir -> the systemd daemon is not serving it ->
+	// confirmed down -> warns.
+	warnDaemonDownBeforeStart(cmd, &config.DaemonConfig{Systemd: &config.SystemdConfig{
+		SocketPath: filepath.Join(shortTempSocketDir(t), "eos.sock"),
+	}})
 
 	if !strings.Contains(errBuf.String(), "eos daemon start") {
 		t.Errorf("expected start warning for a down systemd unit, got: %q", errBuf.String())
@@ -143,11 +146,49 @@ func TestDaemonIsDown_StandaloneSocket(t *testing.T) {
 }
 
 func TestDaemonIsDown_SystemdInactive(t *testing.T) {
-	// No active eos systemd unit exists in the test environment (and on macOS
-	// systemctl is absent), so is-active never returns "active" -> down.
-	daemon := &config.DaemonConfig{Systemd: &config.SystemdConfig{}}
+	// No daemon is listening on this base dir's socket, so the systemd-managed
+	// daemon is not serving it -> down.
+	daemon := &config.DaemonConfig{Systemd: &config.SystemdConfig{
+		SocketPath: filepath.Join(shortTempSocketDir(t), "eos.sock"),
+	}}
 	if !daemonIsDown(t.Context(), daemon) {
-		t.Error("expected daemonIsDown=true for an inactive/absent systemd eos unit")
+		t.Error("expected daemonIsDown=true when nothing is listening on this base dir's socket")
+	}
+}
+
+// TestDaemonIsDown_SystemdScopedToBaseDir is the regression test for issue #12:
+// liveness in systemd mode must key off the socket under the ACTIVE base dir, not
+// a host-global `systemctl is-active`. An active daemon on a DIFFERENT base dir
+// (its own socket) must NOT make this base dir read as up.
+func TestDaemonIsDown_SystemdScopedToBaseDir(t *testing.T) {
+	// Daemon A is live on its own base dir socket (simulating the default-base-dir
+	// systemd unit that `systemctl is-active eos` would report as "active").
+	dirA := shortTempSocketDir(t)
+	sockA := filepath.Join(dirA, "eos.sock")
+	lnA, err := net.Listen("unix", sockA)
+	if err != nil {
+		t.Fatalf("net.Listen unix A: %v", err)
+	}
+	defer func() { _ = lnA.Close() }()
+
+	// This CLI targets base dir B, whose socket has no listener.
+	dirB := shortTempSocketDir(t)
+	sockB := filepath.Join(dirB, "eos.sock")
+
+	daemonB := &config.DaemonConfig{Systemd: &config.SystemdConfig{SocketPath: sockB}}
+	if !daemonIsDown(t.Context(), daemonB) {
+		t.Error("expected daemonIsDown=true for base dir B: an active daemon on base dir A must not mask B's down daemon")
+	}
+
+	// Bring base dir B's own daemon up: now it correctly reads as live.
+	lnB, err := net.Listen("unix", sockB)
+	if err != nil {
+		t.Fatalf("net.Listen unix B: %v", err)
+	}
+	defer func() { _ = lnB.Close() }()
+
+	if daemonIsDown(t.Context(), daemonB) {
+		t.Error("expected daemonIsDown=false once base dir B's own socket accepts connections")
 	}
 }
 
