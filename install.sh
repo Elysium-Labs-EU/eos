@@ -17,6 +17,15 @@ readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
 
+# ECDSA P-256 public key (SubjectPublicKeyInfo, PEM) used to verify the
+# detached signature over each release's sha256sums.txt. Keep in sync with
+# releaseSigningPublicKeyPEM in cmd/system.go — the matching private key
+# lives only as the RELEASE_SIGNING_KEY secret in GitHub Actions.
+readonly RELEASE_SIGNING_PUBKEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErOKaH8CMbhupu5eGKnlJIgsNPznf
+Q1RriMaj3XZbeF3fB1UO2IimuJ0OD3K9qScljrA1zTIxz37KoYSYFKZ6OQ==
+-----END PUBLIC KEY-----'
+
 AUTO_YES=false
 
 # Print functions
@@ -551,8 +560,38 @@ main() {
             exit 1
         fi
 
-        rm -f "$tmp_checksums"
         success "Checksum verified"
+
+        step "Verifying release signature..."
+        local sig_url="${GITHUB_URL}/${REPO}/releases/download/${version}/sha256sums.txt.sig"
+        local tmp_sig="${tmp_dir}/${BINARY_NAME}_sha256sums.txt.sig"
+
+        if download_file "$sig_url" "$tmp_sig" "$download_tool" && [ -s "$tmp_sig" ]; then
+            if ! command -v openssl &> /dev/null; then
+                error "sha256sums.txt.sig is present but openssl is not installed — cannot verify it"
+                dim "  Install openssl or use --local with a binary you've verified yourself"
+                rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
+                exit 1
+            fi
+
+            local tmp_pubkey="${tmp_dir}/release-signing-pubkey.pem"
+            printf '%s\n' "$RELEASE_SIGNING_PUBKEY" > "$tmp_pubkey"
+
+            if openssl dgst -sha256 -verify "$tmp_pubkey" -signature "$tmp_sig" "$tmp_checksums" &> /dev/null; then
+                success "Signature verified"
+            else
+                error "Signature verification failed — refusing to install (release may be tampered)"
+                rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig" "$tmp_pubkey"
+                exit 1
+            fi
+        else
+            # Soft-fail: releases published before signing was introduced have
+            # no sha256sums.txt.sig. Keep in sync with requireReleaseSignature
+            # in cmd/system.go — once that flips to true, this should too.
+            warn "Release has no sha256sums.txt.sig — checksum-only integrity (release predates signing)"
+        fi
+
+        rm -f "$tmp_checksums"
     fi
     
     # Stop running daemon before overwriting binary
