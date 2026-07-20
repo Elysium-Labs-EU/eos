@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -452,6 +453,7 @@ func TestPrintSystemdDaemonDetails(t *testing.T) {
 		cmd := newTestRootCmd(nil)
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
+		cmd.SetContext(context.Background())
 
 		printSystemdDaemonDetails(cmd, userUnit)
 
