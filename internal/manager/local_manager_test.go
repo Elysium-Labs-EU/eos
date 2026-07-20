@@ -105,6 +105,54 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 
 }
 
+// TestAddServiceCaseInsensitiveCollision guards against issue #10: two service
+// names differing only in letter case are distinct catalog rows but their log
+// filenames (derived verbatim from the name) alias onto one file on
+// case-insensitive filesystems (macOS APFS), silently intermingling their
+// output. Registration must reject the second, case-colliding name so distinct
+// catalog identities never share a log file. A plain single-case name must
+// still register.
+func TestAddServiceCaseInsensitiveCollision(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	first, err := NewServiceCatalogEntry("Foo", "./wA", "service.yaml")
+	if err != nil {
+		t.Fatalf("creating first catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(first); err != nil {
+		t.Fatalf("adding first service should not error: %v", err)
+	}
+
+	// Same letters, different case: must be rejected as a case collision.
+	collide, err := NewServiceCatalogEntry("foo", "./wB", "service.yaml")
+	if err != nil {
+		t.Fatalf("creating colliding catalog entry should not error: %v", err)
+	}
+	err = manager.AddServiceCatalogEntry(collide)
+	if !errors.Is(err, ErrServiceNameCaseConflict) {
+		t.Fatalf("expected ErrServiceNameCaseConflict adding case-colliding name, got: %v", err)
+	}
+
+	// The colliding service must NOT have been registered.
+	services, err := manager.GetAllServiceCatalogEntries()
+	if err != nil {
+		t.Fatalf("listing services should not error: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected only the first service registered, got %d", len(services))
+	}
+
+	// A distinct single-case name must still register fine.
+	other, err := NewServiceCatalogEntry("bar", "./wC", "service.yaml")
+	if err != nil {
+		t.Fatalf("creating unrelated catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(other); err != nil {
+		t.Fatalf("adding a distinct single-case service should not error: %v", err)
+	}
+}
+
 func TestGetService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))

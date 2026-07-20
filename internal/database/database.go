@@ -28,6 +28,7 @@ type Database interface {
 	GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error)
 	GetServiceCatalogEntry(ctx context.Context, name string) (types.ServiceCatalogEntry, error)
 	IsServiceRegistered(ctx context.Context, name string) (bool, error)
+	FindServiceNameCaseInsensitive(ctx context.Context, name string) (string, bool, error)
 	RegisterService(ctx context.Context, name string, directoryPath string, configFileName string) error
 	RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error)
 	UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error
@@ -401,6 +402,31 @@ func (db *DB) IsServiceRegistered(ctx context.Context, name string) (bool, error
 	} else {
 		return count > 0, nil
 	}
+}
+
+// FindServiceNameCaseInsensitive returns the stored name of an already
+// registered service whose name equals the given name ignoring letter case,
+// if any. Log filenames are derived verbatim from the service name, so two
+// names differing only in case alias onto a single log file on
+// case-insensitive filesystems (macOS APFS); registration uses this to reject
+// such collisions before they corrupt logs. See GitHub issue #10.
+func (db *DB) FindServiceNameCaseInsensitive(ctx context.Context, name string) (string, bool, error) {
+	query := `
+	SELECT name
+	FROM service_catalog
+	WHERE name = ? COLLATE NOCASE
+	LIMIT 1
+	`
+
+	var existing string
+	err := db.conn.QueryRowContext(ctx, query, name).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("could not check for case-insensitive service name collision: %w", err)
+	}
+	return existing, true, nil
 }
 
 func (db *DB) RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error) {
