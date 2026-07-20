@@ -3,9 +3,12 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +44,131 @@ var httpClient = &http.Client{
 // downloads. The GitHub REST API rejects requests without a User-Agent with a
 // 403, unlike the Gitea/Codeberg API this updater previously targeted.
 const updateUserAgent = "eos-updater"
+
+// releaseSigningPublicKeyPEM is the ECDSA P-256 public key (SubjectPublicKeyInfo,
+// PEM) used to verify the detached signature over each release's
+// sha256sums.txt. The matching private key lives only as the
+// RELEASE_SIGNING_KEY secret in GitHub Actions and is used by
+// .github/workflows/release.yml (or build-and-release.yml) to sign at
+// release time — it is never checked into this repo.
+const releaseSigningPublicKeyPEM = `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErOKaH8CMbhupu5eGKnlJIgsNPznf
+Q1RriMaj3XZbeF3fB1UO2IimuJ0OD3K9qScljrA1zTIxz37KoYSYFKZ6OQ==
+-----END PUBLIC KEY-----
+`
+
+// requireReleaseSignature gates whether a release with no sha256sums.txt.sig
+// asset is refused outright rather than merely warned about. Keep this false
+// until the RELEASE_SIGNING_KEY secret is provisioned in GitHub Actions and
+// the first signed release has shipped — flipping it before then would make
+// every existing release refuse to install. Once a signed release exists,
+// flip to true so an unsigned or signature-stripped release can no longer be
+// installed silently.
+const requireReleaseSignature = false
+
+// parseReleaseSigningPublicKey decodes the embedded release signing public
+// key. Pure — no I/O.
+func parseReleaseSigningPublicKey() (*ecdsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(releaseSigningPublicKeyPEM))
+	if block == nil {
+		return nil, fmt.Errorf("decoding embedded release signing public key: no PEM block found")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedded release signing public key: %w", err)
+	}
+	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("embedded release signing public key is %T, want ECDSA", pub)
+	}
+	return ecdsaPub, nil
+}
+
+// verifySignature checks sig — an ASN.1 DER ECDSA signature, as produced by
+// `openssl dgst -sha256 -sign` — against the SHA-256 digest of data, using
+// pub. Pure — no I/O.
+func verifySignature(pub *ecdsa.PublicKey, data, sig []byte) error {
+	digest := sha256.Sum256(data)
+	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+		return fmt.Errorf("signature does not match")
+	}
+	return nil
+}
+
+// verifyChecksumsSignature checks sig against checksumsData using the
+// embedded release signing public key. Pure — no I/O.
+func verifyChecksumsSignature(checksumsData, sig []byte) error {
+	pub, err := parseReleaseSigningPublicKey()
+	if err != nil {
+		return err
+	}
+	if err := verifySignature(pub, checksumsData, sig); err != nil {
+		return fmt.Errorf("signature does not match sha256sums.txt")
+	}
+	return nil
+}
+
+// fetchChecksumsFile downloads the full raw bytes of the release's
+// sha256sums.txt, for signature verification over the whole file (as opposed
+// to fetchChecksumForBinary, which only extracts one binary's hash line).
+func fetchChecksumsFile(ctx context.Context, checksumsAsset *Asset) ([]byte, error) {
+	if checksumsAsset == nil {
+		return nil, fmt.Errorf("no sha256sums.txt asset in release")
+	}
+	resp, err := fetchAssetResponse(ctx, checksumsAsset)
+	if err != nil {
+		return nil, fmt.Errorf("fetching sha256sums.txt: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading sha256sums.txt: %w", err)
+	}
+	return data, nil
+}
+
+// verifyReleaseSignature fetches result's sha256sums.txt and
+// sha256sums.txt.sig and verifies the signature, writing a status line to
+// cmd either way.
+//
+// A release with no signature asset is only a hard error once
+// requireReleaseSignature is true (see its doc comment for the rollout
+// plan); until then it's a warning, since sha256 checksum verification
+// (downloadAndVerifyBinary) already runs independently of this. A signature
+// asset that fails to verify is always a hard error — that's a stronger
+// integrity signal than "no signature was ever published", so it's never
+// soft-failed.
+func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result UpdateResult) error {
+	checksumsData, err := fetchChecksumsFile(ctx, result.ChecksumsAsset)
+	if err != nil {
+		return err
+	}
+
+	if result.SignatureAsset == nil {
+		if requireReleaseSignature {
+			return fmt.Errorf("release %s has no sha256sums.txt.sig", result.LatestVersion)
+		}
+		cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("release %s has no signature (sha256sums.txt.sig) — checksum-only integrity", result.LatestVersion))
+		return nil
+	}
+
+	resp, err := fetchAssetResponse(ctx, result.SignatureAsset)
+	if err != nil {
+		return fmt.Errorf("fetching signature: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
+	sigData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading signature: %w", err)
+	}
+
+	if verifyErr := verifyChecksumsSignature(checksumsData, sigData); verifyErr != nil {
+		return fmt.Errorf("signature verification failed for %s: %w — refusing to install", result.LatestVersion, verifyErr)
+	}
+	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), "signature verified")
+	return nil
+}
 
 // supportedPlatforms lists the OS-arch combinations for which eos releases are published.
 // Keep this in sync with the build pipeline.
@@ -1227,6 +1355,13 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "checksums match")
+
+	if err := verifyReleaseSignature(ctx, cmd, result); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), err.Error())
+		cleanupTempDir(cmd, tempDir)
+		return nil, "", helpers.ErrCommandFailed
+	}
+
 	return binary, tempDir, nil
 }
 
@@ -1414,6 +1549,7 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 type UpdateResult struct {
 	Asset          *Asset
 	ChecksumsAsset *Asset
+	SignatureAsset *Asset
 	LatestVersion  string
 }
 
@@ -1426,6 +1562,7 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 
 	var usableAsset *Asset
 	var checksumsAsset *Asset
+	var signatureAsset *Asset
 	for i, asset := range release.Assets {
 		if strings.Contains(asset.Name, arch) && strings.Contains(asset.Name, os) {
 			usableAsset = &release.Assets[i]
@@ -1433,13 +1570,16 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 		if asset.Name == "sha256sums.txt" {
 			checksumsAsset = &release.Assets[i]
 		}
+		if asset.Name == "sha256sums.txt.sig" {
+			signatureAsset = &release.Assets[i]
+		}
 	}
 
 	if usableAsset == nil {
 		return UpdateResult{}, fmt.Errorf("no usable asset found")
 	}
 
-	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, LatestVersion: latest}, nil
+	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, SignatureAsset: signatureAsset, LatestVersion: latest}, nil
 }
 
 // fetchAssetResponse validates the asset URL (https + github.com), issues the

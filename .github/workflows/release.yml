@@ -144,6 +144,24 @@ jobs:
           sha256sum eos-linux-* > sha256sums.txt
           cat sha256sums.txt
 
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          cd release
+          if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
+            echo "RELEASE_SIGNING_KEY secret is not set — skipping release signing."
+            echo "Clients only warn on a missing signature right now (see requireReleaseSignature"
+            echo "in cmd/system.go), but that's meant to flip to a hard failure once this secret"
+            echo "is provisioned and a signed release has shipped. Provision it before then."
+            exit 0
+          fi
+          key_file=$(mktemp)
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key_file"
+          openssl dgst -sha256 -sign "$key_file" -out sha256sums.txt.sig sha256sums.txt
+          echo "Signed sha256sums.txt -> sha256sums.txt.sig"
+
       - name: Get version
         id: version
         run: |
@@ -170,7 +188,7 @@ jobs:
           files: |
             release/eos-linux-amd64
             release/eos-linux-arm64
-            release/sha256sums.txt
+            release/sha256sums.txt*
           draft: false
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
           generate_release_notes: true
