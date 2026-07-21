@@ -415,10 +415,16 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	versionCmd := &cobra.Command{
 		Use:     "version",
 		Short:   "Get version of system",
-		Long:    `Print the current eos version, git commit hash, and build date.`,
+		Long:    `Print the current eos version, git commit hash, and build date. Also flags version drift against the running daemon and the latest published release, and suggests the fix.`,
 		Example: `  eos system version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.Println(buildinfo.Get())
+
+			// Version drift is a bonus, not worth failing the command over: if the
+			// config can't be resolved, just skip the drift check.
+			if _, _, systemConfig, _, err := newSystemConfig(); err == nil {
+				printVersionDrift(cmd, systemConfig.Daemon)
+			}
 			return nil
 		},
 	}
@@ -468,6 +474,159 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 	if config.Telemetry.Enable {
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
 		cmd.Printf("  %s %v\n", ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
+	}
+}
+
+// resolveDaemonVersion queries the version of the actual running daemon
+// process, dispatching to the supervisor-specific strategy.
+func resolveDaemonVersion(ctx context.Context, daemon config.DaemonConfig) (string, error) {
+	switch {
+	case daemon.Standalone != nil:
+		return resolveStandaloneDaemonVersion(ctx, daemon.Standalone)
+	case daemon.Systemd != nil:
+		return resolveSystemdDaemonVersion(ctx, daemon.Systemd)
+	default:
+		return "", errors.New("daemon version check not supported for this supervisor")
+	}
+}
+
+// resolveStandaloneDaemonVersion checks liveness first rather than going
+// straight through manager.NewDaemonManager, which auto-starts a standalone
+// daemon that isn't running — a version check has no business spinning one up.
+func resolveStandaloneDaemonVersion(ctx context.Context, cfg *config.StandaloneDaemonConfig) (string, error) {
+	status, err := process.StatusStandaloneDaemon(cfg)
+	if err != nil {
+		return "", fmt.Errorf("checking daemon status: %w", err)
+	}
+	if !status.Running {
+		return "", errors.New("daemon not running")
+	}
+
+	dm, err := manager.NewDaemonManager(ctx, cfg.SocketPath, cfg.PIDFile, cfg.SocketTimeout, false)
+	if err != nil {
+		return "", fmt.Errorf("connecting to daemon: %w", err)
+	}
+	version, err := dm.GetVersion()
+	if err != nil {
+		return "", fmt.Errorf("querying daemon version: %w", err)
+	}
+	return version.Version, nil
+}
+
+// resolveSystemdDaemonVersion handles the case systemd-managed daemons aren't
+// reachable through the IPC socket path above (see newManager in root.go: a
+// systemd-managed DaemonConfig always resolves to a local in-process manager,
+// never DaemonManager) by instead following /proc/<pid>/exe to the actual
+// running binary and asking it directly — the same drift
+// systemdDaemonRunningVersion already reports in 'eos daemon info'.
+func resolveSystemdDaemonVersion(ctx context.Context, cfg *config.SystemdConfig) (string, error) {
+	full, err := systemdDaemonRunningVersion(ctx, cfg.UserUnit)
+	if err != nil {
+		return "", err
+	}
+	return firstVersionToken(full)
+}
+
+// firstVersionToken extracts the version number from buildinfo.Get()'s
+// "vX.Y.Z (commit: ..., built: ...)" format. Pure — no I/O.
+func firstVersionToken(full string) (string, error) {
+	fields := strings.Fields(full)
+	if len(fields) == 0 {
+		return "", errors.New("empty version output")
+	}
+	return fields[0], nil
+}
+
+// resolveLatestVersion fetches the latest published release tag. It returns
+// ("", nil) when the current version is already latest or ahead — an empty
+// string signals "nothing to report", distinct from a lookup failure.
+func resolveLatestVersion(ctx context.Context, currentVersion string) (string, error) {
+	if currentVersion == "dev" {
+		return "", errors.New("dev build: no release to compare against")
+	}
+	release, err := fetchLatestRelease(ctx, false)
+	if err != nil {
+		return "", err
+	}
+	if semver.Compare(currentVersion, release.TagName) >= 0 {
+		return "", nil
+	}
+	return release.TagName, nil
+}
+
+// versionDriftInfo is the pure comparison data printVersionDrift renders —
+// split out from the printing so the "what counts as drift, what to print"
+// branching can be table-tested without a cobra.Command or network access.
+type versionDriftInfo struct {
+	cliVersion    string
+	daemonVersion string
+	latestVersion string // "" when no newer release was found
+	daemonKnown   bool
+}
+
+// gatherVersionDrift runs both lookups. Each is best-effort: an unreachable
+// daemon or an offline GitHub check are normal states, not failures worth
+// surfacing, so a failed lookup just leaves its field at its zero value.
+func gatherVersionDrift(ctx context.Context, daemon config.DaemonConfig) versionDriftInfo {
+	cliVersion := buildinfo.GetVersionOnly()
+	info := versionDriftInfo{cliVersion: cliVersion}
+
+	if daemonVersion, err := resolveDaemonVersion(ctx, daemon); err == nil {
+		info.daemonVersion = daemonVersion
+		info.daemonKnown = true
+	}
+	if latestVersion, err := resolveLatestVersion(ctx, cliVersion); err == nil {
+		info.latestVersion = latestVersion
+	}
+	return info
+}
+
+func (v versionDriftInfo) daemonDrift() bool {
+	return v.daemonKnown && v.daemonVersion != v.cliVersion
+}
+
+func (v versionDriftInfo) latestDrift() bool {
+	return v.latestVersion != ""
+}
+
+// versionDriftLines renders the drift diff and its suggested fix as one line
+// per element (nil when nothing diverges) — pure, so it's table-tested
+// directly instead of through cmd output.
+func versionDriftLines(v versionDriftInfo) []string {
+	if !v.daemonDrift() && !v.latestDrift() {
+		return nil
+	}
+
+	lines := []string{
+		"",
+		ui.TextBold.Render("Version drift detected"),
+		"",
+		fmt.Sprintf("  %s %s", ui.TextMuted.Render("CLI:"), v.cliVersion),
+	}
+	if v.daemonKnown {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("Daemon:"), v.daemonVersion))
+	}
+	if v.latestDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("Latest:"), v.latestVersion))
+	}
+	lines = append(lines, "")
+
+	if v.latestDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system update")))
+	}
+	if v.daemonDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("note:"), "the running daemon won't pick up a binary update until it's restarted (eos daemon stop && eos daemon start); as root, 'eos system update' only restarts the invoking user's daemon, so other users' daemons stay stale"))
+	}
+	lines = append(lines, "")
+	return lines
+}
+
+// printVersionDrift compares the CLI's own version against the running
+// daemon's and the latest published release, printing a diff and the fix only
+// when they actually disagree.
+func printVersionDrift(cmd *cobra.Command, daemon config.DaemonConfig) {
+	for _, line := range versionDriftLines(gatherVersionDrift(cmd.Context(), daemon)) {
+		cmd.Println(line)
 	}
 }
 
