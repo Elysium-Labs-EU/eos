@@ -1,11 +1,16 @@
 package otelx
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
@@ -50,4 +55,23 @@ func TestNewProvider_EnabledBuildsSDKProvidersWithoutBlocking(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = p.Shutdown(ctx) // best-effort flush against a dead collector; an error is fine, hanging past ctx is not
+}
+
+// TestSetErrorHandler_RoutesToLogger guards the fix for a fork-stderr.log
+// growing without bound: without this, the OTel SDK's default error handler
+// logs every failed export straight to os.Stderr instead of the daemon's
+// rotating logger.
+func TestSetErrorHandler_RoutesToLogger(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	SetErrorHandler(logger)
+
+	wantErr := errors.New("context deadline exceeded: rpc error: code = DeadlineExceeded")
+	otel.Handle(wantErr)
+
+	got := buf.String()
+	if !strings.Contains(got, wantErr.Error()) {
+		t.Errorf("logger output = %q, want it to contain %q", got, wantErr.Error())
+	}
 }

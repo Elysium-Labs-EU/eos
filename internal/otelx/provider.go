@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -45,6 +47,24 @@ type Provider struct {
 // Provider it is a no-op.
 func (p *Provider) Shutdown(ctx context.Context) error {
 	return p.shutdown(ctx)
+}
+
+// SetErrorHandler routes the OpenTelemetry SDK's internal error handler
+// (failed exports, invalid instrument registration, etc.) through logger
+// instead of the SDK default, which logs straight to os.Stderr via the
+// standard "log" package. On the daemon, stderr is wired to a real file for
+// the process's entire lifetime (see manager.OpenForkStderrLog) with no
+// rotation, so every failed export against an unreachable collector (a
+// routine, recurring condition) would otherwise grow that file without
+// bound for as long as the daemon runs. logger already writes through the
+// daemon's size/count-capped rotating log, so this call must happen once at
+// daemon startup, before any exporter can fail. It is a no-op change to a
+// package-level SDK global; safe to call regardless of whether telemetry
+// export is enabled.
+func SetErrorHandler(logger *slog.Logger) {
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		logger.Error("otel error", "error", err)
+	}))
 }
 
 // NewProvider builds the daemon's telemetry providers. With cfg.Enable
