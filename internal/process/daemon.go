@@ -359,6 +359,8 @@ type daemonTelemetry struct {
 // disabled (no-op) one — cfg.Enable false, which otelx.NewProvider never
 // errors on — rather than failing daemon startup.
 func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
+	otelx.SetErrorHandler(logger)
+
 	otelProvider, err := otelx.NewProvider(ctx, otelx.Config{
 		Enable:   telemetryConfig.Enable,
 		Endpoint: telemetryConfig.Endpoint,
