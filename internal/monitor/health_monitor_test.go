@@ -3,6 +3,7 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/otelx"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
@@ -1162,13 +1164,19 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 	}
 }
 
-func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
+// TestHealthMonitor_CheckFailedProcess_RetriesIndefinitely proves issue #30's
+// fix: a service that keeps failing must keep retrying forever at the
+// backoff-capped interval, never hitting a permanent cliff (there is no
+// restart-count cap anymore; only the exponential backoff paces attempts).
+// It runs well past what used to be the default cap (10) and expects every
+// single iteration to still restart.
+func TestHealthMonitor_CheckFailedProcess_RetriesIndefinitely(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	healthConfig := newTestHealthConfig(t, WithBackoff(1, 5))
 	shutdownConfig := newTestShutdownConfig(t)
 
-	maxRestartCount := healthConfig.MaxRestart
+	const iterations = 15 // more than the old default cap of 10
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -1258,7 +1266,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		t.Fatalf("Failed to create service log files: %v", err)
 	}
 
-	for i := 0; i <= maxRestartCount+1; i++ {
+	for i := range iterations {
 		processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 		if err != nil {
 			t.Fatalf("Iteration %d: Failed to get process history: %v", i, err)
@@ -1275,49 +1283,43 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			t.Fatalf("Iteration %d: Failed to get service instance", i)
 		}
 
-		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
-		time.Sleep(50 * time.Millisecond)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
 
 		updatedInstance, _ := hm.mgr.GetServiceInstance(serviceName)
 		if updatedInstance == nil {
 			t.Fatalf("Iteration %d: Failed to get updated service instance", i)
 		}
-
-		if i < maxRestartCount {
-			if updatedInstance.RestartCount != i+1 {
-				t.Errorf("Iteration %d: Expected restart count %d, got %d", i, i+1, updatedInstance.RestartCount)
-			}
-
-			// RestartService spawned a real process. We need to kill it and
-			// replace it with a fake dead PGID for the next iteration.
-			latestProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil {
-				t.Fatalf("Iteration %d: Failed to get latest process: %v", i, err)
-			}
-			if latestProcess == nil {
-				t.Fatalf("Iteration %d: Failed to get latest process", i)
-			}
-
-			// Kill the entire process group. RestartService's background goroutine
-			// already calls Wait() on the child, so we must not call Wait()
-			// here - doing so races with that goroutine and fails with
-			// "no child processes" when it wins.
-			_ = syscall.Kill(-latestProcess.PGID, syscall.SIGKILL)
-
-			err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateFailed),
-				StartedAt: new(time.Now().Add(-5 * time.Minute)),
-				StoppedAt: new(time.Now()),
-				Error:     new("Simulated failure"),
-			})
-			if err != nil {
-				t.Fatalf("Failed to update process history entry: %v", err)
-			}
-			continue
+		if updatedInstance.RestartCount != i+1 {
+			t.Fatalf("Iteration %d: expected restart count %d, got %d (retries must never permanently stop)", i, i+1, updatedInstance.RestartCount)
 		}
-		if updatedInstance.RestartCount != instance.RestartCount {
-			t.Errorf("Iteration %d: Expected no restart (count should stay %d), but got %d",
-				i, instance.RestartCount, updatedInstance.RestartCount)
+
+		// RestartService spawned a real process. We need to kill it and
+		// replace it with a fake dead PGID for the next iteration.
+		latestProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+		if err != nil {
+			t.Fatalf("Iteration %d: Failed to get latest process: %v", i, err)
+		}
+		if latestProcess == nil {
+			t.Fatalf("Iteration %d: Failed to get latest process", i)
+		}
+
+		// Kill the entire process group. RestartService's background goroutine
+		// already calls Wait() on the child, so we must not call Wait()
+		// here - doing so races with that goroutine and fails with
+		// "no child processes" when it wins.
+		_ = syscall.Kill(-latestProcess.PGID, syscall.SIGKILL)
+
+		// Backdate StoppedAt well past the (deliberately tiny) backoff cap so
+		// the next iteration's canRestart check isn't flaky about real wall-clock
+		// overhead between iterations.
+		err = db.UpdateProcessHistoryEntry(t.Context(), latestProcess.PGID, database.ProcessHistoryUpdate{
+			State:     new(types.ProcessStateFailed),
+			StartedAt: new(time.Now().Add(-5 * time.Minute)),
+			StoppedAt: new(time.Now().Add(-1 * time.Second)),
+			Error:     new("Simulated failure"),
+		})
+		if err != nil {
+			t.Fatalf("Failed to update process history entry: %v", err)
 		}
 	}
 
@@ -1325,9 +1327,9 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 	if instErr != nil {
 		t.Fatalf("GetServiceInstance should not error: %v", instErr)
 	}
-	if finalInstance.RestartCount != maxRestartCount {
-		t.Errorf("Final restart count should be exactly %d, got %d",
-			maxRestartCount, finalInstance.RestartCount)
+	if finalInstance.RestartCount != iterations {
+		t.Errorf("Final restart count should be exactly %d (every attempt should have restarted), got %d",
+			iterations, finalInstance.RestartCount)
 	}
 }
 
@@ -1384,6 +1386,32 @@ func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 			restartCount:  20,
 			expectedDelay: 60000 * time.Millisecond, // Still capped
 		},
+		{
+			// The exact threshold where baseMs(300) * 2^restartCount first
+			// exceeds int64's range. A float64->int conversion of an
+			// out-of-range value is undefined/platform-dependent in Go
+			// (arm64's FCVTZS saturates, amd64's CVTTSD2SI does not), so this
+			// restartCount previously reproduced the bug on amd64 while
+			// appearing fine on this arm64 dev machine.
+			name:          "Restart count at the int64-overflow threshold",
+			restartCount:  62,
+			expectedDelay: 60000 * time.Millisecond,
+		},
+		{
+			name:          "Restart count just past the int64-overflow threshold",
+			restartCount:  63,
+			expectedDelay: 60000 * time.Millisecond,
+		},
+		{
+			// With the restart-count cliff removed (issue #30), a permanently
+			// failing service's restartCount grows without bound. math.Pow(2,
+			// restartCount) would overflow float64 well before this, so
+			// calculateBackoffDelay must still saturate at maxMs instead of
+			// producing garbage from an overflowed/undefined int conversion.
+			name:          "Huge restart count from long-running uncapped retries",
+			restartCount:  1_000_000,
+			expectedDelay: 60000 * time.Millisecond,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1391,6 +1419,38 @@ func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 			actual := calculateBackoffDelay(tc.restartCount, config.HealthBackoffBaseMs, config.HealthBackoffMaxMs)
 			if actual != tc.expectedDelay {
 				t.Errorf("Expected %v, got %v", tc.expectedDelay, actual)
+			}
+		})
+	}
+}
+
+// TestCanRestart_NeverPermanentlyStopsOnCount is the focused unit test for
+// issue #30's core fix: canRestart must gate only on backoff timing, not on
+// restartCount reaching some fixed cap — a service that has failed many, many
+// times must still be allowed to restart once its backoff window elapses.
+// Only the explicit restartHalted sentinel (set for non-transient failures
+// like unwritable logs) should ever refuse a restart outright.
+func TestCanRestart_NeverPermanentlyStopsOnCount(t *testing.T) {
+	backoff := config.BackoffConfig{BaseMs: 1, MaxMs: 5}
+	longAgo := time.Now().Add(-1 * time.Hour)
+
+	testCases := []struct {
+		since        *time.Time
+		name         string
+		restartCount int
+		want         bool
+	}{
+		{name: "first attempt, no prior stop time", restartCount: 0, since: nil, want: true},
+		{name: "far past the old default cap of 10, backoff elapsed", restartCount: 500, since: &longAgo, want: true},
+		{name: "astronomically high count, backoff elapsed", restartCount: 1_000_000, since: &longAgo, want: true},
+		{name: "halted sentinel refuses regardless of elapsed time", restartCount: restartHalted, since: &longAgo, want: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := canRestart(tc.restartCount, tc.since, backoff)
+			if got != tc.want {
+				t.Errorf("canRestart(%d, ...) = %v, want %v", tc.restartCount, got, tc.want)
 			}
 		})
 	}
@@ -1602,7 +1662,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t, WithMaxRestart(5))
+	healthConfig := newTestHealthConfig(t)
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -1697,7 +1757,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	restartCountBefore := instance.RestartCount
 
 	// Call checkFailedProcess - the process is alive, so it should recover
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, healthConfig.MaxRestart)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
 
 	// Verify: state should be back to Running
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -1894,9 +1954,9 @@ func TestHealthMonitor_CheckAllServices_PanicInOneServiceDoesNotStopOthers(t *te
 
 type HealthConfigOption func(*config.HealthConfig)
 
-func WithMaxRestart(maxRestart int) HealthConfigOption {
+func WithBackoff(baseMs, maxMs int) HealthConfigOption {
 	return func(hc *config.HealthConfig) {
-		hc.MaxRestart = maxRestart
+		hc.Backoff = config.BackoffConfig{BaseMs: baseMs, MaxMs: maxMs}
 	}
 }
 
@@ -1933,7 +1993,6 @@ func WithCheckInterval(d time.Duration) HealthConfigOption {
 func newTestHealthConfig(t *testing.T, opts ...HealthConfigOption) *config.HealthConfig {
 	t.Helper()
 	healthConfig := &config.HealthConfig{
-		MaxRestart: config.HealthMaxRestart,
 		Timeout: config.TimeOutConfig{
 			Enable: config.HealthTimeOutEnable,
 			Limit:  30 * time.Second,
@@ -2324,7 +2383,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	healthConfig := newTestHealthConfig(t)
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -2408,10 +2467,14 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	t.Cleanup(func() { _ = syscall.Kill(-newProcess.PGID, syscall.SIGKILL) })
 }
 
-func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
+// TestRestartOnMemoryThreshold_Halted proves the memory-threshold restart path
+// respects the same permanent-halt sentinel as checkFailedProcess: once a
+// service's restart counter is set to restartHalted (a non-transient failure
+// elsewhere gave up on it), a memory-threshold breach must not restart it either.
+func TestRestartOnMemoryThreshold_Halted(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t, WithMaxRestart(1))
+	healthConfig := newTestHealthConfig(t)
 	shutdownConfig := newTestShutdownConfig(t)
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -2423,11 +2486,12 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	}
 	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
 
-	const serviceName = "restart-threshold-maxed-svc"
+	const serviceName = "restart-threshold-halted-svc"
 	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
 		t.Fatalf("failed to register service instance: %v", err)
 	}
-	if updateErr := db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{RestartCount: new(1)}); updateErr != nil {
+	halted := restartHalted
+	if updateErr := db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{RestartCount: &halted}); updateErr != nil {
 		t.Fatalf("failed to set restart count: %v", updateErr)
 	}
 
@@ -2444,8 +2508,8 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
 	}
-	if instance.RestartCount < healthConfig.MaxRestart {
-		t.Fatalf("test setup invalid: RestartCount %d must be >= MaxRestart %d", instance.RestartCount, healthConfig.MaxRestart)
+	if instance.RestartCount != restartHalted {
+		t.Fatalf("test setup invalid: RestartCount %d must equal restartHalted sentinel %d", instance.RestartCount, restartHalted)
 	}
 
 	entry := &types.ServiceCatalogEntry{Name: serviceName}
@@ -2691,10 +2755,8 @@ func (m *restartFailManager) RestartService(name string, gracePeriod, tickerPeri
 func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
-	healthConfig := newTestHealthConfig(t, WithMaxRestart(3))
+	healthConfig := newTestHealthConfig(t)
 	shutdownConfig := newTestShutdownConfig(t)
-
-	maxRestartCount := healthConfig.MaxRestart
 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -2764,7 +2826,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
 
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
 
 	// The generic "died during startup" is replaced by the real permission cause.
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
@@ -2783,15 +2845,282 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 		t.Errorf("Expected generic startup error to be replaced, still present: %s", *updatedEntry.Error)
 	}
 
-	// The restart counter is capped so canRestart stops firing (no 2s loop).
+	// The restart counter is set to the halted sentinel so canRestart stops
+	// firing (no tight loop) — but note this is a permanent, explicit halt for
+	// this non-transient cause, not the general uncapped-backoff behavior other
+	// restart failures now get.
 	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updatedInstance == nil {
 		t.Fatal("Failed to get updated service instance")
 	}
-	if updatedInstance.RestartCount != maxRestartCount {
-		t.Errorf("Expected restart count capped at %d to halt the loop, got %d", maxRestartCount, updatedInstance.RestartCount)
+	if updatedInstance.RestartCount != restartHalted {
+		t.Errorf("Expected restart count set to halted sentinel %d, got %d", restartHalted, updatedInstance.RestartCount)
 	}
-	if canRestart(updatedInstance.RestartCount, maxRestartCount, updatedEntry.StoppedAt, hm.backoff) {
+	if canRestart(updatedInstance.RestartCount, updatedEntry.StoppedAt, hm.backoff) {
 		t.Error("Expected canRestart to be false after halting on permission error")
+	}
+}
+
+// TestHealthMonitor_CheckFailedProcess_SurfacesChildStderr proves issue #30's
+// second half: when a restart attempt fails for a reason other than the
+// already-classified permission case, the error surfaced to `eos status`/`eos
+// info` includes the service's own last captured stderr line (e.g. a port
+// bind conflict), not just the generic exec-layer error.
+func TestHealthMonitor_CheckFailedProcess_SurfacesChildStderr(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Failed to setup logger: %v", err)
+	}
+
+	// A generic exec-layer error - deliberately NOT an os.ErrPermission, to
+	// exercise the "other error" branch of handleRestartFailure.
+	genericErr := errors.New("stopping process(es) for bind-conflict-svc: exit status 1")
+	mgr := &restartFailManager{monitorManager: realMgr, restartErr: genericErr}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	serviceName := "bind-conflict-svc"
+	fullDirPath := filepath.Join(tempDir, "bind-conflict-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Could not create project directory: %v", mkdirErr)
+	}
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithRuntimePath(""),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("Failed to register service instance: %v", err)
+	}
+
+	// Simulate the child process's own stderr already being captured by the
+	// real stdout/stderr pipe machinery (pipeToErrorLogFile), by writing the
+	// same JSON-line format directly to the service's error log.
+	_, errorLogPath, err := realMgr.NewServiceLogFiles(serviceName)
+	if err != nil {
+		t.Fatalf("Failed to create service log files: %v", err)
+	}
+	errFile, err := os.OpenFile(errorLogPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open error log: %v", err)
+	}
+	logutil.NewJSONLogger(errFile, false).Info("bind: Address already in use", "service", serviceName, "source", "stderr")
+	if err = errFile.Close(); err != nil {
+		t.Fatalf("Failed to close error log: %v", err)
+	}
+
+	fakePGID := 999997
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed); err != nil {
+		t.Fatalf("Failed to register fake process history: %v", err)
+	}
+	if err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
+		State:     new(types.ProcessStateFailed),
+		StartedAt: new(time.Now().Add(-30 * time.Second)),
+		StoppedAt: new(time.Now().Add(-10 * time.Second)),
+		Error:     new("[bind-conflict-svc] died during startup (PGID 999997)"),
+	}); err != nil {
+		t.Fatalf("Failed to update fake process history: %v", err)
+	}
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+
+	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updatedEntry == nil {
+		t.Fatal("Failed to get updated process history")
+	}
+	if updatedEntry.Error == nil {
+		t.Fatal("Expected an error to be surfaced, got nil")
+	}
+	if !strings.Contains(*updatedEntry.Error, "bind: Address already in use") {
+		t.Errorf("Expected the child's real stderr cause to be surfaced, got: %s", *updatedEntry.Error)
+	}
+	if !strings.Contains(*updatedEntry.Error, "restart failed") {
+		t.Errorf("Expected the generic restart-failed prefix to remain, got: %s", *updatedEntry.Error)
+	}
+
+	// Unlike the permission-denied case, this is a transient-looking failure:
+	// the restart counter must simply bump, never halt.
+	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || updatedInstance == nil {
+		t.Fatal("Failed to get updated service instance")
+	}
+	if updatedInstance.RestartCount != instance.RestartCount+1 {
+		t.Errorf("Expected restart count to bump by 1, got %d (was %d)", updatedInstance.RestartCount, instance.RestartCount)
+	}
+}
+
+// TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles
+// guards against a bug a review caught in the fix for issue #30: once the
+// restart-count cliff is gone, a non-permission restart failure (e.g. a
+// runtime binary missing from PATH) retries forever. Each cycle,
+// checkFailedProcess snapshots GetServiceLastErrorLine before writing its own
+// "restarting"/"restart failed: ..." breadcrumbs to the same error log that
+// snapshot reads from. If that snapshot ever picked up eos's own previous
+// breadcrumb instead of skipping it, each new errMsg would nest the last one
+// inside it, growing the error string (and the on-disk log) without bound
+// across the now-unbounded retry loop. This runs checkFailedProcess across
+// several consecutive failure cycles and asserts the surfaced error message
+// is byte-for-byte identical every time, never growing or nesting.
+func TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t, WithBackoff(1, 5))
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Failed to setup logger: %v", err)
+	}
+
+	// A persistent, non-permission exec-layer failure (e.g. missing runtime
+	// binary) that never halts and never heals on its own within this test -
+	// exactly the scenario the reviewer flagged as now retrying forever.
+	genericErr := errors.New("runtime binary not found in PATH")
+	mgr := &restartFailManager{monitorManager: realMgr, restartErr: genericErr}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	serviceName := "nesting-guard-svc"
+	fullDirPath := filepath.Join(tempDir, "nesting-guard-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("Could not create project directory: %v", mkdirErr)
+	}
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithRuntimePath(""),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("Failed to register service instance: %v", err)
+	}
+
+	// One genuine child-stderr line, captured the same way the real
+	// stdout/stderr pipe machinery (pipeToErrorLogFile) would tag it. This is
+	// the only "source":"stderr" line ever written in this test, so if it
+	// keeps surfacing unchanged every cycle (rather than eos's own prior
+	// breadcrumb), that proves the snapshot is reading past its own writes.
+	_, errorLogPath, err := realMgr.NewServiceLogFiles(serviceName)
+	if err != nil {
+		t.Fatalf("Failed to create service log files: %v", err)
+	}
+	errFile, err := os.OpenFile(errorLogPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open error log: %v", err)
+	}
+	logutil.NewJSONLogger(errFile, false).Info("exec: \"eos-runtime\": executable file not found in $PATH", "service", serviceName, "source", "stderr")
+	if err = errFile.Close(); err != nil {
+		t.Fatalf("Failed to close error log: %v", err)
+	}
+
+	fakePGID := 999996
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed); err != nil {
+		t.Fatalf("Failed to register fake process history: %v", err)
+	}
+	if err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
+		State:     new(types.ProcessStateFailed),
+		StartedAt: new(time.Now().Add(-30 * time.Second)),
+		StoppedAt: new(time.Now().Add(-10 * time.Second)),
+		Error:     new("[nesting-guard-svc] died during startup"),
+	}); err != nil {
+		t.Fatalf("Failed to update fake process history: %v", err)
+	}
+
+	const cycles = 4
+	var errMsgs []string
+
+	for i := range cycles {
+		processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+		if err != nil || processHistoryEntry == nil {
+			t.Fatalf("cycle %d: failed to get process history entry: %v", i, err)
+		}
+		instance, err := hm.mgr.GetServiceInstance(serviceName)
+		if err != nil || instance == nil {
+			t.Fatalf("cycle %d: failed to get service instance: %v", i, err)
+		}
+
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+
+		updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+		if err != nil || updatedEntry == nil || updatedEntry.Error == nil {
+			t.Fatalf("cycle %d: expected an error to be surfaced, got entry=%v err=%v", i, updatedEntry, err)
+		}
+		errMsgs = append(errMsgs, *updatedEntry.Error)
+
+		// RestartService never succeeds in this test, so the same fakePGID
+		// row is reused every cycle; backdate StoppedAt past the (tiny) test
+		// backoff so the next cycle's canRestart check isn't gated by real
+		// wall-clock overhead between iterations.
+		if err = db.UpdateProcessHistoryEntry(t.Context(), fakePGID, database.ProcessHistoryUpdate{
+			StoppedAt: new(time.Now().Add(-1 * time.Second)),
+		}); err != nil {
+			t.Fatalf("cycle %d: failed to backdate StoppedAt: %v", i, err)
+		}
+	}
+
+	for i, msg := range errMsgs {
+		if !strings.Contains(msg, "restart failed") {
+			t.Errorf("cycle %d: expected generic restart-failed prefix, got: %s", i, msg)
+		}
+		if !strings.Contains(msg, "executable file not found in $PATH") {
+			t.Errorf("cycle %d: expected the genuine child stderr line to be surfaced, got: %s", i, msg)
+		}
+		// The real bug: eos's own previous breadcrumb (also logged to the
+		// same error log) getting picked back up and nested into the next
+		// one. That would make later messages strictly longer than earlier
+		// ones and contain "restart failed" more than once.
+		if strings.Count(msg, "restart failed") > 1 {
+			t.Errorf("cycle %d: error message nests a previous breadcrumb: %s", i, msg)
+		}
+		if msg != errMsgs[0] {
+			t.Errorf("cycle %d: error message changed/grew across cycles.\n  cycle 0: %s\n  cycle %d: %s", i, errMsgs[0], i, msg)
+		}
 	}
 }

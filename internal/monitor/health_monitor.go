@@ -45,6 +45,9 @@ type monitorManager interface {
 	LogToServiceStdout(serviceName string, message string) error
 	LogToServiceStderr(serviceName string, message string) error
 	RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
+	// GetServiceLastErrorLine returns the most recent non-empty line captured
+	// from the service's own stderr, or ok=false if none is available.
+	GetServiceLastErrorLine(serviceName string) (line string, ok bool)
 }
 
 var _ monitorManager = (*manager.LocalManager)(nil)
@@ -63,7 +66,6 @@ type HealthMonitor struct {
 	memSampleInterval         time.Duration
 	restartCounterResetWindow time.Duration
 	shutdownGracePeriod       time.Duration
-	maxRestartCount           int
 	procBuf                   [4096]byte
 	timeoutEnable             bool
 }
@@ -115,7 +117,6 @@ func NewHealthMonitor(
 		lastCPUSample:             make(map[string]cpuSample),
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
-		maxRestartCount:           healthConfig.MaxRestart,
 		restartCounterResetWindow: healthConfig.RestartCounterResetWindow,
 		shutdownGracePeriod:       shutdownConfig.GracePeriod,
 		backoff:                   backoff,
@@ -180,7 +181,7 @@ func (hm *HealthMonitor) checkService(ctx context.Context, service *types.Servic
 	case types.ProcessStateRunning:
 		hm.checkRunningProcess(ctx, service, processHistoryEntry, instance)
 	case types.ProcessStateFailed:
-		hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount, hm.maxRestartCount)
+		hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount)
 	case types.ProcessStateUnknown:
 		hm.checkUnknownProcess(ctx, service, processHistoryEntry)
 	case types.ProcessStateStopped:
@@ -199,7 +200,11 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	if !hm.isProcessAlive(pgid) {
 		hm.logger.Debug("startup check: process dead", "service", serviceName, "pgid", pgid)
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] died during startup (PGID %d)", serviceName, pgid))
+		msg := fmt.Sprintf("[%s] died during startup (PGID %d)", serviceName, pgid)
+		if lastLine, ok := hm.mgr.GetServiceLastErrorLine(serviceName); ok {
+			msg = fmt.Sprintf("[%s] died during startup (PGID %d): %s", serviceName, pgid, lastLine)
+		}
+		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, msg)
 		return
 	}
 
@@ -399,15 +404,9 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 	case ReasonForceRestart:
 		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, peakPtr, "force", 1*time.Second, 10*time.Millisecond)
 	case ReasonNone:
-		// Heartbeat: a confirmed-alive running service bumps updated_at on every
-		// health tick, so `eos status` never flags a healthy service (stale)
-		// (see helpers.IsProcessHistoryStale). RSS/CPU sampling is throttled to
-		// memSampleInterval (~30s), which is far longer than the stale threshold
-		// (3*checkInterval, ~6s); gating the row update on a fresh sample left
-		// updated_at frozen between samples. Reaffirming State=Running is
-		// idempotent and always supplies a field, so the write never hits
-		// UpdateProcessHistoryEntry's "no fields to update" guard; rss/cpu still
-		// ride along only when this tick actually sampled them.
+		// Reaffirm State=Running every tick (not just on fresh RSS/CPU samples,
+		// which are throttled to ~30s) so updated_at stays fresh and `eos
+		// status` never flags a healthy service as stale.
 		err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 			State:           new(types.ProcessStateRunning),
 			RssMemoryKb:     rssPtr,
@@ -425,11 +424,11 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, rssKb int64, rssPtr, peakPtr *int64, label string, gracePeriod, tickerPeriod time.Duration) {
 	serviceName := service.Name
 
-	if !canRestart(instance.RestartCount, hm.maxRestartCount, process.StartedAt, hm.backoff) {
+	if !canRestart(instance.RestartCount, process.StartedAt, hm.backoff) {
 		return
 	}
 
-	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1, "max", hm.maxRestartCount)
+	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1)
 	newPgid, err := hm.mgr.RestartService(service.Name, gracePeriod, tickerPeriod)
 	if err != nil {
 		hm.updateProcessEntry(ctx, pgid, rssPtr, peakPtr, nil, serviceName)
@@ -479,7 +478,7 @@ func cpuPctPtr(cpuPct float64, sampled bool) *float64 {
 	return &cpuPct
 }
 
-func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, maxRestartCount int) {
+func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int) {
 	serviceName := service.Name
 	pgid := process.PGID
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
@@ -492,10 +491,16 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 	if !hm.isProcessAlive(pgid) {
 		// TODO: Do we want to incorporate instance.last_health_check instead process?
-		if !canRestart(restartCount, maxRestartCount, process.StoppedAt, hm.backoff) {
-			hm.logger.Debug("max restarts reached", "service", serviceName, "count", restartCount, "max", maxRestartCount)
+		if !canRestart(restartCount, process.StoppedAt, hm.backoff) {
+			hm.logger.Debug("restart deferred", "service", serviceName, "count", restartCount)
 			return
 		}
+
+		// Snapshot the service's last captured stderr line before logging our own
+		// "restarting" breadcrumb below (which lands in the same error log via
+		// LogToServiceStderr) — otherwise a failed restart's error message would
+		// surface our own breadcrumb instead of the child process's real cause.
+		lastErrLine, hadLastErrLine := hm.mgr.GetServiceLastErrorLine(serviceName)
 
 		var errorString string
 
@@ -506,7 +511,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 		}
 
 		backoff := calculateBackoffDelay(restartCount, hm.backoff.BaseMs, hm.backoff.MaxMs)
-		hm.logger.Debug("scheduling restart", "service", serviceName, "attempt", restartCount+1, "max", maxRestartCount, "backoff", backoff)
+		hm.logger.Debug("scheduling restart", "service", serviceName, "attempt", restartCount+1, "backoff", backoff)
 		hm.logger.Info(errorString)
 		err = hm.mgr.LogToServiceStderr(serviceName, errorString)
 		if err != nil {
@@ -515,7 +520,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 		_, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
 		if err != nil {
-			hm.handleRestartFailure(ctx, serviceName, pgid, restartCount, maxRestartCount, err)
+			hm.handleRestartFailure(ctx, serviceName, pgid, restartCount, err, lastErrLine, hadLastErrLine)
 		}
 		return
 	}
@@ -523,26 +528,31 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 	hm.markProcessRunning(ctx, pgid, serviceName, process.PeakRssMemoryKb)
 }
 
-// handleRestartFailure records a restart attempt that never launched. It surfaces
-// the real cause in the service's error field so `eos status` shows e.g. a
-// permission error instead of the generic "died during startup", and it throttles
-// further attempts. A permission error (unwritable log files) is non-transient and
-// won't heal on its own, so the restart counter is capped to stop the loop until a
-// human intervenes; any other error bumps the counter and refreshes stopped_at so
-// the exponential backoff grows instead of retrying every tick.
-func (hm *HealthMonitor) handleRestartFailure(ctx context.Context, serviceName string, pgid, restartCount, maxRestartCount int, restartErr error) {
+// restartHalted marks a service's restart counter as permanently disabled.
+// It's far beyond any restartCount reachable via ordinary backoff retries, so
+// the two meanings of the field never collide.
+const restartHalted = math.MaxInt32
+
+// handleRestartFailure surfaces the real failure cause in the service's error
+// field. Permission errors (e.g. unwritable log files) are non-transient, so
+// they halt the restart loop permanently; every other error just bumps the
+// counter and backs off, retrying forever in case the cause clears on its own.
+func (hm *HealthMonitor) handleRestartFailure(ctx context.Context, serviceName string, pgid, restartCount int, restartErr error, lastErrLine string, hadLastErrLine bool) {
 	hm.logger.Error("failed to restart", "service", serviceName, "error", restartErr)
 
 	update := database.ProcessHistoryUpdate{}
 	var errMsg string
 	if errors.Is(restartErr, os.ErrPermission) {
 		errMsg = fmt.Sprintf("[%s] cannot start: %v (needs intervention)", serviceName, restartErr)
-		capped := maxRestartCount
-		if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &capped}); err != nil {
+		halted := restartHalted
+		if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &halted}); err != nil {
 			hm.logger.Error("failed to halt restart loop", "service", serviceName, "error", err)
 		}
 	} else {
 		errMsg = fmt.Sprintf("[%s] restart failed: %v", serviceName, restartErr)
+		if hadLastErrLine {
+			errMsg = fmt.Sprintf("[%s] restart failed: %v (%s)", serviceName, restartErr, lastErrLine)
+		}
 		next := restartCount + 1
 		if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &next}); err != nil {
 			hm.logger.Error("failed to bump restart counter", "service", serviceName, "error", err)
@@ -618,8 +628,11 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 	}
 }
 
-func canRestart(restartCount, maxRestartCount int, since *time.Time, backoff config.BackoffConfig) bool {
-	if restartCount >= maxRestartCount {
+// canRestart never permanently refuses on count alone — only restartHalted
+// blocks it — so a service that keeps failing keeps retrying forever at the
+// backoff-capped interval.
+func canRestart(restartCount int, since *time.Time, backoff config.BackoffConfig) bool {
+	if restartCount >= restartHalted {
 		return false
 	}
 	if since != nil && time.Since(*since) < calculateBackoffDelay(restartCount, backoff.BaseMs, backoff.MaxMs) {
@@ -628,14 +641,20 @@ func canRestart(restartCount, maxRestartCount int, since *time.Time, backoff con
 	return true
 }
 
+// Clamp to maxMs BEFORE the float64->int conversion, never after: an
+// out-of-int64-range float64->int conversion is undefined/platform-dependent
+// in Go (amd64's CVTTSD2SI yields garbage, arm64's FCVTZS saturates), and
+// baseMs*2^restartCount can exceed int64 range since restartCount is now
+// unbounded (issue #30). float64 comparisons never overflow, so comparing
+// first keeps the conversion always in-range on every architecture.
 func calculateBackoffDelay(restartCount, baseMs, maxMs int) time.Duration {
-	calculatedDelay := float64(baseMs) * math.Pow(float64(2), float64(restartCount))
-	calculatedDelayAsInt := int(calculatedDelay)
+	exponent := max(restartCount, 0)
+	calculatedDelay := float64(baseMs) * math.Pow(2, float64(exponent))
 
-	if calculatedDelayAsInt > maxMs {
+	if calculatedDelay > float64(maxMs) {
 		return time.Duration(maxMs) * time.Millisecond
 	}
-	return time.Duration(calculatedDelayAsInt) * time.Millisecond
+	return time.Duration(int64(calculatedDelay)) * time.Millisecond
 }
 
 // isProcessAlive reports whether any live process exists in the given process group.
