@@ -60,6 +60,14 @@ jobs:
             goos: linux
             goarch: arm64
             artifact: eos-linux-arm64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            artifact: eos-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            artifact: eos-darwin-arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -101,6 +109,17 @@ jobs:
           ls -lh ${{ matrix.artifact }}
           file ${{ matrix.artifact }}
 
+      # Ad-hoc signing (no Developer ID cert, no notarization — none provisioned
+      # yet). Doesn't remove the Gatekeeper prompt on a manually downloaded
+      # binary, but upgrades the failure mode from a hard SIGKILL/"cannot be
+      # opened" to the softer "unidentified developer" dialog with an explicit
+      # Allow path in System Settings. install.sh does its own re-sign after
+      # placement (see resign_darwin_binary), which is what actually lets a
+      # `curl | sh` install run with no prompt at all.
+      - name: Ad-hoc codesign (macOS only)
+        if: matrix.goos == 'darwin'
+        run: codesign --force -s - ${{ matrix.artifact }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
@@ -135,13 +154,13 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -type f -name "eos-linux-*" -exec cp {} release/ \;
+          find artifacts -type f \( -name "eos-linux-*" -o -name "eos-darwin-*" \) -exec cp {} release/ \;
           ls -lh release/
 
       - name: Generate checksums
         run: |
           cd release
-          sha256sum eos-linux-* > sha256sums.txt
+          sha256sum eos-linux-* eos-darwin-* > sha256sums.txt
           cat sha256sums.txt
 
       - name: Sign checksums
@@ -188,6 +207,8 @@ jobs:
           files: |
             release/eos-linux-amd64
             release/eos-linux-arm64
+            release/eos-darwin-amd64
+            release/eos-darwin-arm64
             release/sha256sums.txt*
           draft: false
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
@@ -213,15 +234,18 @@ jobs:
 
             ### Manual Installation
 
-            Download the appropriate binary for your architecture:
+            Download the appropriate binary for your platform:
             - **Linux AMD64**: `eos-linux-amd64`
             - **Linux ARM64**: `eos-linux-arm64`
+            - **macOS (Apple Silicon)**: `eos-darwin-arm64`
+            - **macOS (Intel)**: `eos-darwin-amd64`
 
             Then:
             ```bash
-            chmod +x eos-linux-amd64  # or eos-linux-arm64
+            chmod +x eos-linux-amd64  # or the binary matching your platform
             sudo cp eos-linux-amd64 /usr/local/bin/eos
             ```
+            On macOS, also strip the Gatekeeper quarantine attribute and re-sign after a manual download (the installer does this automatically): `xattr -d com.apple.quarantine eos-darwin-arm64; codesign --force -s - eos-darwin-arm64`.
 
             ### Verify Download
 

@@ -71,7 +71,7 @@ func TestStartupCmdLaunchdIntegration(t *testing.T) {
 			PIDFile:    filepath.Join(tempDir, "eos.pid"),
 			SocketPath: filepath.Join(tempDir, "eos.sock"),
 		},
-		launchdDir, plistFileName, true, false, execRunCmd,
+		launchdDir, plistFileName, true, false, false, execRunCmd,
 	)
 
 	t.Cleanup(func() {
@@ -149,7 +149,7 @@ func TestUnstartupCmdLaunchdIntegration(t *testing.T) {
 		LaunchdTargetDir:     launchdDir,
 		LaunchdPlistFileName: plistFileName,
 		UserAgent:            true,
-	}, true, false, execRunCmd, identity)
+	}, true, false, false, execRunCmd, identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())

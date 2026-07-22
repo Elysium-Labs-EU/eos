@@ -228,7 +228,7 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
 For systemd user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
 
 On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
-		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)",
+		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)\n       eos system startup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -238,6 +238,11 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 				return helpers.ErrCommandFailed
 			}
 			verbose, _ := cmd.Flags().GetBool("verbose")
+			flagYes, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return helpers.ErrCommandFailed
+			}
 
 			if runtime.GOOS == "darwin" {
 				userAgent := os.Getuid() != 0
@@ -250,7 +255,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 					}
 				}
 				return startupCmdLaunchd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, execRunCmd)
+					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, flagYes, execRunCmd)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -262,7 +267,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 			if runtimeName == "openrc" {
 				return openrcStartupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 					config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, detectActiveSystemRuntime, execRunCmd)
+					verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
 			}
 
 			userUnit := os.Getuid() != 0
@@ -276,9 +281,10 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 			}
 			return startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 				systemdDir, config.SystemdTargetFileName,
-				userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
+				userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
+	startupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
 
 	unstartupCmdDef := &cobra.Command{
 		Use:   "unstartup",
@@ -290,7 +296,7 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
   - Run as a regular user: removes the user unit / LaunchAgent.
 
 On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires root.`,
-		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit (systemd/launchd only)",
+		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit (systemd/launchd only)\n       eos system unstartup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -300,6 +306,11 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 				return helpers.ErrCommandFailed
 			}
 			verbose, _ := cmd.Flags().GetBool("verbose")
+			flagYes, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return helpers.ErrCommandFailed
+			}
 
 			if runtime.GOOS == "darwin" {
 				if systemConfig.Daemon.Launchd == nil {
@@ -307,7 +318,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 					return helpers.ErrCommandFailed
 				}
 				userAgent := os.Getuid() != 0
-				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, execRunCmd, identity)
+				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, flagYes, execRunCmd, identity)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -318,7 +329,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 
 			if runtimeName == "openrc" {
 				return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, detectActiveSystemRuntime, execRunCmd, identity)
+					verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
 			}
 
 			if systemConfig.Daemon.Systemd == nil {
@@ -326,9 +337,10 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 				return helpers.ErrCommandFailed
 			}
 			userUnit := os.Getuid() != 0
-			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, detectActiveSystemRuntime, execRunCmd, identity)
+			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
 		},
 	}
+	unstartupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
 
 	updateCmd := &cobra.Command{
 		Use:           "update",
@@ -787,7 +799,7 @@ func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.Standalon
 	return nil
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
+func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
 	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
 		return err
 	}
@@ -814,7 +826,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 
 	unitKind := unitScope(userUnit) + " file"
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", unitKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", unitKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" creation canceled")
 		return nil
 	}
@@ -843,7 +855,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by systemd on next start")
 		return nil
 	}
@@ -898,14 +910,14 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, verbos
 	return nil
 }
 
-func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
+func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
 	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
 		return err
 	}
 
 	unitKind := unitScope(userUnit)
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
 		return nil
 	}
@@ -931,7 +943,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):") {
 		return nil
 	}
 
@@ -1120,7 +1132,7 @@ func bootstrapLaunchdJob(ctx context.Context, cmd *cobra.Command, verbose bool, 
 	return nil
 }
 
-func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, launchdDir, plistFileName string, userAgent, verbose bool, run runCmdFn) error {
+func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, launchdDir, plistFileName string, userAgent, verbose, flagYes bool, run runCmdFn) error {
 	fullTargetName := filepath.Join(launchdDir, plistFileName)
 	helpers.Debugf(cmd, verbose, "target plist file: %s", fullTargetName)
 
@@ -1144,7 +1156,7 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 
 	plistKind := launchdScope(userAgent) + " file"
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", plistKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", plistKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), plistKind+" creation canceled")
 		return nil
 	}
@@ -1172,7 +1184,7 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by launchd on next start")
 		return nil
 	}
@@ -1196,10 +1208,10 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 // bootout" both stops the job and unloads it in one step (the combined equivalent of
 // "systemctl stop" + "systemctl disable"): the plist stays on disk until removed below,
 // but won't be re-bootstrapped until the next "eos system startup", boot, or login.
-func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose bool, run runCmdFn, identity userutil.Identity) error {
+func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose, flagYes bool, run runCmdFn, identity userutil.Identity) error {
 	scopeKind := launchdScope(userAgent)
 
-	confirmed := helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind))
+	confirmed := flagYes || helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind))
 	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
 		return nil
@@ -1250,7 +1262,7 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig c
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	confirmed = helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
+	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
 	if !confirmed {
 		return nil
 	}
