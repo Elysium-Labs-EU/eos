@@ -62,7 +62,7 @@ func renderOpenRCScript(installDir, user string) (string, error) {
 // openrcStartupCmd is the OpenRC counterpart to startupCmd. OpenRC has no
 // per-user service manager equivalent to `systemctl --user`, so this always
 // installs a system-wide script and requires root.
-func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, initDir, initFile string, verbose bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
+func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -96,7 +96,7 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 		return helpers.ErrCommandFailed
 	}
 
-	confirmed := helpers.PromptConfirm(cmd, "create OpenRC init script? (y/n):")
+	confirmed := flagYes || helpers.PromptConfirm(cmd, "create OpenRC init script? (y/n):")
 	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "init script creation canceled")
 		return nil
@@ -118,7 +118,7 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 	helpers.Debugf(cmd, verbose, "rc-update output: %s", strings.TrimSpace(string(out)))
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
 
-	confirmed = helpers.PromptConfirm(cmd, "restart daemon now? (y/n):")
+	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon now? (y/n):")
 	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by OpenRC on next start")
 		return nil
@@ -152,7 +152,7 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 }
 
 // openrcUnstartupCmd is the OpenRC counterpart to unstartupCmd.
-func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
+func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
@@ -164,7 +164,7 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 		return helpers.ErrCommandFailed
 	}
 
-	confirmed := helpers.PromptConfirm(cmd, "remove OpenRC init script and disable eos on boot? (y/n):")
+	confirmed := flagYes || helpers.PromptConfirm(cmd, "remove OpenRC init script and disable eos on boot? (y/n):")
 	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
 		return nil
@@ -194,7 +194,7 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
 
-	confirmed = helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
+	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
 	if !confirmed {
 		return nil
 	}
