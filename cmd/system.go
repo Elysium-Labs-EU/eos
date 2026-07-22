@@ -1480,16 +1480,42 @@ type Asset struct {
 }
 
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Name    string  `json:"name"`
-	Assets  []Asset `json:"assets"`
+	TagName    string  `json:"tag_name"`
+	Name       string  `json:"name"`
+	Assets     []Asset `json:"assets"`
+	Prerelease bool    `json:"prerelease"`
 }
 
+// errReleaseNotFound signals that GitHub's /releases/latest 404'd, which
+// happens when every published release is a prerelease (that endpoint only
+// ever returns the newest non-prerelease, non-draft release).
+var errReleaseNotFound = errors.New("release not found")
+
+// fetchLatestRelease picks the release to update to. For the plain path it
+// trusts GitHub's own "latest" resolution, falling back to the full release
+// list (see pickLatestRelease) only when /releases/latest 404s because every
+// release is a prerelease. The --pre path always walks the full list since
+// GitHub does not expose a "latest including prereleases" endpoint and the
+// list is not guaranteed to be sorted (Elysium-Labs-EU/argus#74).
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
-	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
-	if includePre {
-		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
+	if !includePre {
+		release, err := fetchLatestStableRelease(ctx)
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, errReleaseNotFound) {
+			return nil, err
+		}
 	}
+
+	releases, err := fetchAllReleases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pickLatestRelease(releases)
+}
+
+func fetchGitHubAPI(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
@@ -1497,53 +1523,88 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 	req.Header.Set("User-Agent", updateUserAgent)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	// #nosec G704
-	resp, err := httpClient.Do(req)
-	defer func() {
-		if resp == nil {
-			return
-		}
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing response body: %w", closeErr)
-		}
-	}()
+	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
+	return resp, nil
+}
+
+func fetchLatestStableRelease(ctx context.Context) (*Release, error) {
+	resp, err := fetchGitHubAPI(ctx, "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errReleaseNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var release Release
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	return &release, nil
+}
+
+func fetchAllReleases(ctx context.Context) ([]Release, error) {
+	resp, err := fetchGitHubAPI(ctx, "https://api.github.com/repos/Elysium-Labs-EU/eos/releases")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	if includePre {
-		var releases []Release
-		if err = json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON: %w", err)
-		}
-		if len(releases) == 0 {
-			return nil, fmt.Errorf("no releases found")
-		}
-		// GitHub's list order isn't a reliable "newest first" guarantee (the
-		// same list-ordering hazard install.sh's fetch_latest_version guards
-		// against, issue #43), so pick the highest semver tag directly
-		// instead of trusting releases[0].
-		latest := &releases[0]
-		for i := 1; i < len(releases); i++ {
-			if semver.Compare(releases[i].TagName, latest.TagName) > 0 {
-				latest = &releases[i]
-			}
-		}
-		return latest, nil
-	}
-
-	var release Release
-	if err = json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
-	return &release, nil
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("no releases found")
+	}
+	return releases, nil
+}
+
+// pickLatestRelease returns the highest stable release by semver, falling
+// back to the highest prerelease only when no stable release exists in the
+// list (Elysium-Labs-EU/argus#74).
+func pickLatestRelease(releases []Release) (*Release, error) {
+	if best := highestByTag(releases, false); best != nil {
+		return best, nil
+	}
+	if best := highestByTag(releases, true); best != nil {
+		return best, nil
+	}
+	return nil, fmt.Errorf("no releases found")
+}
+
+// highestByTag returns the release with the highest valid semver tag.
+// includePrerelease also considers releases flagged as prerelease.
+func highestByTag(releases []Release, includePrerelease bool) *Release {
+	var best *Release
+	for i := range releases {
+		r := &releases[i]
+		if r.Prerelease && !includePrerelease {
+			continue
+		}
+		if !semver.IsValid(r.TagName) {
+			continue
+		}
+		if best == nil || semver.Compare(r.TagName, best.TagName) > 0 {
+			best = r
+		}
+	}
+	return best
 }
 
 type UpdateResult struct {
