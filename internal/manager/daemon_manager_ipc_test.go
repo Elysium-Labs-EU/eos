@@ -119,6 +119,27 @@ func TestDaemonManager_GetAllServiceInstances(t *testing.T) {
 	}
 }
 
+func TestDaemonManager_GetVersion(t *testing.T) {
+	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
+		if req.Method != types.MethodGetVersion {
+			return types.DaemonResponse{Success: false, Error: "wrong method"}
+		}
+		return okResponse(types.GetVersionResponse{
+			Version:   "v1.2.3",
+			GitCommit: "abc123",
+			BuildDate: "2026-01-01",
+		})
+	})
+	dm := newTestDM(t, socketPath)
+	version, err := dm.GetVersion()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if version.Version != "v1.2.3" || version.GitCommit != "abc123" || version.BuildDate != "2026-01-01" {
+		t.Errorf("got %+v", version)
+	}
+}
+
 func TestDaemonManager_GetServiceInstance(t *testing.T) {
 	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
 		var args types.GetServiceInstanceArgs

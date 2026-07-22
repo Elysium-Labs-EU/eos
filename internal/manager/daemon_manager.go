@@ -243,6 +243,23 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args json.RawMessa
 	return response, nil
 }
 
+// GetVersion queries the actual running daemon process's buildinfo over the
+// unix socket, so it reflects the binary backing the live process even after
+// an on-disk update the daemon hasn't picked up yet (it hasn't been restarted).
+func (dm *DaemonManager) GetVersion() (types.GetVersionResponse, error) {
+	response, err := dm.sendRequest(types.MethodGetVersion, nil)
+	if err != nil {
+		return types.GetVersionResponse{}, fmt.Errorf("GetVersion: request errored: %w", err)
+	}
+
+	var result types.GetVersionResponse
+	if err := json.Unmarshal(response.Data, &result); err != nil {
+		return types.GetVersionResponse{}, fmt.Errorf("GetVersion: parse response data: %w", err)
+	}
+
+	return result, nil
+}
+
 func (dm *DaemonManager) GetAllServiceInstances() ([]types.ServiceInstance, error) {
 	response, err := dm.sendRequest(types.MethodGetAllServiceInstances, nil)
 
