@@ -95,7 +95,7 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
 		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -108,7 +108,7 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
 		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
@@ -125,7 +125,7 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	_ = startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false,
+	}, tempDir+"/", "eos.service", false, false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -146,7 +146,7 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, true,
+	}, tempDir+"/", "eos.service", false, true, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
@@ -178,11 +178,42 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false,
+	}, tempDir+"/", "eos.service", false, false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
+	}
+
+	want := []string{"systemctl daemon-reload", "systemctl enable eos", "systemctl start eos"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+	}
+}
+
+// TestStartupCmdFlagYesSkipsPrompts deliberately does NOT call setStdin — a
+// script/tool invoking `eos system startup --yes` non-interactively has no
+// stdin to answer a confirmation prompt with, so flagYes must skip both
+// PromptConfirm calls entirely rather than fall through to a read that
+// would hang or silently decline (see eos#29).
+func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
+	tempDir := t.TempDir()
+	c, _, _ := makeTestCmd(t)
+
+	var calls []string
+	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", "eos.service", false, false, true,
+		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	unitFilePath := filepath.Join(tempDir, "eos.service")
+	if _, statErr := os.Stat(unitFilePath); os.IsNotExist(statErr) {
+		t.Error("expected unit file to be written despite no stdin provided")
 	}
 
 	want := []string{"systemctl daemon-reload", "systemctl enable eos", "systemctl start eos"}
@@ -221,7 +252,7 @@ func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -240,7 +271,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -269,7 +300,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
-	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -347,7 +378,7 @@ func TestStartupCmdLaunchdDeclinePlist(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when user declines, got: %v", calls)
@@ -368,7 +399,7 @@ func TestStartupCmdLaunchdWritesPlistAndEnablesWithoutRestart(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", plistFileName, false, true, recordingRunCmd(t, &calls))
+	}, tempDir+"/", plistFileName, false, true, false, recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
 		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
@@ -407,7 +438,7 @@ func TestStartupCmdLaunchdFullRestartPath(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -430,7 +461,7 @@ func TestUnstartupCmdLaunchdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, false, recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when declined, got: %v", calls)
@@ -460,7 +491,7 @@ func TestUnstartupCmdLaunchdRemovesPlistAndBootsOut(t *testing.T) {
 	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, recordingRunCmd(t, &calls), identity)
+	}, false, false, false, recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -503,7 +534,7 @@ func TestUnstartupCmdLaunchdToleratesJobNotLoaded(t *testing.T) {
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 3), identity)
+	}, false, false, false, exitCodeRunCmd(t, &calls, 3), identity)
 
 	if err != nil {
 		t.Errorf("expected exit code 3 to be tolerated, got error: %v", err)
@@ -543,7 +574,7 @@ func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 1), identity)
+	}, false, false, false, exitCodeRunCmd(t, &calls, 1), identity)
 
 	if err == nil {
 		t.Fatal("expected a non-3 exit code to be a fatal error")
