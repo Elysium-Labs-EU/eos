@@ -1,14 +1,26 @@
 name: OSV Scan
 
+# Vulnerability status only changes when deps change or a new CVE is
+# published, not on every commit — scope triggers accordingly.
 on:
   push:
     branches:
       - main
       - develop
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/osv-scan.yml"
   pull_request:
     branches:
       - main
       - develop
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/osv-scan.yml"
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -23,10 +35,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Install osv-scanner (prebuilt, pinned)
+        run: |
+          curl -sSfL "https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64" -o osv-scanner
+          chmod +x osv-scanner
+          ./osv-scanner --version
+
       - name: Run OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
-        with:
-          scan-args: |-
-            --lockfile=go.mod
-            --recursive
-            .
+        run: ./osv-scanner scan --lockfile=go.mod --recursive .
