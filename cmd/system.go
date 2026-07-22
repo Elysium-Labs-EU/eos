@@ -454,7 +454,6 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("systemd target filename:"), config.Daemon.Systemd.SystemdTargetFileName)
 	}
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Health Check"))
-	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max restarts:"), config.Health.MaxRestart)
 	cmd.Printf("  %s %v\n", ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
 		cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit)
