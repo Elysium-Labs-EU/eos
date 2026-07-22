@@ -28,7 +28,6 @@ const (
 	HealthBackoffMaxMs                = 60000
 	HealthCheckIntervalMs             = 2000
 	HealthMemSampleIntervalMs         = 30000
-	HealthMaxRestart                  = 10
 	HealthMemoryForceRestartThreshold = 0.95
 	HealthMemorySoftRestartThreshold  = 0.85
 	HealthMemoryWarningThreshold      = 0.75
@@ -117,7 +116,6 @@ type MemoryThresholdConfig struct {
 type HealthConfig struct {
 	CheckInterval             time.Duration         `json:"check_interval" yaml:"checkInterval"`
 	MemSampleInterval         time.Duration         `json:"mem_sample_interval" yaml:"memSampleInterval"`
-	MaxRestart                int                   `json:"max_restart" yaml:"maxRestart"`
 	RestartCounterResetWindow time.Duration         `json:"restart_counter_reset_window" yaml:"restartCounterResetWindow"`
 	Timeout                   TimeOutConfig         `json:"timeout" yaml:"timeout"`
 	Backoff                   BackoffConfig         `json:"backoff" yaml:"backoff"`

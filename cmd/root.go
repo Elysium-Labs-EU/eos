@@ -46,7 +46,6 @@ eos is a service supervisor.
 				GracePeriod: 5 * time.Second,
 			},
 			Health: config.HealthConfig{
-				MaxRestart:                10,
 				RestartCounterResetWindow: 15 * time.Minute,
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
@@ -86,7 +85,6 @@ eos is a service supervisor.
 				Systemd: nil,
 			},
 			Health: config.HealthConfig{
-				MaxRestart:                10,
 				RestartCounterResetWindow: 15 * time.Minute,
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
@@ -330,7 +328,6 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	}
 
 	healthConfig := config.HealthConfig{
-		MaxRestart:                config.HealthMaxRestart,
 		RestartCounterResetWindow: restartCounterResetWindow,
 		Timeout: config.TimeOutConfig{
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),

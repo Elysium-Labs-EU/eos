@@ -62,7 +62,7 @@ func BenchmarkCanRestart(b *testing.B) {
 	backoff := config.BackoffConfig{BaseMs: 1000, MaxMs: 30_000}
 	b.ResetTimer()
 	for b.Loop() {
-		_ = canRestart(2, 10, &now, backoff)
+		_ = canRestart(2, &now, backoff)
 	}
 }
 

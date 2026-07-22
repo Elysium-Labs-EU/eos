@@ -34,7 +34,6 @@ func setupDaemonTestEnv(t *testing.T) (string, config.SystemConfig) {
 			Systemd: nil,
 		},
 		Health: config.HealthConfig{
-			MaxRestart: 10,
 			Timeout: config.TimeOutConfig{
 				Enable: true,
 				Limit:  time.Second * 10,
