@@ -1117,6 +1117,108 @@ func TestFetchLatestRelease_badJSON(t *testing.T) {
 	}
 }
 
+// TestFetchLatestRelease_preOutOfOrder guards against Elysium-Labs-EU/argus#74:
+// GitHub's /releases list is not guaranteed to be sorted, so --pre must not
+// just return releases[0].
+func TestFetchLatestRelease_preOutOfOrder(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v1.4.0"},
+			{TagName: "v1.6.0"},
+			{TagName: "v1.5.0"},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v1.6.0" {
+		t.Errorf("got tag %q, want v1.6.0", rel.TagName)
+	}
+}
+
+// TestFetchLatestRelease_allPrereleaseFallback guards against
+// Elysium-Labs-EU/argus#74: when every release is a prerelease,
+// /releases/latest 404s and the plain (non---pre) path must fall back to the
+// full list instead of hard-erroring.
+func TestFetchLatestRelease_allPrereleaseFallback(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v2.0.0-rc.1", Prerelease: true},
+			{TagName: "v2.0.0-rc.2", Prerelease: true},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v2.0.0-rc.2" {
+		t.Errorf("got tag %q, want v2.0.0-rc.2", rel.TagName)
+	}
+}
+
+func TestPickLatestRelease(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantTag  string
+		releases []Release
+		wantErr  bool
+	}{
+		{
+			name: "out of order stable releases picks highest by semver",
+			releases: []Release{
+				{TagName: "v1.4.0"},
+				{TagName: "v1.6.0"},
+				{TagName: "v1.5.0"},
+			},
+			wantTag: "v1.6.0",
+		},
+		{
+			name: "stable release preferred over higher-tagged prerelease",
+			releases: []Release{
+				{TagName: "v1.5.0"},
+				{TagName: "v2.0.0-rc.1", Prerelease: true},
+			},
+			wantTag: "v1.5.0",
+		},
+		{
+			name: "all prerelease falls back to highest prerelease",
+			releases: []Release{
+				{TagName: "v2.0.0-rc.1", Prerelease: true},
+				{TagName: "v2.0.0-rc.10", Prerelease: true},
+				{TagName: "v2.0.0-rc.2", Prerelease: true},
+			},
+			wantTag: "v2.0.0-rc.10",
+		},
+		{
+			name:    "empty release list errors",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rel, err := pickLatestRelease(tt.releases)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rel.TagName != tt.wantTag {
+				t.Errorf("got tag %q, want %q", rel.TagName, tt.wantTag)
+			}
+		})
+	}
+}
+
 func TestHandleDownloadBinary_success(t *testing.T) {
 	content := []byte("fake binary content")
 	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
