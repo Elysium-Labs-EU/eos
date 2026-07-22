@@ -27,4 +27,6 @@ type ServiceManager interface {
 
 	NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error)
 	GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error)
+
+	GetVersion() (types.GetVersionResponse, error)
 }

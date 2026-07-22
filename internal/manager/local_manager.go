@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/logutil"
 	"github.com/Elysium-Labs-EU/eos/internal/otelx"
@@ -194,6 +195,17 @@ func (m *LocalManager) GetAllServiceInstances() ([]types.ServiceInstance, error)
 		return nil, fmt.Errorf("get all service runtime entries: %w", err)
 	}
 	return serviceInstances, nil
+}
+
+// GetVersion returns this process's own buildinfo. It always succeeds — the
+// error return exists only to satisfy ServiceManager, whose DaemonManager
+// implementation can fail on the socket round-trip.
+func (m *LocalManager) GetVersion() (types.GetVersionResponse, error) {
+	return types.GetVersionResponse{
+		Version:   buildinfo.Version,
+		GitCommit: buildinfo.GitCommit,
+		BuildDate: buildinfo.BuildDate,
+	}, nil
 }
 
 func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error) {

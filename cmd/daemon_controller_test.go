@@ -3,15 +3,19 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 )
 
@@ -114,20 +118,83 @@ func TestStandaloneDaemonController_Info(t *testing.T) {
 		}
 	})
 
-	t.Run("running", func(t *testing.T) {
+	t.Run("running but version unreachable", func(t *testing.T) {
+		// No listener on the socket: the daemon "looks" alive via the pid file
+		// (a real, if unrelated, live process), but the IPC round-trip must
+		// fail cleanly and the version line must be omitted rather than
+		// breaking the rest of the output.
 		tempDir := t.TempDir()
 		c := newStandaloneController(t, tempDir)
+		c.cfg.SocketTimeout = 100 * time.Millisecond
 		child := spawnDisposableChild(t)
 		writePIDFile(t, c.cfg.PIDFile, child.Process.Pid)
 		var out bytes.Buffer
 		cmd := newTestRootCmd(nil)
 		cmd.SetOut(&out)
+		cmd.SetContext(context.Background())
 
 		c.Info(cmd)
 
 		got := out.String()
 		if !strings.Contains(got, "daemon is running") {
 			t.Errorf("expected 'daemon is running', got: %s", got)
+		}
+		if !strings.Contains(got, "PID:") {
+			t.Errorf("expected printStandaloneDaemonDetails to render PID, got: %s", got)
+		}
+		if strings.Contains(got, "running version:") {
+			t.Errorf("expected no 'running version:' line when the daemon socket is unreachable, got: %s", got)
+		}
+	})
+
+	t.Run("running with version reachable", func(t *testing.T) {
+		// A short os.MkdirTemp root, not t.TempDir(): the latter nests under
+		// this test's (long) name, and a unix socket path is capped at
+		// ~104 bytes — nesting under the test name alone can blow that
+		// budget.
+		tempDir, err := os.MkdirTemp("", "eos-sock-*")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+		c := newStandaloneController(t, tempDir)
+		c.cfg.SocketTimeout = time.Second
+		child := spawnDisposableChild(t)
+		writePIDFile(t, c.cfg.PIDFile, child.Process.Pid)
+
+		ln, err := net.Listen("unix", c.cfg.SocketPath)
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			var req types.DaemonRequest
+			if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+				return
+			}
+			data, _ := json.Marshal(types.GetVersionResponse{Version: "v9.9.9"})
+			_ = json.NewEncoder(conn).Encode(types.DaemonResponse{Success: true, Data: data})
+		}()
+
+		var out bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetOut(&out)
+		cmd.SetContext(context.Background())
+
+		c.Info(cmd)
+
+		got := out.String()
+		if !strings.Contains(got, "daemon is running") {
+			t.Errorf("expected 'daemon is running', got: %s", got)
+		}
+		if !strings.Contains(got, "running version: v9.9.9") {
+			t.Errorf("expected 'running version: v9.9.9', got: %s", got)
 		}
 		if !strings.Contains(got, "PID:") {
 			t.Errorf("expected printStandaloneDaemonDetails to render PID, got: %s", got)

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -58,6 +59,24 @@ func TestAllMethodsHandled(t *testing.T) {
 				t.Errorf("Method %s not handled in switch", method)
 			}
 		})
+	}
+}
+
+func TestExecuteRequest_GetVersion(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetVersion})
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var got types.GetVersionResponse
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("unmarshaling response data: %v", err)
+	}
+	if got.Version == "" {
+		t.Error("expected non-empty version")
 	}
 }
 

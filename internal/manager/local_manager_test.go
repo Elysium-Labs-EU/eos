@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/procutil"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
@@ -638,6 +639,26 @@ func TestGetAllServiceInstances(t *testing.T) {
 	}
 	if len(instances) != 1 {
 		t.Errorf("expected 1 instance, got %d", len(instances))
+	}
+}
+
+func TestLocalManager_GetVersion(t *testing.T) {
+	origVersion, origCommit, origDate := buildinfo.Version, buildinfo.GitCommit, buildinfo.BuildDate
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.GitCommit, buildinfo.BuildDate = origVersion, origCommit, origDate
+	})
+	buildinfo.Version, buildinfo.GitCommit, buildinfo.BuildDate = "v9.9.9", "deadbeef", "2026-07-21"
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	version, err := mgr.GetVersion()
+	if err != nil {
+		t.Fatalf("GetVersion: %v", err)
+	}
+	want := types.GetVersionResponse{Version: "v9.9.9", GitCommit: "deadbeef", BuildDate: "2026-07-21"}
+	if version != want {
+		t.Errorf("got %+v, want %+v", version, want)
 	}
 }
 

@@ -29,6 +29,8 @@ const (
 
 	MethodNewServiceLogFiles    = "NewServiceLogFiles"
 	MethodGetServiceLogFilePath = "GetServiceLogFilePath"
+
+	MethodGetVersion = "GetVersion"
 )
 
 var ValidMethods = map[MethodName]bool{
@@ -52,6 +54,8 @@ var ValidMethods = map[MethodName]bool{
 
 	MethodNewServiceLogFiles:    true,
 	MethodGetServiceLogFilePath: true,
+
+	MethodGetVersion: true,
 }
 
 type DaemonRequest struct {
@@ -147,4 +151,14 @@ type NewServiceLogFilesArgs struct {
 type GetServiceLogFilePathArgs struct {
 	ServiceName string `json:"service_name"`
 	ErrorLog    bool   `json:"error_log"`
+}
+
+// GetVersionResponse carries the daemon's own buildinfo, letting a CLI query
+// the version of the actual running daemon process rather than the on-disk
+// binary — the two diverge whenever an update replaces the binary before the
+// daemon is restarted.
+type GetVersionResponse struct {
+	Version   string `json:"version"`
+	GitCommit string `json:"git_commit"`
+	BuildDate string `json:"build_date"`
 }

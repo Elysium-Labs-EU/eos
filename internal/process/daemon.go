@@ -806,8 +806,25 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return handleNewServiceLogFiles(mgr, request.Args)
 	case types.MethodGetServiceLogFilePath:
 		return handleGetServiceLogFilePath(mgr, request.Args)
+	case types.MethodGetVersion:
+		return handleGetVersion(mgr)
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
+	}
+}
+
+func handleGetVersion(mgr manager.ServiceManager) types.DaemonResponse {
+	version, err := mgr.GetVersion()
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(version)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
 	}
 }
 
