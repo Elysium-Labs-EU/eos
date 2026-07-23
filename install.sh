@@ -127,19 +127,70 @@ download_file() {
     fi
 }
 
-fetch_json_field() {
-    local url="$1"
-    local field="$2"
-    local tool="$3"
-    
-    local response
-    if [ "$tool" = "curl" ]; then
-        response=$(curl -fsSL "$url")
+# extract_tag_name prints the first "tag_name" value found in a JSON blob
+# passed on stdin (a single release's JSON).
+extract_tag_name() {
+    grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)"/\1/' | head -1
+}
+
+# pick_latest_tag prints a tag_name from a /releases list JSON blob passed on
+# stdin, preferring the highest stable (non-prerelease) tag and only falling
+# back to the highest prerelease tag when no stable release exists. GitHub's
+# /releases list is documented newest-first but has been observed live to
+# return a freshly published release out of list order (issue #43), so list
+# position can't be trusted. `sort -V` on the raw tag list isn't a safe
+# substitute either: it sorts a bare "v0.1.0" *before* "v0.1.0-rc.9", the
+# opposite of semver precedence. Pairing tag_name with prerelease sidesteps
+# both problems: both fields are release-level only (never present on the
+# nested assets array), so a flat grep of each pairs up 1:1 in list order.
+pick_latest_tag() {
+    local json scratch stable
+    json="$(cat)"
+    scratch="$(mktemp -d)"
+    printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*"([^"]+)"$/\1/' >"$scratch/tags"
+    printf '%s' "$json" | grep -o '"prerelease"[[:space:]]*:[[:space:]]*[a-z]*' | sed -E 's/.*:[[:space:]]*//' >"$scratch/prerelease"
+    stable="$(paste -d ' ' "$scratch/prerelease" "$scratch/tags" | awk '$1 == "false" { print $2 }' | sort -V | tail -1)"
+    if [ -n "$stable" ]; then
+        printf '%s' "$stable"
     else
-        response=$(wget -qO- "$url")
+        sort -V "$scratch/tags" | tail -1
     fi
-    
-    echo "$response" | grep -o "\"$field\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E 's/"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"/\1/' | head -1
+    rm -rf "$scratch"
+}
+
+# fetch_latest_version resolves the newest release tag for $REPO. It tries
+# /releases/latest first (GitHub's own "newest published, non-prerelease"
+# answer, unaffected by the list-ordering bug below) and only falls back to
+# scanning the full /releases list when that 404s — e.g. every release so
+# far is a prerelease. This avoids trusting /releases?per_page=1's list
+# order, which has been observed to place a freshly published release below
+# older ones (issue #43).
+fetch_latest_version() {
+    local tool="$1"
+    local api_base url release_json
+
+    api_base="${EOS_API_BASE:-https://api.github.com/repos/${REPO}}"
+
+    url="${api_base}/releases/latest"
+    if [ "$tool" = "curl" ]; then
+        release_json=$(curl -fsSL "$url" 2>/dev/null) || true
+    else
+        release_json=$(wget -qO- "$url" 2>/dev/null) || true
+    fi
+
+    if [ -n "$release_json" ]; then
+        printf '%s' "$release_json" | extract_tag_name
+        return
+    fi
+
+    url="${api_base}/releases?per_page=100"
+    if [ "$tool" = "curl" ]; then
+        release_json=$(curl -fsSL "$url") || return 1
+    else
+        release_json=$(wget -qO- "$url") || return 1
+    fi
+
+    printf '%s' "$release_json" | pick_latest_tag
 }
 
 detect_os() {
@@ -527,8 +578,8 @@ main() {
         version="${EOS_VERSION:-}"
         if [ -z "$version" ]; then
             step "Fetching latest version..."
-            version=$(fetch_json_field "https://api.github.com/repos/${REPO}/releases?per_page=1" "tag_name" "$download_tool")
-            
+            version=$(fetch_latest_version "$download_tool") || true
+
             if [ -z "$version" ]; then
                 error "Failed to fetch latest version"
                 dim "  Set EOS_VERSION environment variable to specify manually"
@@ -701,4 +752,8 @@ main() {
     echo ""
 }
 
-main "$@"
+# EOS_INSTALL_SOURCE_ONLY lets tests `source` this file to call its helper
+# functions (e.g. pick_latest_tag) directly, without running the installer.
+if [ "${EOS_INSTALL_SOURCE_ONLY:-}" != "1" ]; then
+    main "$@"
+fi
