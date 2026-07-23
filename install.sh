@@ -22,8 +22,8 @@ readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
 # releaseSigningPublicKeyPEM in cmd/system.go — the matching private key
 # lives only as the RELEASE_SIGNING_KEY secret in GitHub Actions.
 readonly RELEASE_SIGNING_PUBKEY='-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErOKaH8CMbhupu5eGKnlJIgsNPznf
-Q1RriMaj3XZbeF3fB1UO2IimuJ0OD3K9qScljrA1zTIxz37KoYSYFKZ6OQ==
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEByucQHF5ASSSrPSu6Gb5fvAuWdMw
+BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
 -----END PUBLIC KEY-----'
 
 AUTO_YES=false
@@ -573,7 +573,7 @@ main() {
         local download_url="${GITHUB_URL}/${REPO}/releases/download/${version}/eos-${os}-${arch}"
         local tmp_dir
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
-        trap 'rm -rf "$tmp_dir"' EXIT
+        trap 'rm -rf "${tmp_dir:-}"' EXIT
         tmp_binary="${tmp_dir}/${BINARY_NAME}"
         
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
@@ -683,8 +683,8 @@ main() {
     echo -e "${GREEN}${BOLD}Installation complete!${NC}"
     echo ""
     echo -e "${BOLD}Next steps:${NC}"
-    echo "  1. Register a service:"
-    echo -e "     ${CYAN}eos add /path/to/project/service.yaml${NC}"
+    echo "  1. Run a service:"
+    echo -e "     ${CYAN}eos run -f /path/to/project/service.yaml${NC}"
     echo ""
     echo "  2. Check status:"
     echo -e "     ${CYAN}eos status${NC}"
