@@ -817,6 +817,7 @@ func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) 
 }
 
 func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
+	verbose, _ := cmd.Flags().GetBool("verbose")
 	statusCmd := "systemctl status eos.service"
 	logsCmd := "journalctl -u eos.service"
 	if userUnit {
@@ -826,7 +827,7 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 		if effectiveUser, effectiveUserErr := userutil.EffectiveUser(); effectiveUserErr == nil {
 			if effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser); credErr == nil {
 				uid := int(effectiveUID)
-				if !isAccessibleDir(os.Getenv("XDG_RUNTIME_DIR"), uid) && !isAccessibleDir(userRuntimeDir(uid), uid) {
+				if !systemdUserBusReachable(uid) {
 					cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no active systemd user bus — the commands below will fail with \"Failed to connect to bus\"")
 					cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s, then start a fresh login session (or export XDG_RUNTIME_DIR=/run/user/%d in this shell)", ui.TextCommand.Render("sudo loginctl enable-linger "+effectiveUser.Username), uid))
 				}
@@ -836,11 +837,24 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
 	if version, err := systemdDaemonRunningVersion(cmd.Context(), userUnit); err == nil {
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
+	} else {
+		helpers.Debugf(cmd, verbose, "resolving running version: %v", err)
 	}
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
 	cmd.Println()
+}
+
+// systemdUserBusReachable reports whether $XDG_RUNTIME_DIR, as exported in this process's own
+// environment, points at a dir accessible to uid — the same signal `systemctl --user` itself
+// relies on to find the session bus socket. It deliberately does not fall back to checking
+// whether userRuntimeDir(uid) exists on disk: a lingering user manager (via `loginctl
+// enable-linger`) can leave /run/user/<uid> present and accessible while this process's
+// environment simply never had the var exported, which is exactly the case the caller's warning
+// exists to catch — falling back to the derived path masks it.
+func systemdUserBusReachable(uid int) bool {
+	return isAccessibleDir(os.Getenv("XDG_RUNTIME_DIR"), uid)
 }
 
 // systemdDaemonRunningVersion resolves the version string embedded in the binary
