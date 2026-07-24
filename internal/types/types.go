@@ -83,6 +83,12 @@ type ServiceConfig struct {
 	LogSinks      []LogSinkRef `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
 	Port          int          `json:"port,omitempty"           yaml:"port,omitempty"`
 	MemoryLimitMb int          `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
+	// LogMaxFiles caps how many rotated stdout/stderr log files this service keeps
+	// (active file plus this many rotated siblings). 0 uses the daemon's own default.
+	LogMaxFiles int `json:"log_max_files,omitempty" yaml:"log_max_files,omitempty"`
+	// LogFileSizeLimitBytes rotates this service's stdout/stderr log once it
+	// reaches this size. 0 uses the daemon's own default.
+	LogFileSizeLimitBytes int64 `json:"log_file_size_limit_bytes,omitempty" yaml:"log_file_size_limit_bytes,omitempty"`
 }
 
 type ServiceInstance struct {

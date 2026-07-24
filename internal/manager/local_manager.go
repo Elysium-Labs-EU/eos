@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -35,10 +36,85 @@ type LocalManager struct {
 	// invocations for the same service can't each independently read state and
 	// spawn a competing process group (see issue #1). serviceLocksMu guards the
 	// map itself; the per-service mutex guards a single service's lifecycle.
-	serviceLocks   map[string]*sync.Mutex
+	serviceLocks map[string]*sync.Mutex
+	// logWriters holds one reference-counted RotatingFileWriter per service log
+	// file path. A running service's stdout/stderr pipe-forwarding goroutines
+	// and the health monitor's breadcrumb writes (LogToServiceStdout/
+	// LogToServiceStderr) can both target the same log file while the service
+	// is running; routing every writer through this registry means they share
+	// one RotatingFileWriter (one lock, one size counter, one *os.File) instead
+	// of each opening their own handle onto the same path, which would let one
+	// writer's rotate() rename the file out from under the other's fd.
+	// logWritersMu guards the map itself.
+	logWriters     map[string]*sharedLogWriter
 	baseDir        string
 	pipeWg         sync.WaitGroup
 	serviceLocksMu sync.Mutex
+	logWritersMu   sync.Mutex
+}
+
+// sharedLogWriter is a reference-counted RotatingFileWriter: refs tracks how
+// many callers currently hold it via acquireLogWriter, so releaseLogWriter
+// only closes the underlying file once the last holder is done with it.
+type sharedLogWriter struct {
+	writer *RotatingFileWriter
+	refs   int
+}
+
+// acquireLogWriter returns the shared rotating writer for logDir/fileName,
+// creating it (with maxFiles/sizeLimit) on the first acquire; a later acquire
+// for the same path reuses the existing writer and ignores its maxFiles/
+// sizeLimit arguments — the file's rotation policy is set once, by whichever
+// caller creates it first. Every successful acquire must be paired with a
+// releaseLogWriter call once the caller is done writing.
+func (m *LocalManager) acquireLogWriter(logDir, fileName string, maxFiles int, sizeLimit int64) (*RotatingFileWriter, error) {
+	path, err := joinLogPath(logDir, fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	m.logWritersMu.Lock()
+	defer m.logWritersMu.Unlock()
+
+	if entry, ok := m.logWriters[path]; ok {
+		entry.refs++
+		return entry.writer, nil
+	}
+
+	w, err := newRotatingFileWriter(logDir, fileName, maxFiles, sizeLimit)
+	if err != nil {
+		return nil, err
+	}
+	if m.logWriters == nil {
+		m.logWriters = make(map[string]*sharedLogWriter)
+	}
+	m.logWriters[path] = &sharedLogWriter{writer: w, refs: 1}
+	return w, nil
+}
+
+// releaseLogWriter drops one reference to logDir/fileName's shared writer,
+// closing and removing it once the last holder has released it. A path with
+// no registered writer is a no-op: callers that never successfully acquired
+// (e.g. an early error before the acquire) must not call this.
+func (m *LocalManager) releaseLogWriter(logDir, fileName string) error {
+	path, err := joinLogPath(logDir, fileName)
+	if err != nil {
+		return err
+	}
+
+	m.logWritersMu.Lock()
+	defer m.logWritersMu.Unlock()
+
+	entry, ok := m.logWriters[path]
+	if !ok {
+		return nil
+	}
+	entry.refs--
+	if entry.refs > 0 {
+		return nil
+	}
+	delete(m.logWriters, path)
+	return entry.writer.Close()
 }
 
 // WaitPipes blocks until all pipe-forwarding goroutines have exited.
@@ -100,7 +176,7 @@ func WithTelemetry(h *otelx.Handles) LocalManagerOption {
 }
 
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
-	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex)}
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex), logWriters: make(map[string]*sharedLogWriter)}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -260,7 +336,14 @@ func newPipeForStd() (r *os.File, w *os.File, err error) {
 	return r, w, nil
 }
 
-func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
+// pipeToLogFile forwards r (the service's stdout) into w — the service's
+// shared rotating log writer, acquired by the caller — line by line, and
+// releases that acquire once r hits EOF (the process exited and the pipe's
+// write end closed). w is only ever written to here, never closed directly:
+// other holders (e.g. a concurrent health-monitor breadcrumb write) may still
+// be using the shared writer, so releaseServiceLogWriter decides whether the
+// underlying file actually closes.
+func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
 	if wg != nil {
 		defer wg.Done()
@@ -284,12 +367,16 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w *os.File, name string, sinks 
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Error("closing read log file pipe", "service", name, "error", err)
 	}
-	if err := w.Close(); err != nil {
-		m.logger.Error("closing write log file", "service", name, "error", err)
+	if err := m.releaseServiceLogWriter(name, false); err != nil {
+		m.logger.Error("releasing log file", "service", name, "error", err)
 	}
 }
 
-func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, errFileLogger *slog.Logger, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
+// pipeToErrorLogFile forwards r (the service's stderr) into errFileLogger
+// line by line, and releases the caller's acquire of the shared error-log
+// writer once r hits EOF. See pipeToLogFile for why release (not a direct
+// Close) is correct here.
+func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
 	if wg != nil {
 		defer wg.Done()
@@ -312,8 +399,8 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, w *os.File, errFileLogger 
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
 		m.logger.Error("closing read error log file pipe", "service", name, "error", err)
 	}
-	if err := w.Close(); err != nil {
-		m.logger.Error("closing write error log file", "service", name, "error", err)
+	if err := m.releaseServiceLogWriter(name, true); err != nil {
+		m.logger.Error("releasing error log file", "service", name, "error", err)
 	}
 }
 
@@ -335,32 +422,33 @@ func livePGIDInHistory(history []types.ProcessHistory) int {
 // launchIO bundles the log files and stdout/stderr pipes created for a service
 // launch so every failure path can clean them up together.
 type launchIO struct {
-	logFile      *os.File
-	errorLogFile *os.File
+	logFile      *RotatingFileWriter
+	errorLogFile *RotatingFileWriter
 	readLog      *os.File
 	writeLog     *os.File
 	readErr      *os.File
 	writeErr     *os.File
 }
 
-// prepareLaunchIO opens the service log files and the two stdout/stderr pipes.
-// On any partial failure it closes whatever was already opened so the caller
-// never leaks a descriptor.
-func (m *LocalManager) prepareLaunchIO(name string) (launchIO, error) {
-	logFile, errorLogFile, err := m.prepareLogFiles(name)
+// prepareLaunchIO opens the service log files (behind a size-capped rotating
+// writer, per config's log rotation override or the daemon default) and the
+// two stdout/stderr pipes. On any partial failure it closes whatever was
+// already opened so the caller never leaks a descriptor.
+func (m *LocalManager) prepareLaunchIO(name string, config *types.ServiceConfig) (launchIO, error) {
+	logFile, errorLogFile, err := m.prepareLogFiles(name, config)
 	if err != nil {
 		return launchIO{}, fmt.Errorf("preparing log files for %s: %w", name, err)
 	}
 	readLog, writeLog, err := newPipeForStd()
 	if err != nil {
-		_ = logFile.Close()
-		_ = errorLogFile.Close()
+		_ = m.releaseServiceLogWriter(name, false)
+		_ = m.releaseServiceLogWriter(name, true)
 		return launchIO{}, fmt.Errorf("creating log file pipe for %s: %w", name, err)
 	}
 	readErr, writeErr, err := newPipeForStd()
 	if err != nil {
-		_ = logFile.Close()
-		_ = errorLogFile.Close()
+		_ = m.releaseServiceLogWriter(name, false)
+		_ = m.releaseServiceLogWriter(name, true)
 		_ = readLog.Close()
 		_ = writeLog.Close()
 		return launchIO{}, fmt.Errorf("creating error log file pipe for %s: %w", name, err)
@@ -375,25 +463,32 @@ func (m *LocalManager) prepareLaunchIO(name string) (launchIO, error) {
 	}, nil
 }
 
-// closeAll closes every file in the bundle, joining any close errors. Used by
-// the launch failure path before the pipe goroutines take ownership.
-func (lio launchIO) closeAll() error {
+// closeAll closes every pipe fd and releases both shared log writers in the
+// bundle, joining any errors. Used by the launch failure path before the pipe
+// goroutines take ownership; the log files are released rather than closed
+// directly since another caller may still hold a reference to the same
+// shared writer (see acquireLogWriter).
+func (lio launchIO) closeAll(m *LocalManager, serviceName string) error {
 	closers := []struct {
-		f   *os.File
+		c   io.Closer
 		msg string
 	}{
 		{lio.readLog, "closing read log file pipe"},
 		{lio.writeLog, "closing write log file pipe"},
 		{lio.readErr, "closing read error log file pipe"},
 		{lio.writeErr, "closing write error log file pipe"},
-		{lio.logFile, "closing log file"},
-		{lio.errorLogFile, "closing error log file"},
 	}
 	var errs []error
 	for _, c := range closers {
-		if closeErr := c.f.Close(); closeErr != nil {
+		if closeErr := c.c.Close(); closeErr != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", c.msg, closeErr))
 		}
+	}
+	if relErr := m.releaseServiceLogWriter(serviceName, false); relErr != nil {
+		errs = append(errs, fmt.Errorf("releasing log file: %w", relErr))
+	}
+	if relErr := m.releaseServiceLogWriter(serviceName, true); relErr != nil {
+		errs = append(errs, fmt.Errorf("releasing error log file: %w", relErr))
 	}
 	return errors.Join(errs...)
 }
@@ -439,7 +534,7 @@ func (m *LocalManager) wireLogPipes(lio launchIO, resolvedSinks []types.LogSink,
 
 	m.pipeWg.Add(2)
 	go m.pipeToLogFile(lio.readLog, lio.logFile, name, sinks, sinkWg)
-	go m.pipeToErrorLogFile(lio.readErr, lio.errorLogFile, errFileLogger, name, sinks, sinkWg)
+	go m.pipeToErrorLogFile(lio.readErr, errFileLogger, name, sinks, sinkWg)
 	return nil
 }
 
@@ -632,7 +727,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, reconcileErr
 	}
 
-	lio, err := m.prepareLaunchIO(service.Name)
+	lio, err := m.prepareLaunchIO(service.Name, config)
 	if err != nil {
 		return 0, err
 	}
@@ -640,7 +735,7 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	launchSuccess := false
 	defer func() {
 		if !launchSuccess {
-			if closeErr := lio.closeAll(); closeErr != nil {
+			if closeErr := lio.closeAll(m, service.Name); closeErr != nil {
 				err = errors.Join(err, closeErr)
 			}
 		}
@@ -688,7 +783,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, fmt.Errorf("no service instance for %s", name)
 	}
 
-	lio, err := m.prepareLaunchIO(service.Name)
+	lio, err := m.prepareLaunchIO(service.Name, config)
 	if err != nil {
 		return 0, err
 	}
@@ -696,7 +791,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	launchSuccess := false
 	defer func() {
 		if !launchSuccess {
-			if closeErr := lio.closeAll(); closeErr != nil {
+			if closeErr := lio.closeAll(m, service.Name); closeErr != nil {
 				err = errors.Join(err, closeErr)
 			}
 		}
@@ -726,22 +821,19 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	return m.recordRestartedInstance(service, serviceInstance.RestartCount, pgid, startedAtTicks)
 }
 
-func (m *LocalManager) prepareLogFiles(serviceName string) (logFile *os.File, errorLogFile *os.File, err error) {
-	logPath, errorLogPath, err := m.NewServiceLogFiles(serviceName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create log file paths: %w", err)
-	}
-	logFile, err = OpenLogFile(logPath)
+func (m *LocalManager) prepareLogFiles(serviceName string, config *types.ServiceConfig) (logFile *RotatingFileWriter, errorLogFile *RotatingFileWriter, err error) {
+	maxFiles, sizeLimit := resolveServiceLogRotation(config)
+	logFile, err = m.acquireServiceLogWriter(serviceName, false, maxFiles, sizeLimit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open log file: %w", err)
 	}
-	errorLogFile, err = OpenLogFile(errorLogPath)
+	errorLogFile, err = m.acquireServiceLogWriter(serviceName, true, maxFiles, sizeLimit)
 	if err != nil {
 		openErr := err
-		if closeErr := logFile.Close(); closeErr != nil {
+		if closeErr := m.releaseServiceLogWriter(serviceName, false); closeErr != nil {
 			return nil, nil, errors.Join(
 				fmt.Errorf("open error log file: %w", openErr),
-				fmt.Errorf("close log file during cleanup: %w", closeErr),
+				fmt.Errorf("release log file during cleanup: %w", closeErr),
 			)
 		}
 		return nil, nil, fmt.Errorf("open error log file: %w", openErr)

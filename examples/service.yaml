@@ -9,6 +9,12 @@ runtime:
   path: "~/.nvm/versions/node/v20.0.0/bin"
 memory_limit_mb: 512
 
+# Optional: override the stdout/stderr log rotation cap for this service.
+# Unset falls back to the daemon's own log rotation default (see `eos system
+# info`): 5 files, 10MB each.
+# log_max_files: 5
+# log_file_size_limit_bytes: 10485760
+
 # Optional: route logs to external sinks.
 # Each sink runs as a child process managed by eos.
 # eos writes NDJSON records to its stdin; the plugin forwards them.
