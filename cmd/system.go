@@ -21,14 +21,14 @@ import (
 	"text/template"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/process"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/ui"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
 )
@@ -200,7 +200,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	updateCmd := &cobra.Command{
 		Use:           "update",
 		Short:         "Apply new update if available",
-		Long:          `Check Codeberg for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
+		Long:          `Check GitHub for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
 		Example:       "  eos system update        # check and apply latest stable release\n  eos system update --pre  # include pre-releases",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -1335,9 +1335,9 @@ type Release struct {
 }
 
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
-	url := "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases/latest"
+	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
 	if includePre {
-		url = "https://codeberg.org/api/v1/repos/Elysium_Labs/eos/releases"
+		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -1373,7 +1373,17 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 		if len(releases) == 0 {
 			return nil, fmt.Errorf("no releases found")
 		}
-		return &releases[0], nil
+		// GitHub's list order isn't a reliable "newest first" guarantee (the
+		// same list-ordering hazard install.sh's fetch_latest_version guards
+		// against, issue #43), so pick the highest semver tag directly
+		// instead of trusting releases[0].
+		latest := &releases[0]
+		for i := 1; i < len(releases); i++ {
+			if semver.Compare(releases[i].TagName, latest.TagName) > 0 {
+				latest = &releases[i]
+			}
+		}
+		return latest, nil
 	}
 
 	var release Release
@@ -1414,12 +1424,12 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, LatestVersion: latest}, nil
 }
 
-// fetchAssetResponse validates the asset URL (https + codeberg.org), issues the
+// fetchAssetResponse validates the asset URL (https + github.com), issues the
 // GET, and returns a non-nil 200 response whose Body the caller must close. It
 // closes the body itself on any non-success path.
 func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response, error) {
 	parsedURL, err := url.Parse(latestAsset.BrowserDownloadURL)
-	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "github.com") {
 		return nil, fmt.Errorf("invalid URL")
 	}
 
@@ -1526,7 +1536,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	}
 
 	parsedURL, err := url.Parse(checksumsAsset.BrowserDownloadURL)
-	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "codeberg.org") {
+	if err != nil || parsedURL.Scheme != "https" || !strings.EqualFold(parsedURL.Hostname(), "github.com") {
 		return "", fmt.Errorf("invalid checksums URL")
 	}
 

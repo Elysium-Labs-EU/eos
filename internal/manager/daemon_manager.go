@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 // ForkStderrLogPath returns where a forked daemon's raw stderr is captured

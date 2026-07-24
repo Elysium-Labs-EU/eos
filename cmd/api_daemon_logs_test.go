@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 )
 
 func runAPIDaemonLogs(t *testing.T, getConfig func() (string, *config.SystemConfig, userutil.Identity, error), args ...string) (*bytes.Buffer, *bytes.Buffer, error) {

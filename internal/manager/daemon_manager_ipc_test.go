@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 // fakeServer listens on a fresh Unix socket and handles ONE request with handler.

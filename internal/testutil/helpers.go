@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 func SetupTestDB(t testing.TB, migrationsFS embed.FS, migrationsPath string) (*database.DB, *sql.DB, string) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 )
 
 func runAPIDaemonInfo(t *testing.T, getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) (*bytes.Buffer, *bytes.Buffer, error) {
