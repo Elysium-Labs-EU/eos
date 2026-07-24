@@ -526,3 +526,86 @@ func TestPrintSystemdDaemonDetails(t *testing.T) {
 		}
 	}
 }
+
+// TestSystemdUserBusReachable_FalseWhenEnvUnset guards issue #41: the bus-availability check must
+// key off whether $XDG_RUNTIME_DIR is actually exported in this process, not whether some
+// accessible runtime dir happens to exist for the uid elsewhere on disk — a lingering user manager
+// can leave /run/user/<uid> present while this shell's environment simply lacks the var.
+func TestSystemdUserBusReachable_FalseWhenEnvUnset(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	if systemdUserBusReachable(os.Getuid()) {
+		t.Error("expected bus to be reported unreachable when XDG_RUNTIME_DIR is unset")
+	}
+}
+
+func TestSystemdUserBusReachable_FalseWhenEnvPointsAtMissingDir(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(t.TempDir(), "gone"))
+	if systemdUserBusReachable(os.Getuid()) {
+		t.Error("expected bus to be reported unreachable when XDG_RUNTIME_DIR points at a nonexistent dir")
+	}
+}
+
+func TestSystemdUserBusReachable_TrueWhenEnvPointsAtAccessibleOwnDir(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	if !systemdUserBusReachable(os.Getuid()) {
+		t.Error("expected bus to be reported reachable when XDG_RUNTIME_DIR points at an accessible dir owned by uid")
+	}
+}
+
+// TestPrintSystemdDaemonDetails_WarnsWhenXDGRuntimeDirUnset is the integration-level counterpart
+// to TestSystemdUserBusReachable_FalseWhenEnvUnset: it exercises the actual warning text printed
+// by `eos daemon info` for a systemd --user daemon when the bus can't be reached.
+func TestPrintSystemdDaemonDetails_WarnsWhenXDGRuntimeDirUnset(t *testing.T) {
+	var out, errOut bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	printSystemdDaemonDetails(cmd, true)
+
+	combined := out.String() + errOut.String()
+	if !strings.Contains(combined, "no active systemd user bus") {
+		t.Errorf("expected bus warning when XDG_RUNTIME_DIR is unset, got: %s", combined)
+	}
+}
+
+// TestPrintSystemdDaemonDetails_NoWarningWhenXDGRuntimeDirAccessible must own the dir as the same
+// uid printSystemdDaemonDetails itself checks against — userutil.EffectiveUser()'s resolved uid,
+// not necessarily os.Getuid(). Under sudo (or a CI runner with SUDO_USER exported), those differ:
+// the process's real uid can be root while EffectiveUser resolves to the invoking non-root user, so
+// a tempdir owned by the raw process uid looks inaccessible to isAccessibleDir and the warning
+// still (correctly, per the check) fires. Chown to the resolved uid to match production.
+func TestPrintSystemdDaemonDetails_NoWarningWhenXDGRuntimeDirAccessible(t *testing.T) {
+	effectiveUser, err := userutil.EffectiveUser()
+	if err != nil {
+		t.Fatalf("resolving effective user: %v", err)
+	}
+	effectiveUID, effectiveGID, err := userutil.UserCredentials(effectiveUser)
+	if err != nil {
+		t.Fatalf("resolving effective uid: %v", err)
+	}
+
+	dir := t.TempDir()
+	if int(effectiveUID) != os.Getuid() {
+		if os.Geteuid() != 0 {
+			t.Skip("effective user differs from the test process's own uid (e.g. under sudo) and chowning the fixture dir requires root")
+		}
+		if err := os.Chown(dir, int(effectiveUID), int(effectiveGID)); err != nil {
+			t.Fatalf("chown: %v", err)
+		}
+	}
+
+	var out, errOut bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	printSystemdDaemonDetails(cmd, true)
+
+	combined := out.String() + errOut.String()
+	if strings.Contains(combined, "no active systemd user bus") {
+		t.Errorf("expected no bus warning when XDG_RUNTIME_DIR points at an accessible dir, got: %s", combined)
+	}
+}
