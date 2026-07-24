@@ -1890,8 +1890,11 @@ func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
 func (s *stubUpdateController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
 	return s.killed, s.stopErr
 }
-func (s *stubUpdateController) Remove() error                        { return nil }
-func (s *stubUpdateController) Info(_ *cobra.Command)                {}
+func (s *stubUpdateController) Remove() error         { return nil }
+func (s *stubUpdateController) Info(_ *cobra.Command) {}
+func (s *stubUpdateController) APIInfo(_ *cobra.Command) apiDaemonInfoResult {
+	return apiDaemonInfoResult{ManagedBy: "fake"}
+}
 func (s *stubUpdateController) Logs(_ *cobra.Command, _ int, _ bool) {}
 func (s *stubUpdateController) LogsHint() string                     { return "eos daemon logs" }
 

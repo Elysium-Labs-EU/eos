@@ -26,6 +26,7 @@ type DaemonController interface {
 	Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error)
 	Remove() error
 	Info(cmd *cobra.Command)
+	APIInfo(cmd *cobra.Command) apiDaemonInfoResult
 	Logs(cmd *cobra.Command, lines int, follow bool)
 	LogsHint() string
 }
@@ -97,6 +98,22 @@ func (c *standaloneDaemonController) Info(cmd *cobra.Command) {
 
 func (c *standaloneDaemonController) LogsHint() string {
 	return "eos daemon logs"
+}
+
+func (c *standaloneDaemonController) APIInfo(cmd *cobra.Command) apiDaemonInfoResult {
+	result := apiDaemonInfoResult{ManagedBy: "standalone", LogsHint: c.LogsHint()}
+	status, err := process.StatusStandaloneDaemon(&c.cfg)
+	if err != nil {
+		return result
+	}
+	result.Running = &status.Running
+	result.Pid = status.Pid
+	if status.Running {
+		if version, versionErr := resolveStandaloneDaemonVersion(cmd.Context(), &c.cfg); versionErr == nil {
+			result.Version = &version
+		}
+	}
+	return result
 }
 
 func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
@@ -215,6 +232,14 @@ func (c systemdDaemonController) LogsHint() string {
 		return "journalctl --user -u eos -f"
 	}
 	return "journalctl -u eos -f"
+}
+
+func (c systemdDaemonController) APIInfo(cmd *cobra.Command) apiDaemonInfoResult {
+	result := apiDaemonInfoResult{ManagedBy: "systemd", LogsHint: c.LogsHint()}
+	if version, err := systemdDaemonRunningVersion(cmd.Context(), c.cfg.UserUnit); err == nil {
+		result.Version = &version
+	}
+	return result
 }
 
 // buildJournalArgs assembles the journalctl arguments for the daemon unit,
@@ -340,6 +365,10 @@ func (c launchdDaemonController) LogsHint() string {
 	return "eos daemon logs"
 }
 
+func (c launchdDaemonController) APIInfo(_ *cobra.Command) apiDaemonInfoResult {
+	return apiDaemonInfoResult{ManagedBy: "launchd", LogsHint: c.LogsHint()}
+}
+
 func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
 }
@@ -404,6 +433,10 @@ func (c openrcDaemonController) Info(cmd *cobra.Command) {
 
 func (c openrcDaemonController) LogsHint() string {
 	return "eos daemon logs"
+}
+
+func (c openrcDaemonController) APIInfo(_ *cobra.Command) apiDaemonInfoResult {
+	return apiDaemonInfoResult{ManagedBy: "openrc", LogsHint: c.LogsHint()}
 }
 
 func (c openrcDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {

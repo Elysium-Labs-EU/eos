@@ -270,8 +270,11 @@ func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ b
 func (f *fakeDaemonController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
 	return false, nil
 }
-func (f *fakeDaemonController) Remove() error                        { return nil }
-func (f *fakeDaemonController) Info(_ *cobra.Command)                {}
+func (f *fakeDaemonController) Remove() error         { return nil }
+func (f *fakeDaemonController) Info(_ *cobra.Command) {}
+func (f *fakeDaemonController) APIInfo(_ *cobra.Command) apiDaemonInfoResult {
+	return apiDaemonInfoResult{ManagedBy: "fake"}
+}
 func (f *fakeDaemonController) Logs(_ *cobra.Command, _ int, _ bool) {}
 func (f *fakeDaemonController) LogsHint() string                     { return "" }
 

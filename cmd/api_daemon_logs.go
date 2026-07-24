@@ -23,7 +23,11 @@ func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Id
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	daemonCmd.AddCommand(newAPIDaemonInfoCmd(getConfig))
 	daemonCmd.AddCommand(newAPIDaemonLogsCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonRemoveCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonStartCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonStopCmd(getConfig))
 	return daemonCmd
 }
 
