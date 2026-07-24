@@ -468,6 +468,13 @@ func recordReapedExit(ctx context.Context, db *database.DB, logger *slog.Logger,
 // drain loop should end.
 func handleReapedChild(ctx context.Context, db *database.DB, logger *slog.Logger, pid int, waitErr error, status syscall.WaitStatus) reapAction {
 	if waitErr != nil {
+		if errors.Is(waitErr, syscall.ECHILD) {
+			// No children left to reap: the expected terminal condition of this
+			// drain loop, not a failure (e.g. the explicit stop path already
+			// reaped everything before SIGCHLD delivery for this cycle).
+			logger.Debug("reap loop drained: no child processes", "pid", pid)
+			return reapStop
+		}
 		logger.Error("cleaning up child process", "pid", pid, "error", waitErr)
 		return reapStop
 	}
@@ -764,8 +771,29 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Lo
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(response); err != nil {
-		logger.Error("sending response", "error", err)
+		logClientWriteError(logger, "sending response", err)
 	}
+}
+
+// isClientDisconnect reports whether err reflects the client having gone away
+// mid-write (broken pipe, reset connection, or an already-closed listener)
+// rather than a daemon-side failure. A liveness probe that dials the socket
+// and closes immediately (cmd/daemon_liveness.go's socketResponds) produces
+// exactly this: the daemon's write to the now-closed conn fails, which is the
+// expected outcome of a bare connectivity check, not an error worth alerting on.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
+}
+
+// logClientWriteError logs a failed write to a client connection at the
+// severity the cause warrants: Debug for a routine client hangup, Error for
+// anything else.
+func logClientWriteError(logger *slog.Logger, msg string, err error) {
+	if isClientDisconnect(err) {
+		logger.Debug(msg, "error", err)
+		return
+	}
+	logger.Error(msg, "error", err)
 }
 
 // executeRequest dispatches a decoded daemon IPC request to the handler for
@@ -1159,6 +1187,6 @@ func sendErrorResponse(conn net.Conn, message string, logger *slog.Logger) {
 	encoder := json.NewEncoder(conn)
 	err := encoder.Encode(response)
 	if err != nil {
-		logger.Error("sending error response", "error", err)
+		logClientWriteError(logger, "sending error response", err)
 	}
 }

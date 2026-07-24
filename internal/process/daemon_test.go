@@ -1,10 +1,13 @@
 package process
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -19,6 +22,14 @@ import (
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// capturingLogger returns a *slog.Logger (with Debug enabled) plus the buffer
+// its JSON output is written to, so tests can assert on both the level and
+// message of what got logged.
+func capturingLogger() (*slog.Logger, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})), buf
 }
 
 func TestHandleReapedChild(t *testing.T) {
@@ -40,6 +51,87 @@ func TestHandleReapedChild(t *testing.T) {
 	t.Run("negative pid continues without db work", func(t *testing.T) {
 		if got := handleReapedChild(t.Context(), nil, logger, -1, nil, status); got != reapContinue {
 			t.Errorf("expected reapContinue on negative pid, got %v", got)
+		}
+	})
+
+	t.Run("ECHILD stops the drain and logs at debug, not error", func(t *testing.T) {
+		capturing, buf := capturingLogger()
+		wrapped := fmt.Errorf("wait4: %w", syscall.ECHILD)
+
+		if got := handleReapedChild(t.Context(), nil, capturing, -1, wrapped, status); got != reapStop {
+			t.Errorf("expected reapStop on ECHILD, got %v", got)
+		}
+
+		out := buf.String()
+		if strings.Contains(out, `"level":"ERROR"`) {
+			t.Errorf("ECHILD must not log at ERROR, got: %s", out)
+		}
+		if !strings.Contains(out, `"level":"DEBUG"`) || !strings.Contains(out, "reap loop drained") {
+			t.Errorf("expected a DEBUG 'reap loop drained' log line, got: %s", out)
+		}
+	})
+
+	t.Run("genuine wait error still logs at error", func(t *testing.T) {
+		capturing, buf := capturingLogger()
+
+		if got := handleReapedChild(t.Context(), nil, capturing, -1, syscall.EINVAL, status); got != reapStop {
+			t.Errorf("expected reapStop on wait error, got %v", got)
+		}
+
+		out := buf.String()
+		if !strings.Contains(out, `"level":"ERROR"`) || !strings.Contains(out, "cleaning up child process") {
+			t.Errorf("expected an ERROR 'cleaning up child process' log line, got: %s", out)
+		}
+	})
+}
+
+func TestIsClientDisconnect(t *testing.T) {
+	tests := []struct {
+		err  error
+		name string
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "EPIPE", err: syscall.EPIPE, want: true},
+		{name: "wrapped EPIPE", err: fmt.Errorf("write: %w", syscall.EPIPE), want: true},
+		{name: "ECONNRESET", err: syscall.ECONNRESET, want: true},
+		{name: "wrapped ECONNRESET", err: fmt.Errorf("write: %w", syscall.ECONNRESET), want: true},
+		{name: "net.ErrClosed", err: net.ErrClosed, want: true},
+		{name: "wrapped net.ErrClosed", err: fmt.Errorf("write: %w", net.ErrClosed), want: true},
+		{name: "unrelated error", err: errors.New("boom"), want: false},
+		{name: "unrelated errno", err: syscall.EINVAL, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isClientDisconnect(tt.err); got != tt.want {
+				t.Errorf("isClientDisconnect(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogClientWriteError(t *testing.T) {
+	t.Run("client disconnect logs at debug", func(t *testing.T) {
+		logger, buf := capturingLogger()
+		logClientWriteError(logger, "sending response", syscall.EPIPE)
+
+		out := buf.String()
+		if strings.Contains(out, `"level":"ERROR"`) {
+			t.Errorf("client disconnect must not log at ERROR, got: %s", out)
+		}
+		if !strings.Contains(out, `"level":"DEBUG"`) || !strings.Contains(out, "sending response") {
+			t.Errorf("expected a DEBUG 'sending response' log line, got: %s", out)
+		}
+	})
+
+	t.Run("other errors log at error", func(t *testing.T) {
+		logger, buf := capturingLogger()
+		logClientWriteError(logger, "sending response", errors.New("boom"))
+
+		out := buf.String()
+		if !strings.Contains(out, `"level":"ERROR"`) || !strings.Contains(out, "sending response") {
+			t.Errorf("expected an ERROR 'sending response' log line, got: %s", out)
 		}
 	})
 }
