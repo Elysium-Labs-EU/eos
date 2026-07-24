@@ -74,7 +74,7 @@ func procCPUTime(pid int) (time.Duration, error) {
 	// proc_pid_rusage passes buffersize 0: the kernel sizes the copy-out from
 	// the flavor, not the caller's length. The pointer is to a fixed-size,
 	// locally-declared struct matching the kernel's rusage_info_v0 layout.
-	//nolint:staticcheck // SYS_PROC_INFO is the only cgo-free path to proc_pid_rusage; libSystem wrappers need cgo, which eos builds without.
+	//nolint:staticcheck // SA1019: SYS_PROC_INFO is the only cgo-free path to proc_pid_rusage; libSystem wrappers need cgo, which eos builds without.
 	_, _, errno := unix.Syscall6(
 		unix.SYS_PROC_INFO,
 		procInfoCallPIDRUsage,
