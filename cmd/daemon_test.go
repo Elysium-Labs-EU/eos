@@ -456,6 +456,7 @@ func TestForkDaemonAlreadyRunning(t *testing.T) {
 	err = forkDaemon(t.Context(), cfg, false, identity)
 	if err == nil {
 		t.Fatal("expected error when daemon is already running")
+		return
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("expected 'already running' error, got: %v", err)
@@ -486,6 +487,7 @@ func TestEnsureDaemonNotRunning_AlreadyRunning(t *testing.T) {
 	err := ensureDaemonNotRunning(&config.StandaloneDaemonConfig{PIDFile: pidFile})
 	if err == nil {
 		t.Fatal("expected error when daemon is already running")
+		return
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("expected 'already running' error, got: %v", err)
@@ -502,6 +504,7 @@ func TestEnsureDaemonNotRunning_StatusError(t *testing.T) {
 	err := ensureDaemonNotRunning(cfg)
 	if err == nil {
 		t.Fatal("expected error when the pid file path is unreadable")
+		return
 	}
 	if !strings.Contains(err.Error(), "checking daemon status") {
 		t.Errorf("expected status-check error wrapper, got: %v", err)
@@ -538,6 +541,7 @@ func TestSpawnForkedDaemon_StartError(t *testing.T) {
 	err = spawnForkedDaemon(t.Context(), nonexistentExe, false, identity, pidFile)
 	if err == nil {
 		t.Fatal("expected error when exePath doesn't exist")
+		return
 	}
 	if !strings.Contains(err.Error(), "failed to start daemon process") {
 		t.Errorf("expected start-failure error, got: %v", err)
@@ -616,6 +620,7 @@ func TestWaitForForkPIDFileTimesOutOnDeadPID(t *testing.T) {
 	err := waitForForkPIDFile(pidFile)
 	if err == nil {
 		t.Fatal("expected waitForForkPIDFile to time out for a pid file naming a dead process, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "timed out waiting for PID file") {
 		t.Errorf("expected timeout error, got: %v", err)
@@ -634,6 +639,7 @@ func TestWaitForForkSocketTimesOutWhenNothingListens(t *testing.T) {
 	err := waitForForkSocket(t.Context(), socketPath)
 	if err == nil {
 		t.Fatal("expected waitForForkSocket to time out when nothing listens on the socket")
+		return
 	}
 	if !strings.Contains(err.Error(), "timed out waiting for daemon socket") {
 		t.Errorf("expected timeout error, got: %v", err)

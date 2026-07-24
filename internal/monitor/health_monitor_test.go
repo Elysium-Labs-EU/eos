@@ -329,6 +329,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
 		t.Fatal("Failed to get updated process history")
+		return
 	}
 
 	if updatedEntry.State != types.ProcessStateFailed {
@@ -451,6 +452,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
 		t.Fatal("Failed to get process history after check")
+		return
 	}
 
 	if updatedEntry.State != types.ProcessStateFailed {
@@ -572,6 +574,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	}
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
+		return
 	}
 	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
@@ -607,6 +610,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	}
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
+		return
 	}
 	if processHistoryEntry.State != types.ProcessStateRunning {
 		t.Fatalf("Service process should be running, got: %s", processHistoryEntry.State)
@@ -688,6 +692,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get recent process history entry failed: %v", err)
+		return
 	}
 	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
@@ -709,6 +714,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get process history entry failed: %v", err)
+		return
 	}
 
 	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance)
@@ -716,6 +722,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get process history entry after tick failed: %v", err)
+		return
 	}
 	if processHistoryEntry.RssMemoryKb != knownRssKb {
 		t.Fatalf("RSS overwritten during throttled tick: want %d KB, got %d KB", knownRssKb, processHistoryEntry.RssMemoryKb)
@@ -785,6 +792,7 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get recent process history entry failed: %v", err)
+		return
 	}
 	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
@@ -806,9 +814,11 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get process history entry failed: %v", err)
+		return
 	}
 	if processHistoryEntry.UpdatedAt == nil {
 		t.Fatal("expected seeded row to have a non-nil updated_at")
+		return
 	}
 	updatedBefore := *processHistoryEntry.UpdatedAt
 
@@ -820,9 +830,11 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 	processHistoryEntry, err = hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("get process history entry after tick failed: %v", err)
+		return
 	}
 	if processHistoryEntry.UpdatedAt == nil {
 		t.Fatal("expected updated_at to be set after heartbeat tick")
+		return
 	}
 	if !processHistoryEntry.UpdatedAt.After(updatedBefore) {
 		t.Errorf("heartbeat did not advance updated_at on a throttled tick: before %v, after %v", updatedBefore, *processHistoryEntry.UpdatedAt)
@@ -932,6 +944,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	}
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
+		return
 	}
 
 	// SIGKILL is asynchronous — poll until the process group is confirmed dead
@@ -1046,6 +1059,7 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatalf("Failed to get process history entry: %v", err)
+		return
 	}
 	if err = db.UpdateProcessHistoryEntry(t.Context(), processHistoryEntry.PGID, database.ProcessHistoryUpdate{
 		StartedAt: &pastTime,
@@ -1064,6 +1078,7 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 	updated, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updated == nil {
 		t.Fatalf("Failed to get updated service instance: %v", err)
+		return
 	}
 	if updated.RestartCount != 0 {
 		t.Fatalf("Expected RestartCount to be reset to 0, got: %d", updated.RestartCount)
@@ -1156,6 +1171,7 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 	updated, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updated == nil {
 		t.Fatalf("Failed to get updated service instance: %v", err)
+		return
 	}
 	if updated.RestartCount != 3 {
 		t.Fatalf("Expected RestartCount to remain 3, got: %d", updated.RestartCount)
@@ -1273,6 +1289,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		}
 		if instance == nil {
 			t.Fatalf("Iteration %d: Failed to get service instance", i)
+			return
 		}
 
 		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
@@ -1281,6 +1298,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 		updatedInstance, _ := hm.mgr.GetServiceInstance(serviceName)
 		if updatedInstance == nil {
 			t.Fatalf("Iteration %d: Failed to get updated service instance", i)
+			return
 		}
 
 		if i < maxRestartCount {
@@ -1296,6 +1314,7 @@ func TestHealthMonitor_CheckFailedProcess_MaxRestarts(t *testing.T) {
 			}
 			if latestProcess == nil {
 				t.Fatalf("Iteration %d: Failed to get latest process", i)
+				return
 			}
 
 			// Kill the entire process group. RestartService's background goroutine
@@ -1563,6 +1582,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 	if entry1 == nil {
 		t.Fatal("Failed to get process history")
+		return
 	}
 	if entry1.State != types.ProcessStateRunning {
 		t.Errorf("%s: expected Running, got %v", svc1Name, entry1.State)
@@ -1575,6 +1595,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 	if entry2 == nil {
 		t.Fatal("Failed to get process history")
+		return
 	}
 	if entry2.State != types.ProcessStateRunning {
 		t.Errorf("%s: expected Running after start check, got %v", svc2Name, entry2.State)
@@ -1587,6 +1608,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	}
 	if instance3 == nil {
 		t.Fatal("Failed to get service instance")
+		return
 	}
 	// The failed service with elapsed > backoff should have been restarted
 	if instance3.RestartCount < 1 {
@@ -1682,6 +1704,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || processHistoryEntry == nil {
 		t.Fatal("Failed to get process history entry")
+		return
 	}
 
 	// Confirm it's in Failed state before we call checkFailedProcess
@@ -1692,6 +1715,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatal("Failed to get service instance")
+		return
 	}
 
 	restartCountBefore := instance.RestartCount
@@ -1703,6 +1727,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
 		t.Fatal("Failed to get updated process history")
+		return
 	}
 
 	if updatedEntry.State != types.ProcessStateRunning {
@@ -1717,6 +1742,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updatedInstance == nil {
 		t.Fatal("Failed to get updated service instance")
+		return
 	}
 
 	if updatedInstance.RestartCount != restartCountBefore {
@@ -1808,6 +1834,7 @@ func TestHealthMonitor_CheckRunningProcess_PortUnreachable(t *testing.T) {
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
 		t.Fatal("Failed to get updated process history")
+		return
 	}
 	if updatedEntry.State != types.ProcessStateFailed {
 		t.Errorf("Expected ProcessStateFailed, got %v", updatedEntry.State)
@@ -2115,6 +2142,7 @@ func TestCheckUnknownProcess_alive(t *testing.T) {
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updated == nil {
 		t.Fatal("failed to get updated process history")
+		return
 	}
 	if updated.State != types.ProcessStateRunning {
 		t.Errorf("expected Running for alive process in unknown state, got %v", updated.State)
@@ -2183,6 +2211,7 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updated == nil {
 		t.Fatal("failed to get updated process history")
+		return
 	}
 	if updated.State != types.ProcessStateFailed {
 		t.Errorf("expected Failed for dead process in unknown state, got %v", updated.State)
@@ -2299,6 +2328,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updated == nil {
 		t.Fatalf("failed to get updated process history: %v", err)
+		return
 	}
 	if updated.RssMemoryKb != 5000 {
 		t.Errorf("expected RssMemoryKb 5000 after warning dispatch, got %v", updated.RssMemoryKb)
@@ -2312,6 +2342,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	afterNone, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || afterNone == nil {
 		t.Fatalf("failed to get process history after ReasonNone dispatch: %v", err)
+		return
 	}
 	if afterNone.RssMemoryKb != 6000 {
 		t.Errorf("expected RssMemoryKb 6000 after sampled ReasonNone dispatch, got %v", afterNone.RssMemoryKb)
@@ -2385,6 +2416,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 
 	rssKb := int64(1024)
@@ -2393,6 +2425,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updatedInstance == nil {
 		t.Fatalf("failed to get updated service instance: %v", err)
+		return
 	}
 	if updatedInstance.RestartCount != instance.RestartCount+1 {
 		t.Errorf("expected RestartCount %d, got %d", instance.RestartCount+1, updatedInstance.RestartCount)
@@ -2401,6 +2434,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	newProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || newProcess == nil {
 		t.Fatalf("failed to get new process history: %v", err)
+		return
 	}
 	if newProcess.PGID == pgid {
 		t.Error("expected a new PGID after restart")
@@ -2443,6 +2477,7 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if instance.RestartCount < healthConfig.MaxRestart {
 		t.Fatalf("test setup invalid: RestartCount %d must be >= MaxRestart %d", instance.RestartCount, healthConfig.MaxRestart)
@@ -2456,6 +2491,7 @@ func TestRestartOnMemoryThreshold_maxRestartsReached(t *testing.T) {
 	unchanged, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || unchanged == nil {
 		t.Fatalf("failed to get process history: %v", err)
+		return
 	}
 	if unchanged.PGID != fakePGID {
 		t.Errorf("expected no restart (PGID unchanged), got new PGID %d", unchanged.PGID)
@@ -2493,6 +2529,7 @@ func TestHealthMonitor_CheckCronRestart_EmptyExprNoop(t *testing.T) {
 	unchanged, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || unchanged == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if unchanged.NextRestartAt != nil {
 		t.Errorf("expected NextRestartAt to stay nil when cron_restart is empty, got %v", unchanged.NextRestartAt)
@@ -2522,6 +2559,7 @@ func TestHealthMonitor_CheckCronRestart_SchedulesFirstFireTime(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if instance.NextRestartAt != nil {
 		t.Fatalf("test setup invalid: expected nil NextRestartAt, got %v", instance.NextRestartAt)
@@ -2533,9 +2571,11 @@ func TestHealthMonitor_CheckCronRestart_SchedulesFirstFireTime(t *testing.T) {
 	updated, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updated == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if updated.NextRestartAt == nil {
 		t.Fatal("expected NextRestartAt to be scheduled, got nil")
+		return
 	}
 	if !updated.NextRestartAt.After(time.Now()) {
 		t.Errorf("expected NextRestartAt to be in the future, got %v", updated.NextRestartAt)
@@ -2565,6 +2605,7 @@ func TestHealthMonitor_CheckCronRestart_NotDueYet(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	future := time.Now().Add(1 * time.Hour)
 	instance.NextRestartAt = &future
@@ -2578,6 +2619,7 @@ func TestHealthMonitor_CheckCronRestart_NotDueYet(t *testing.T) {
 	unchanged, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || unchanged == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if unchanged.NextRestartAt != nil {
 		t.Errorf("expected DB NextRestartAt to remain unset (no write when not due), got %v", unchanged.NextRestartAt)
@@ -2642,6 +2684,7 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	past := time.Now().Add(-1 * time.Hour)
 	instance.NextRestartAt = &past
@@ -2656,6 +2699,7 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	newProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || newProcess == nil {
 		t.Fatalf("failed to get process history after cron restart: %v", err)
+		return
 	}
 	if newProcess.PGID == pgid {
 		t.Errorf("expected a new PGID after cron restart, still %d", pgid)
@@ -2664,9 +2708,11 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	updated, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updated == nil {
 		t.Fatalf("failed to get service instance: %v", err)
+		return
 	}
 	if updated.NextRestartAt == nil {
 		t.Fatal("expected NextRestartAt to be recomputed after restart, got nil")
+		return
 	}
 	if !updated.NextRestartAt.After(time.Now()) {
 		t.Errorf("expected recomputed NextRestartAt to be in the future, got %v", updated.NextRestartAt)
@@ -2762,6 +2808,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
 		t.Fatalf("Failed to get service instance: %v", err)
+		return
 	}
 
 	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount, maxRestartCount)
@@ -2770,9 +2817,11 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
 	if err != nil || updatedEntry == nil {
 		t.Fatal("Failed to get updated process history")
+		return
 	}
 	if updatedEntry.Error == nil {
 		t.Fatal("Expected an error to be surfaced, got nil")
+		return
 	}
 	for _, want := range []string{"permission denied", "needs intervention"} {
 		if !strings.Contains(*updatedEntry.Error, want) {
@@ -2787,6 +2836,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	updatedInstance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || updatedInstance == nil {
 		t.Fatal("Failed to get updated service instance")
+		return
 	}
 	if updatedInstance.RestartCount != maxRestartCount {
 		t.Errorf("Expected restart count capped at %d to halt the loop, got %d", maxRestartCount, updatedInstance.RestartCount)

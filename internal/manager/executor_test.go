@@ -20,6 +20,7 @@ func TestOsExecutor_CommandContext(t *testing.T) {
 	cmd := e.CommandContext(context.Background(), "echo", "hi")
 	if cmd == nil {
 		t.Fatal("expected non-nil *exec.Cmd")
+		return
 	}
 	if cmd.Args[0] != "echo" || cmd.Args[1] != "hi" {
 		t.Errorf("expected args [echo hi], got: %v", cmd.Args)

@@ -80,6 +80,7 @@ func TestDiscoverDaemonsIn(t *testing.T) {
 	}
 	if carol.Status == nil || !carol.Status.Running {
 		t.Fatalf("carol should be running, got %+v", carol.Status)
+		return
 	}
 	if carol.StaleBinary {
 		t.Error("carol is running the current binary, should not be flagged stale")

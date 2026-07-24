@@ -102,6 +102,7 @@ func TestWaitForSocketTimeout(t *testing.T) {
 	err := waitForSocket(t.Context(), "/nonexistent/socket.sock", 200*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitForSocket should error on timeout")
+		return
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("Error should mention timeout, got: %v", err)
@@ -393,6 +394,7 @@ func TestStartDaemonProcess_AlreadyRunning(t *testing.T) {
 	err := startDaemonProcess(context.Background(), pidFile, false)
 	if err == nil {
 		t.Fatal("expected error when daemon is already running")
+		return
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("expected 'already running' error, got: %v", err)

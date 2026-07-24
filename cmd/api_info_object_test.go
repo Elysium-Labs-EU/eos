@@ -22,6 +22,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		})
 		if got == nil {
 			t.Fatal("expected non-nil result")
+			return
 		}
 		if got.Status != types.ServiceStatusStopped {
 			t.Errorf("expected status stopped, got %q", got.Status)
@@ -50,6 +51,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		})
 		if got == nil {
 			t.Fatal("expected non-nil result")
+			return
 		}
 		if got.Status != types.ServiceStatusRunning {
 			t.Errorf("expected status running, got %q", got.Status)
@@ -70,6 +72,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		})
 		if got == nil {
 			t.Fatal("expected non-nil result")
+			return
 		}
 		if got.Error == nil || *got.Error != errMsg {
 			t.Errorf("expected error %q, got %v", errMsg, got.Error)

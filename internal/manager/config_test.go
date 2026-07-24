@@ -250,6 +250,7 @@ func TestResolveLogSinks_UnknownName(t *testing.T) {
 	_, err := ResolveLogSinks("api", refs, registry)
 	if err == nil {
 		t.Fatal("expected error for unknown sink name, got nil")
+		return
 	}
 	want := `service 'api': log_sinks[0]: unknown sink "prod-lokk" — registered: [local-file, prod-loki]`
 	if err.Error() != want {
@@ -262,6 +263,7 @@ func TestResolveLogSinks_UnknownNameEmptyRegistry(t *testing.T) {
 	_, err := ResolveLogSinks("api", refs, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown sink name, got nil")
+		return
 	}
 	want := `service 'api': log_sinks[0]: unknown sink "prod-loki" — registered: []`
 	if err.Error() != want {

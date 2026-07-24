@@ -12,6 +12,7 @@ func TestNewTextLogger(t *testing.T) {
 	logger := NewTextLogger(&buf, false)
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
+		return
 	}
 	logger.Info("hello")
 	if !strings.Contains(buf.String(), "hello") {
@@ -33,6 +34,7 @@ func TestNewJSONLogger(t *testing.T) {
 	logger := NewJSONLogger(&buf, false)
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
+		return
 	}
 	logger.Info("json test")
 	out := buf.String()

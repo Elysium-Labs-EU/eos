@@ -148,6 +148,7 @@ func TestDetermineProcessMemoryInMbAPI(t *testing.T) {
 	got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusRunning)
 	if got == nil {
 		t.Fatal("expected non-nil for 1024 kb")
+		return
 	}
 	if *got != "1.0 MB" {
 		t.Errorf("got %q, want %q", *got, "1.0 MB")

@@ -56,8 +56,8 @@ profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF
 	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap
 
 setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
-	@echo "Installing golangci-lint v2.11.0..."
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.11.0
+	@echo "Installing golangci-lint v2.12.2..."
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.12.2
 	@echo "Installing git-cliff..."
 	cargo install git-cliff 2>/dev/null || echo "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
 	@echo "Installing lefthook..."

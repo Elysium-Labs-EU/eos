@@ -69,6 +69,7 @@ func TestAPIInfoOnlyRegisteredServiceCommand(t *testing.T) {
 	}
 	if result.Config == nil {
 		t.Fatal("expected config to be present")
+		return
 	}
 	if result.Config.Command != "/home/user/start-script.sh" {
 		t.Errorf("expected command to be '/home/user/start-script.sh', got: %q", result.Config.Command)
@@ -130,6 +131,7 @@ func TestAPIInfoOnlyRegisteredServiceIncompleteCommand(t *testing.T) {
 
 	if result.Config == nil {
 		t.Fatal("expected config to be present")
+		return
 	}
 	if result.Config.Command != "/home/user/start-script.sh" {
 		t.Errorf("expected command to be '/home/user/start-script.sh', got: %q", result.Config.Command)
@@ -150,6 +152,7 @@ func TestAPIInfoInvalidNumberArgumentsCommand(t *testing.T) {
 
 	if err == nil {
 		t.Fatalf("expected error, got: %v\nerr output: %s", err, errBuf.String())
+		return
 	}
 
 	// api info has SilenceErrors/SilenceUsage set and RunE never runs on an
