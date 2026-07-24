@@ -39,7 +39,7 @@ func TestInitCmd_SimpleMode(t *testing.T) {
 
 	var cfg types.ServiceConfig
 	// strip schema header comment before unmarshaling
-	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json\n\n")
+	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n")
 	if err := yaml.Unmarshal([]byte(yamlOnly), &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestInitCmd_AdvancedMode(t *testing.T) {
 		t.Fatalf("service.yaml not written: %v", err)
 	}
 
-	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json\n\n")
+	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n")
 	var cfg types.ServiceConfig
 	if err := yaml.Unmarshal([]byte(yamlOnly), &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -129,7 +129,7 @@ func TestInitCmd_SchemaHeader(t *testing.T) {
 		t.Fatalf("service.yaml not written: %v", err)
 	}
 
-	const wantHeader = "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json"
+	const wantHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json"
 	firstLine, _, _ := strings.Cut(string(data), "\n")
 	if firstLine != wantHeader {
 		t.Errorf("schema header: got %q", firstLine)
@@ -306,7 +306,7 @@ func TestInitCmd_SkippedCommand(t *testing.T) {
 		t.Fatalf("service.yaml not written: %v", err)
 	}
 
-	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json\n\n")
+	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n")
 	var cfg types.ServiceConfig
 	if err := yaml.Unmarshal([]byte(yamlOnly), &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
