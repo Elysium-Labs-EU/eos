@@ -24,6 +24,7 @@ linters:
     - gocritic
     - ineffassign
     - misspell
+    - modernize
     - nestif
     - nolintlint
     - unparam
