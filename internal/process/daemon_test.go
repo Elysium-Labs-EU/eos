@@ -1,6 +1,7 @@
 package process
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -58,6 +59,24 @@ func TestAllMethodsHandled(t *testing.T) {
 				t.Errorf("Method %s not handled in switch", method)
 			}
 		})
+	}
+}
+
+func TestExecuteRequest_GetVersion(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetVersion})
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var got types.GetVersionResponse
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("unmarshaling response data: %v", err)
+	}
+	if got.Version == "" {
+		t.Error("expected non-empty version")
 	}
 }
 
@@ -130,7 +149,14 @@ func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
 				_ = cmd.Wait()
 			})
 
-			if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, "svc", state); err != nil {
+			// Record the process's real start time so it passes the
+			// IsAliveMatching guard — this row genuinely points at our
+			// process, so reconcileOrphans is expected to kill it.
+			startTicks, err := procutil.StartTime(pgid)
+			if err != nil {
+				t.Fatalf("StartTime: %v", err)
+			}
+			if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, startTicks, "svc", state); err != nil {
 				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 			}
 
@@ -148,6 +174,85 @@ func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
 			}
 			if procutil.IsAlive(pgid) {
 				t.Error("process should have been killed")
+			}
+		})
+	}
+}
+
+// TestReconcileOrphans_PGIDReuse is the direct regression test for #2
+// (Critical): a history row whose PGID is currently alive but whose recorded
+// started_at_ticks does NOT match the live process — i.e. the kernel recycled
+// that PGID number for an unrelated, innocent process — must never be killed.
+// reconcileOrphans must leave that process running (our recorded process is
+// long gone) and still reconcile a live-looking row to Stopped without signal.
+// Before the fix this SIGKILLed the innocent process, because it gated the
+// kill on procutil.IsAlive alone, which only proves *some* group with that
+// PGID is alive, not that it's the one eos recorded.
+func TestReconcileOrphans_PGIDReuse(t *testing.T) {
+	cases := []struct {
+		name        string
+		ticks       func(real int64) int64
+		state       types.ProcessState
+		wantStopped bool
+	}{
+		{"running/mismatched-ticks", func(real int64) int64 { return real + 1 }, types.ProcessStateRunning, true},
+		{"starting/mismatched-ticks", func(real int64) int64 { return real + 1 }, types.ProcessStateStarting, true},
+		{"unknown/mismatched-ticks", func(real int64) int64 { return real + 1 }, types.ProcessStateUnknown, true},
+		{"stopped/mismatched-ticks", func(real int64) int64 { return real + 1 }, types.ProcessStateStopped, false},
+		{"failed/mismatched-ticks", func(real int64) int64 { return real + 1 }, types.ProcessStateFailed, false},
+		// StartedAtTicks <= 0 is an unverifiable match: also treated as not-ours.
+		{"running/zero-ticks", func(int64) int64 { return 0 }, types.ProcessStateRunning, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+			if err := db.RegisterService(t.Context(), "svc", "/opt/svc", "service.yaml"); err != nil {
+				t.Fatalf("RegisterService: %v", err)
+			}
+
+			// A real, innocent process that happens to hold the PGID our stale
+			// row points at. It is NOT one of eos's services.
+			cmd := exec.Command("sleep", "30")
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("starting innocent test process: %v", err)
+			}
+			pgid := cmd.Process.Pid
+			t.Cleanup(func() {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+				_ = cmd.Wait()
+			})
+
+			realTicks, err := procutil.StartTime(pgid)
+			if err != nil {
+				t.Fatalf("StartTime: %v", err)
+			}
+			if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, tc.ticks(realTicks), "svc", tc.state); err != nil {
+				t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+			}
+
+			reconcileOrphans(t.Context(), db, testutil.NewTestLogger(t))
+
+			// The core security assertion: the innocent process survives.
+			if !procutil.IsAlive(pgid) {
+				t.Fatalf("innocent process (recycled PGID %d) was killed; reconcileOrphans must not SIGKILL a non-matching PGID", pgid)
+			}
+
+			hist, err := db.GetMostRecentProcessHistoryEntryByName(t.Context(), "svc")
+			if err != nil {
+				t.Fatalf("GetMostRecentProcessHistoryEntryByName: %v", err)
+			}
+			if tc.wantStopped {
+				if hist.State != types.ProcessStateStopped {
+					t.Errorf("want Stopped (row reconciled without kill), got %s", hist.State)
+				}
+				if hist.StoppedAt == nil {
+					t.Error("want StoppedAt set")
+				}
+			} else if hist.State != tc.state {
+				t.Errorf("terminal row should be unchanged: want %s, got %s", tc.state, hist.State)
 			}
 		})
 	}

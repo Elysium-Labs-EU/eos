@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/types"
@@ -28,6 +29,7 @@ type Database interface {
 	GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error)
 	GetServiceCatalogEntry(ctx context.Context, name string) (types.ServiceCatalogEntry, error)
 	IsServiceRegistered(ctx context.Context, name string) (bool, error)
+	FindServiceNameCaseInsensitive(ctx context.Context, name string) (string, bool, error)
 	RegisterService(ctx context.Context, name string, directoryPath string, configFileName string) error
 	RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error)
 	UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error
@@ -65,7 +67,66 @@ func NewDB(ctx context.Context, baseDir string) (*DB, error) {
 		return nil, fmt.Errorf("database is in a dirty state: manual intervention required")
 	}
 
+	if err := alignDataFileOwnership(baseDir, dbPath); err != nil {
+		return nil, err
+	}
+
 	return db, nil
+}
+
+// statOwner reports the uid/gid that own path, or ok=false on a non-POSIX
+// filesystem where that information isn't available. Split out from
+// alignDataFileOwnership so it can be exercised directly without root.
+func statOwner(path string) (uid, gid int, err error, ok bool) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return 0, 0, fmt.Errorf("stat %s for ownership: %w", path, statErr), true
+	}
+	stat, isStatT := info.Sys().(*syscall.Stat_t)
+	if !isStatT {
+		return 0, 0, nil, false
+	}
+	return int(stat.Uid), int(stat.Gid), nil, true
+}
+
+// alignDataFileOwnership makes state.db and its WAL/SHM sidecar files owned by
+// the same user that owns baseDir. Under sudo (euid 0) the sqlite driver creates
+// these files as root even though config.CreateBaseDir already chowned the base
+// directory to the invoking user; that mismatch leaves the DB unwritable to the
+// later User=<invoker> systemd daemon and any unprivileged CLI, surfacing as
+// SQLite "attempt to write a readonly database (8)" (see issue #14).
+//
+// The invoking user is derived from baseDir's owner rather than re-resolving the
+// sudo identity, so the whole base dir stays internally consistent and installs
+// created before this fix self-heal on the next root invocation. It is a no-op
+// when not running as root (the common non-sudo path) or on non-POSIX systems.
+func alignDataFileOwnership(baseDir, dbPath string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+
+	uid, gid, err, ok := statOwner(baseDir)
+	if err != nil || !ok {
+		return err
+	}
+
+	// WAL/SHM sidecars are created alongside state.db in WAL mode; chown them too
+	// so the daemon owns every file backing the database, not just the main file.
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if err := chownTolerant(path, uid, gid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// chownTolerant chowns path to uid/gid, treating a missing file as success —
+// the WAL/SHM sidecars aren't guaranteed to exist (e.g. no writes yet landed).
+func chownTolerant(path string, uid, gid int) error {
+	if err := os.Chown(path, uid, gid); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("chown %s to uid %d gid %d: %w", path, uid, gid, err)
+	}
+	return nil
 }
 
 func NewTestDB(ctx context.Context, dbPath string, testMigrationsFS embed.FS, testMigrationsPath string) (*DB, *sql.DB, error) {
@@ -401,6 +462,31 @@ func (db *DB) IsServiceRegistered(ctx context.Context, name string) (bool, error
 	} else {
 		return count > 0, nil
 	}
+}
+
+// FindServiceNameCaseInsensitive returns the stored name of an already
+// registered service whose name equals the given name ignoring letter case,
+// if any. Log filenames are derived verbatim from the service name, so two
+// names differing only in case alias onto a single log file on
+// case-insensitive filesystems (macOS APFS); registration uses this to reject
+// such collisions before they corrupt logs. See GitHub issue #10.
+func (db *DB) FindServiceNameCaseInsensitive(ctx context.Context, name string) (string, bool, error) {
+	query := `
+	SELECT name
+	FROM service_catalog
+	WHERE name = ? COLLATE NOCASE
+	LIMIT 1
+	`
+
+	var existing string
+	err := db.conn.QueryRowContext(ctx, query, name).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("could not check for case-insensitive service name collision: %w", err)
+	}
+	return existing, true, nil
 }
 
 func (db *DB) RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error) {

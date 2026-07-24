@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/logo.svg" alt="eos logo" width="120" height="120">
+</p>
+
 # eos - Service Supervisor
 
 [![GitHub](https://img.shields.io/badge/GitHub-eos-blue?logo=github)](https://github.com/Elysium-Labs-EU/eos)
@@ -8,7 +12,7 @@ Lightweight service supervisor for your VPS. Register services, start them, keep
 
 ## Features
 
-* **Auto-restarts crashed processes** with exponential backoff, up to a configurable restart limit.
+* **Auto-restarts crashed processes** with exponential backoff, retrying indefinitely so a service self-heals whenever the underlying cause clears.
 * **Memory enforcement**, warns at soft thresholds, restarts at hard limits.
 * **Log rotation** out of the box; tail logs live with `eos logs --follow`.
 * **Boot persistence** via systemd (Linux) or launchd (macOS), system-wide or per-user, generates fitting unit file.

@@ -126,7 +126,14 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 				continue
 			}
 
-			if procutil.IsAlive(hist.PGID) {
+			// Only kill a PGID we can positively confirm is still the same
+			// process eos recorded. IsAlive alone is unsafe: the kernel
+			// recycles PGID numbers, so a live PGID may now belong to an
+			// unrelated process. IsAliveMatching also compares the recorded
+			// start time, ruling out that collision. A non-positive
+			// StartedAtTicks means we never captured a verifiable start time,
+			// so treat it as not-ours and never kill on an unverifiable match.
+			if hist.StartedAtTicks > 0 && procutil.IsAliveMatching(hist.PGID, hist.StartedAtTicks) {
 				if killErr := syscall.Kill(-hist.PGID, syscall.SIGKILL); killErr != nil {
 					logger.Info("reconcile orphans: kill PGID", "service", entry.Name, "pgid", hist.PGID, "error", killErr)
 				}
@@ -134,11 +141,16 @@ func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger)
 				continue
 			}
 
+			// Reached here either because the PGID is gone, or because it's
+			// alive but its start time no longer matches — a recycled PGID
+			// belonging to some other process. In both cases our recorded
+			// process is dead, so reconcile a still-live-looking row to
+			// Stopped without sending any signal to a PGID that isn't ours.
 			switch hist.State {
 			case types.ProcessStateRunning, types.ProcessStateStarting, types.ProcessStateUnknown:
 				reconcileMarkStopped(ctx, db, logger, entry.Name, hist.PGID)
 			case types.ProcessStateStopped, types.ProcessStateFailed:
-				// already terminal and confirmed dead above — no-op
+				// already terminal and our process confirmed dead — no-op
 			}
 		}
 	}
@@ -215,6 +227,28 @@ func reclaimStalePIDFile(pidFile string, logger *slog.Logger) error {
 	return nil
 }
 
+// maxUnixSocketPathLen is the size of the kernel's sockaddr_un.sun_path field on
+// this platform (104 bytes on macOS/Darwin, 108 on Linux). A bound socket path
+// must fit within this field including a trailing NUL, so the usable path length
+// is one byte less.
+const maxUnixSocketPathLen = len(syscall.RawSockaddrUnix{}.Path)
+
+// validateSocketPathLength returns an actionable error when socketPath is too
+// long to bind as a Unix domain socket on this platform. bind(2) rejects an
+// over-long path with EINVAL, which otherwise surfaces only as a cryptic
+// "bind: invalid argument" with no hint that the path length is the cause.
+func validateSocketPathLength(socketPath string) error {
+	maxLen := maxUnixSocketPathLen - 1 // leave room for the trailing NUL
+	if len(socketPath) > maxLen {
+		return fmt.Errorf(
+			"socket path %q is %d bytes, exceeding the %d-byte maximum for a Unix domain socket on %s; "+
+				"set EOS_BASE_DIR to a shorter directory (the socket path is EOS_BASE_DIR + %q)",
+			socketPath, len(socketPath), maxLen, runtime.GOOS,
+			string(os.PathSeparator)+config.DaemonSocketPath)
+	}
+	return nil
+}
+
 // removeExistingSocket clears a leftover unix socket file so Listen can rebind.
 func removeExistingSocket(socketPath string, logger *slog.Logger) error {
 	if _, socketPathStatErr := os.Stat(socketPath); socketPathStatErr == nil {
@@ -238,6 +272,14 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	logger.Info("daemon logger started")
 	pidFile := standaloneDaemonConfig.PIDFile
 	socketPath := standaloneDaemonConfig.SocketPath
+
+	// Validate the socket path length before writing the pidfile or binding the
+	// socket, so an over-long EOS_BASE_DIR yields a clear error instead of a
+	// cryptic "bind: invalid argument" and leaves no stale pidfile behind.
+	if socketPathErr := validateSocketPathLength(socketPath); socketPathErr != nil {
+		logger.Info(socketPathErr.Error())
+		return nil, socketPathErr
+	}
 
 	if reclaimErr := reclaimStalePIDFile(pidFile, logger); reclaimErr != nil {
 		return nil, reclaimErr
@@ -317,6 +359,8 @@ type daemonTelemetry struct {
 // disabled (no-op) one — cfg.Enable false, which otelx.NewProvider never
 // errors on — rather than failing daemon startup.
 func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
+	otelx.SetErrorHandler(logger)
+
 	otelProvider, err := otelx.NewProvider(ctx, otelx.Config{
 		Enable:   telemetryConfig.Enable,
 		Endpoint: telemetryConfig.Endpoint,
@@ -762,8 +806,25 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return handleNewServiceLogFiles(mgr, request.Args)
 	case types.MethodGetServiceLogFilePath:
 		return handleGetServiceLogFilePath(mgr, request.Args)
+	case types.MethodGetVersion:
+		return handleGetVersion(mgr)
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
+	}
+}
+
+func handleGetVersion(mgr manager.ServiceManager) types.DaemonResponse {
+	version, err := mgr.GetVersion()
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(version)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
 	}
 }
 

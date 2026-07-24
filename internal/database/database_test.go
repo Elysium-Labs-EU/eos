@@ -143,6 +143,37 @@ func TestIsServiceRegistered(t *testing.T) {
 	}
 }
 
+// TestFindServiceNameCaseInsensitive covers the query behind issue #10's
+// case-collision guard: names differing only in letter case must be reported
+// as a collision (with the stored spelling returned), while an unrelated name
+// must not match.
+func TestFindServiceNameCaseInsensitive(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.RegisterService(t.Context(), "Foo", "/path", "config.yaml"); err != nil {
+		t.Fatalf("RegisterService failed: %v", err)
+	}
+
+	existing, found, err := db.FindServiceNameCaseInsensitive(t.Context(), "foo")
+	if err != nil {
+		t.Fatalf("FindServiceNameCaseInsensitive failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected 'foo' to collide with registered 'Foo'")
+	}
+	if existing != "Foo" {
+		t.Errorf("expected stored name 'Foo', got %q", existing)
+	}
+
+	_, found, err = db.FindServiceNameCaseInsensitive(t.Context(), "bar")
+	if err != nil {
+		t.Fatalf("FindServiceNameCaseInsensitive failed: %v", err)
+	}
+	if found {
+		t.Error("expected no collision for unrelated name 'bar'")
+	}
+}
+
 func TestUpdateServiceCatalogEntry(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 

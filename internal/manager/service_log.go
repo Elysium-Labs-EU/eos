@@ -89,6 +89,21 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 	return &logPath, nil
 }
 
+// GetServiceLastErrorLine returns the most recent non-empty line the service
+// itself wrote to stderr, or ok=false if the error log is missing, empty, or
+// unreadable. Used by the health monitor to surface the child process's own
+// failure reason (e.g. "bind: Address already in use") instead of a generic
+// exec-layer error. LastLogMessage skips lines the health monitor wrote about
+// itself (source=HealthBreadcrumbSource), so this never echoes back the
+// monitor's own prior "restart failed: ..." breadcrumb from an earlier cycle.
+func (m *LocalManager) GetServiceLastErrorLine(serviceName string) (line string, ok bool) {
+	logPath, err := m.GetServiceLogFilePath(serviceName, true)
+	if err != nil {
+		return "", false
+	}
+	return logutil.LastLogMessage(*logPath)
+}
+
 func (m *LocalManager) LogToServiceStdout(serviceName string, message string) error {
 	return m.appendHealthEventToLog(serviceName, false, slog.LevelInfo, message)
 }
@@ -114,11 +129,11 @@ func (m *LocalManager) appendHealthEventToLog(serviceName string, errorLog bool,
 	l := logutil.NewJSONLogger(file, false)
 	switch {
 	case level >= slog.LevelError:
-		l.Error(message, "service", serviceName, "source", "health")
+		l.Error(message, "service", serviceName, "source", logutil.HealthBreadcrumbSource)
 	case level >= slog.LevelWarn:
-		l.Warn(message, "service", serviceName, "source", "health")
+		l.Warn(message, "service", serviceName, "source", logutil.HealthBreadcrumbSource)
 	default:
-		l.Info(message, "service", serviceName, "source", "health")
+		l.Info(message, "service", serviceName, "source", logutil.HealthBreadcrumbSource)
 	}
 	if syncErr := file.Sync(); syncErr != nil {
 		return fmt.Errorf("syncing log file: %w", syncErr)

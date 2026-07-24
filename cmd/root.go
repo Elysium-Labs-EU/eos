@@ -46,7 +46,6 @@ eos is a service supervisor.
 				GracePeriod: 5 * time.Second,
 			},
 			Health: config.HealthConfig{
-				MaxRestart:                10,
 				RestartCounterResetWindow: 15 * time.Minute,
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
@@ -86,7 +85,6 @@ eos is a service supervisor.
 				Systemd: nil,
 			},
 			Health: config.HealthConfig{
-				MaxRestart:                10,
 				RestartCounterResetWindow: 15 * time.Minute,
 				Timeout:                   config.TimeOutConfig{Enable: true, Limit: 10 * time.Second},
 			},
@@ -209,6 +207,7 @@ func newDaemonConfig(baseDir string, isSystemdManaged bool, underSystemd bool, s
 			Systemd: &config.SystemdConfig{
 				SystemdTargetDir:      systemdDir,
 				SystemdTargetFileName: config.SystemdTargetFileName,
+				SocketPath:            filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
 				UserUnit:              userUnit,
 			},
 		}
@@ -239,6 +238,50 @@ func newDaemonConfigLaunchd(baseDir string, isLaunchdManaged bool, underLaunchd 
 		Standalone: newStandaloneDaemonConfig(baseDir, logCfg),
 		Launchd:    nil,
 	}
+}
+
+// newDaemonConfigOpenRC is the OpenRC analog of newDaemonConfig. When invoked BY
+// OpenRC's supervise-daemon (underOpenRC) we ARE the daemon process, so run
+// standalone in the foreground; only delegate to rc-service when a human calls
+// "eos daemon start/stop" from outside the supervisor.
+func newDaemonConfigOpenRC(baseDir string, isOpenRCManaged bool, underOpenRC bool, initDir string, logCfg config.EosLogConfig) config.DaemonConfig {
+	if isOpenRCManaged && !underOpenRC {
+		return config.DaemonConfig{
+			OpenRC: &config.OpenRCConfig{
+				InitDir:      initDir,
+				InitFileName: config.OpenRCTargetFileName,
+			},
+		}
+	}
+
+	return config.DaemonConfig{
+		Standalone: newStandaloneDaemonConfig(baseDir, logCfg),
+	}
+}
+
+// resolveLinuxDaemonConfig picks the daemon supervisor on Linux. systemd wins
+// when its unit is installed; otherwise, if an OpenRC init script is installed,
+// delegate to OpenRC; otherwise fall back to standalone. This mirrors
+// detectActiveSystemRuntime's systemd-before-OpenRC preference.
+func resolveLinuxDaemonConfig(baseDir string, logCfg config.EosLogConfig) (config.DaemonConfig, error) {
+	systemdDir, isSystemdManaged, userUnit, systemdErr := config.ResolveSystemdScope(overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir))
+	if systemdErr != nil {
+		return config.DaemonConfig{}, fmt.Errorf("resolving systemd scope: %w", systemdErr)
+	}
+	if isSystemdManaged {
+		return newDaemonConfig(baseDir, true, config.IsUnderSystemd(), systemdDir, userUnit, logCfg), nil
+	}
+
+	initDir := overrideStringConfigValue("EOS_OPENRC_INIT_DIR", config.OpenRCInitDir)
+	isOpenRCManaged, openrcErr := config.IsOpenRCManaged(initDir, config.OpenRCTargetFileName)
+	if openrcErr != nil {
+		return config.DaemonConfig{}, fmt.Errorf("resolving OpenRC scope: %w", openrcErr)
+	}
+	if isOpenRCManaged {
+		return newDaemonConfigOpenRC(baseDir, true, config.IsUnderOpenRC(), initDir, logCfg), nil
+	}
+
+	return newDaemonConfig(baseDir, false, config.IsUnderSystemd(), systemdDir, userUnit, logCfg), nil
 }
 
 func newSystemConfig() (installDir string, baseDir string, systemConfig *config.SystemConfig, identity userutil.Identity, err error) {
@@ -273,11 +316,10 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		}
 		daemonConfig = newDaemonConfigLaunchd(baseDir, isLaunchdManaged, config.IsUnderLaunchd(), launchdDir, userAgent, logCfg)
 	} else {
-		systemdDir, isSystemdManaged, userUnit, systemdErr := config.ResolveSystemdScope(overrideStringConfigValue("EOS_SYSTEMD_TARGET_DIR", config.SystemdTargetDir))
-		if systemdErr != nil {
-			return "", "", nil, userutil.Identity{}, fmt.Errorf("resolving systemd scope: %w", systemdErr)
+		daemonConfig, err = resolveLinuxDaemonConfig(baseDir, logCfg)
+		if err != nil {
+			return "", "", nil, userutil.Identity{}, err
 		}
-		daemonConfig = newDaemonConfig(baseDir, isSystemdManaged, config.IsUnderSystemd(), systemdDir, userUnit, logCfg)
 	}
 
 	restartCounterResetWindow := safeParseDuration(overrideStringConfigValue("HEALTH_RESTART_COUNTER_RESET_WINDOW", config.HealthRestartCounterResetWindow), 15*time.Minute)
@@ -286,7 +328,6 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	}
 
 	healthConfig := config.HealthConfig{
-		MaxRestart:                config.HealthMaxRestart,
 		RestartCounterResetWindow: restartCounterResetWindow,
 		Timeout: config.TimeOutConfig{
 			Enable: overrideBoolConfigValue("HEALTH_TIMEOUT_ENABLE", config.HealthTimeOutEnable),

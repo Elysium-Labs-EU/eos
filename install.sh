@@ -18,6 +18,15 @@ readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
 
+# ECDSA P-256 public key (SubjectPublicKeyInfo, PEM) used to verify the
+# detached signature over each release's sha256sums.txt. Keep in sync with
+# releaseSigningPublicKeyPEM in cmd/system.go — the matching private key
+# lives only as the RELEASE_SIGNING_KEY secret in GitHub Actions.
+readonly RELEASE_SIGNING_PUBKEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEByucQHF5ASSSrPSu6Gb5fvAuWdMw
+BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
+-----END PUBLIC KEY-----'
+
 AUTO_YES=false
 
 # Print functions
@@ -194,10 +203,26 @@ build_download_url() {
     echo "${GITHUB_URL}/${repo}/releases/download/${version}/${asset}"
 }
 
+detect_os() {
+    case "$(uname -s)" in
+        Linux)
+            echo "linux"
+            ;;
+        Darwin)
+            echo "darwin"
+            ;;
+        *)
+            error "Unsupported OS: $(uname -s)"
+            dim "  Supported: Linux, Darwin (macOS)"
+            exit 1
+            ;;
+    esac
+}
+
 detect_arch() {
     local arch
     arch=$(uname -m)
-    
+
     case $arch in
         x86_64)
             echo "amd64"
@@ -213,8 +238,35 @@ detect_arch() {
     esac
 }
 
+# strip_quarantine removes the macOS Gatekeeper "com.apple.quarantine" xattr
+# from a downloaded binary. No-op on non-Darwin, and tolerant of the
+# attribute already being absent.
+strip_quarantine() {
+    if [ "$(uname -s)" = "Darwin" ]; then
+        xattr -d com.apple.quarantine "$1" 2>/dev/null || true
+    fi
+}
+
+# resign_darwin_binary re-signs a binary in place with an ad-hoc identity
+# after it's landed in its final installed location. Go's linker already
+# ad-hoc-signs arm64 binaries at build time (a hard OS requirement just to
+# run at all on Apple Silicon), but overwriting an existing file in place at
+# the same path can leave the kernel's per-vnode code-signature validation
+# cache pointing at stale state — observed directly as a SIGKILL with
+# "Code Signature Invalid" / CODESIGNING "Invalid Page" on this exact
+# install-then-overwrite pattern (see golang/go#42684, golang/go#64351).
+# Cheap, local, no network — re-sign unconditionally rather than rely on
+# root-causing exactly when the kernel cache goes stale. No-op on non-Darwin.
+resign_darwin_binary() {
+    if [ "$(uname -s)" = "Darwin" ] && command -v codesign &> /dev/null; then
+        codesign --force -s - "$1" 2>/dev/null || true
+    fi
+}
+
 detect_package_manager() {
-    if command -v apt-get &> /dev/null; then
+    if command -v brew &> /dev/null; then
+        echo "brew"
+    elif command -v apt-get &> /dev/null; then
         echo "apt"
     elif command -v dnf &> /dev/null; then
         echo "dnf"
@@ -284,6 +336,16 @@ install_sqlite3() {
                 return 0
             fi
             ;;
+        brew)
+            # Homebrew refuses to run as root by design, and this script
+            # requires root (check_root) — can't auto-install here. In
+            # practice this rarely matters: macOS ships /usr/bin/sqlite3
+            # out of the box, so check_sqlite3 almost always already
+            # passes before this function is ever reached on Darwin.
+            warn "Homebrew refuses to run as root — can't auto-install via sudo"
+            dim "  Run without sudo, then re-run this installer: brew install sqlite"
+            return 1
+            ;;
         *)
             warn "Could not detect package manager"
             echo ""
@@ -293,6 +355,7 @@ install_sqlite3() {
             dim "  Fedora:         dnf install sqlite"
             dim "  Alpine:         apk add sqlite"
             dim "  Arch:           pacman -S sqlite"
+            dim "  macOS:          brew install sqlite (without sudo)"
             echo ""
             return 1
             ;;
@@ -501,10 +564,14 @@ main() {
     download_tool=$(detect_download_tool)
     dim "  Download tool: $download_tool"
     
+    local os
+    os=$(detect_os)
+    dim "  OS: $os"
+
     local arch
     arch=$(detect_arch)
     dim "  Architecture: $arch"
-    
+
     local pkg_manager
     pkg_manager=$(detect_package_manager)
     dim "  Package manager: $pkg_manager"
@@ -562,10 +629,10 @@ main() {
         success "Using local binary"
     else
         echo ""
-        step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
-        
+        step "Downloading ${BINARY_NAME} ${version} for ${os}-${arch}..."
+
         local download_url
-        download_url=$(build_download_url "$REPO" "$version" "eos-linux-${arch}")
+        download_url=$(build_download_url "$REPO" "$version" "eos-${os}-${arch}")
         local tmp_dir
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
         trap 'rm -rf "${tmp_dir:-}"' EXIT
@@ -594,7 +661,7 @@ main() {
             exit 1
         fi
 
-        local binary_name="eos-linux-${arch}"
+        local binary_name="eos-${os}-${arch}"
         local expected_checksum
         expected_checksum=$(grep "  ${binary_name}$" "$tmp_checksums" | awk '{print $1}')
 
@@ -614,8 +681,38 @@ main() {
             exit 1
         fi
 
-        rm -f "$tmp_checksums"
         success "Checksum verified"
+
+        step "Verifying release signature..."
+        local sig_url="${GITHUB_URL}/${REPO}/releases/download/${version}/sha256sums.txt.sig"
+        local tmp_sig="${tmp_dir}/${BINARY_NAME}_sha256sums.txt.sig"
+
+        if download_file "$sig_url" "$tmp_sig" "$download_tool" && [ -s "$tmp_sig" ]; then
+            if ! command -v openssl &> /dev/null; then
+                error "sha256sums.txt.sig is present but openssl is not installed — cannot verify it"
+                dim "  Install openssl or use --local with a binary you've verified yourself"
+                rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
+                exit 1
+            fi
+
+            local tmp_pubkey="${tmp_dir}/release-signing-pubkey.pem"
+            printf '%s\n' "$RELEASE_SIGNING_PUBKEY" > "$tmp_pubkey"
+
+            if openssl dgst -sha256 -verify "$tmp_pubkey" -signature "$tmp_sig" "$tmp_checksums" &> /dev/null; then
+                success "Signature verified"
+            else
+                error "Signature verification failed — refusing to install (release may be tampered)"
+                rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig" "$tmp_pubkey"
+                exit 1
+            fi
+        else
+            # Soft-fail: releases published before signing was introduced have
+            # no sha256sums.txt.sig. Keep in sync with requireReleaseSignature
+            # in cmd/system.go — once that flips to true, this should too.
+            warn "Release has no sha256sums.txt.sig — checksum-only integrity (release predates signing)"
+        fi
+
+        rm -f "$tmp_checksums"
     fi
     
     # Stop running daemon before overwriting binary
@@ -624,11 +721,13 @@ main() {
     # Install binary
     step "Installing binary..."
     mkdir -p "$INSTALL_DIR"
+    strip_quarantine "$tmp_binary"
     chmod +x "$tmp_binary"
     final_binary="${INSTALL_DIR}/${BINARY_NAME}"
     tmp_install="${final_binary}.tmp.$$"
     cp "$tmp_binary" "$tmp_install"
     mv -f "$tmp_install" "$final_binary"
+    resign_darwin_binary "$final_binary"
     success "Installed to ${final_binary}"
 
     # Refresh any shell completion already installed for the invoking user
@@ -647,8 +746,8 @@ main() {
     echo -e "${GREEN}${BOLD}Installation complete!${NC}"
     echo ""
     echo -e "${BOLD}Next steps:${NC}"
-    echo "  1. Register a service:"
-    echo -e "     ${CYAN}eos add /path/to/project/service.yaml${NC}"
+    echo "  1. Run a service:"
+    echo -e "     ${CYAN}eos run -f /path/to/project/service.yaml${NC}"
     echo ""
     echo "  2. Check status:"
     echo -e "     ${CYAN}eos status${NC}"

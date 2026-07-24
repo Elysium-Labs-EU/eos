@@ -3,9 +3,12 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +38,136 @@ import (
 
 var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
+}
+
+// updateUserAgent is sent on every request to the GitHub release API and asset
+// downloads. The GitHub REST API rejects requests without a User-Agent with a
+// 403, unlike the Gitea/Codeberg API this updater previously targeted.
+const updateUserAgent = "eos-updater"
+
+// releaseSigningPublicKeyPEM is the ECDSA P-256 public key (SubjectPublicKeyInfo,
+// PEM) used to verify the detached signature over each release's
+// sha256sums.txt. The matching private key lives only as the
+// RELEASE_SIGNING_KEY secret in GitHub Actions and is used by
+// .github/workflows/release.yml (or build-and-release.yml) to sign at
+// release time — it is never checked into this repo.
+const releaseSigningPublicKeyPEM = `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEByucQHF5ASSSrPSu6Gb5fvAuWdMw
+BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
+-----END PUBLIC KEY-----
+`
+
+// requireReleaseSignature gates whether a release with no sha256sums.txt.sig
+// asset is refused outright rather than merely warned about. Keep this false
+// until the RELEASE_SIGNING_KEY secret is provisioned in GitHub Actions and
+// the first signed release has shipped — flipping it before then would make
+// every existing release refuse to install. Once a signed release exists,
+// flip to true so an unsigned or signature-stripped release can no longer be
+// installed silently.
+const requireReleaseSignature = false
+
+// parseReleaseSigningPublicKey decodes the embedded release signing public
+// key. Pure — no I/O.
+func parseReleaseSigningPublicKey() (*ecdsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(releaseSigningPublicKeyPEM))
+	if block == nil {
+		return nil, fmt.Errorf("decoding embedded release signing public key: no PEM block found")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedded release signing public key: %w", err)
+	}
+	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("embedded release signing public key is %T, want ECDSA", pub)
+	}
+	return ecdsaPub, nil
+}
+
+// verifySignature checks sig — an ASN.1 DER ECDSA signature, as produced by
+// `openssl dgst -sha256 -sign` — against the SHA-256 digest of data, using
+// pub. Pure — no I/O.
+func verifySignature(pub *ecdsa.PublicKey, data, sig []byte) error {
+	digest := sha256.Sum256(data)
+	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+		return fmt.Errorf("signature does not match")
+	}
+	return nil
+}
+
+// verifyChecksumsSignature checks sig against checksumsData using the
+// embedded release signing public key. Pure — no I/O.
+func verifyChecksumsSignature(checksumsData, sig []byte) error {
+	pub, err := parseReleaseSigningPublicKey()
+	if err != nil {
+		return err
+	}
+	if err := verifySignature(pub, checksumsData, sig); err != nil {
+		return fmt.Errorf("signature does not match sha256sums.txt")
+	}
+	return nil
+}
+
+// fetchChecksumsFile downloads the full raw bytes of the release's
+// sha256sums.txt, for signature verification over the whole file (as opposed
+// to fetchChecksumForBinary, which only extracts one binary's hash line).
+func fetchChecksumsFile(ctx context.Context, checksumsAsset *Asset) ([]byte, error) {
+	if checksumsAsset == nil {
+		return nil, fmt.Errorf("no sha256sums.txt asset in release")
+	}
+	resp, err := fetchAssetResponse(ctx, checksumsAsset)
+	if err != nil {
+		return nil, fmt.Errorf("fetching sha256sums.txt: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading sha256sums.txt: %w", err)
+	}
+	return data, nil
+}
+
+// verifyReleaseSignature fetches result's sha256sums.txt and
+// sha256sums.txt.sig and verifies the signature, writing a status line to
+// cmd either way.
+//
+// A release with no signature asset is only a hard error once
+// requireReleaseSignature is true (see its doc comment for the rollout
+// plan); until then it's a warning, since sha256 checksum verification
+// (downloadAndVerifyBinary) already runs independently of this. A signature
+// asset that fails to verify is always a hard error — that's a stronger
+// integrity signal than "no signature was ever published", so it's never
+// soft-failed.
+func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result UpdateResult) error {
+	checksumsData, err := fetchChecksumsFile(ctx, result.ChecksumsAsset)
+	if err != nil {
+		return err
+	}
+
+	if result.SignatureAsset == nil {
+		if requireReleaseSignature {
+			return fmt.Errorf("release %s has no sha256sums.txt.sig", result.LatestVersion)
+		}
+		cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("release %s has no signature (sha256sums.txt.sig) — checksum-only integrity", result.LatestVersion))
+		return nil
+	}
+
+	resp, err := fetchAssetResponse(ctx, result.SignatureAsset)
+	if err != nil {
+		return fmt.Errorf("fetching signature: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response, close error not actionable
+	sigData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading signature: %w", err)
+	}
+
+	if verifyErr := verifyChecksumsSignature(checksumsData, sigData); verifyErr != nil {
+		return fmt.Errorf("signature verification failed for %s: %w — refusing to install", result.LatestVersion, verifyErr)
+	}
+	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), "signature verified")
+	return nil
 }
 
 // supportedPlatforms lists the OS-arch combinations for which eos releases are published.
@@ -95,7 +228,7 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
 For systemd user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
 
 On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
-		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)",
+		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)\n       eos system startup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -105,6 +238,11 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 				return helpers.ErrCommandFailed
 			}
 			verbose, _ := cmd.Flags().GetBool("verbose")
+			flagYes, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return helpers.ErrCommandFailed
+			}
 
 			if runtime.GOOS == "darwin" {
 				userAgent := os.Getuid() != 0
@@ -117,7 +255,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 					}
 				}
 				return startupCmdLaunchd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, execRunCmd)
+					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, flagYes, execRunCmd)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -129,7 +267,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 			if runtimeName == "openrc" {
 				return openrcStartupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 					config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, detectActiveSystemRuntime, execRunCmd)
+					verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
 			}
 
 			userUnit := os.Getuid() != 0
@@ -143,9 +281,10 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 			}
 			return startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
 				systemdDir, config.SystemdTargetFileName,
-				userUnit, verbose, detectActiveSystemRuntime, execRunCmd)
+				userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
+	startupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
 
 	unstartupCmdDef := &cobra.Command{
 		Use:   "unstartup",
@@ -157,7 +296,7 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
   - Run as a regular user: removes the user unit / LaunchAgent.
 
 On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires root.`,
-		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit (systemd/launchd only)",
+		Example:       "  sudo eos system unstartup  # remove system unit\n       eos system unstartup  # remove user unit (systemd/launchd only)\n       eos system unstartup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,6 +306,11 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 				return helpers.ErrCommandFailed
 			}
 			verbose, _ := cmd.Flags().GetBool("verbose")
+			flagYes, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+				return helpers.ErrCommandFailed
+			}
 
 			if runtime.GOOS == "darwin" {
 				if systemConfig.Daemon.Launchd == nil {
@@ -174,7 +318,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 					return helpers.ErrCommandFailed
 				}
 				userAgent := os.Getuid() != 0
-				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, execRunCmd, identity)
+				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, flagYes, execRunCmd, identity)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -185,7 +329,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 
 			if runtimeName == "openrc" {
 				return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, detectActiveSystemRuntime, execRunCmd, identity)
+					verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
 			}
 
 			if systemConfig.Daemon.Systemd == nil {
@@ -193,9 +337,10 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 				return helpers.ErrCommandFailed
 			}
 			userUnit := os.Getuid() != 0
-			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, detectActiveSystemRuntime, execRunCmd, identity)
+			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
 		},
 	}
+	unstartupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
 
 	updateCmd := &cobra.Command{
 		Use:           "update",
@@ -270,10 +415,16 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	versionCmd := &cobra.Command{
 		Use:     "version",
 		Short:   "Get version of system",
-		Long:    `Print the current eos version, git commit hash, and build date.`,
+		Long:    `Print the current eos version, git commit hash, and build date. Also flags version drift against the running daemon and the latest published release, and suggests the fix.`,
 		Example: `  eos system version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.Println(buildinfo.Get())
+
+			// Version drift is a bonus, not worth failing the command over: if the
+			// config can't be resolved, just skip the drift check.
+			if _, _, systemConfig, _, err := newSystemConfig(); err == nil {
+				printVersionDrift(cmd, systemConfig.Daemon)
+			}
 			return nil
 		},
 	}
@@ -309,7 +460,6 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("systemd target filename:"), config.Daemon.Systemd.SystemdTargetFileName)
 	}
 	cmd.Printf("%s\n\n", ui.TextBold.Render("Health Check"))
-	cmd.Printf("  %s %d\n", ui.TextMuted.Render("max restarts:"), config.Health.MaxRestart)
 	cmd.Printf("  %s %v\n", ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
 		cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit)
@@ -323,6 +473,159 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 	if config.Telemetry.Enable {
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
 		cmd.Printf("  %s %v\n", ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
+	}
+}
+
+// resolveDaemonVersion queries the version of the actual running daemon
+// process, dispatching to the supervisor-specific strategy.
+func resolveDaemonVersion(ctx context.Context, daemon config.DaemonConfig) (string, error) {
+	switch {
+	case daemon.Standalone != nil:
+		return resolveStandaloneDaemonVersion(ctx, daemon.Standalone)
+	case daemon.Systemd != nil:
+		return resolveSystemdDaemonVersion(ctx, daemon.Systemd)
+	default:
+		return "", errors.New("daemon version check not supported for this supervisor")
+	}
+}
+
+// resolveStandaloneDaemonVersion checks liveness first rather than going
+// straight through manager.NewDaemonManager, which auto-starts a standalone
+// daemon that isn't running — a version check has no business spinning one up.
+func resolveStandaloneDaemonVersion(ctx context.Context, cfg *config.StandaloneDaemonConfig) (string, error) {
+	status, err := process.StatusStandaloneDaemon(cfg)
+	if err != nil {
+		return "", fmt.Errorf("checking daemon status: %w", err)
+	}
+	if !status.Running {
+		return "", errors.New("daemon not running")
+	}
+
+	dm, err := manager.NewDaemonManager(ctx, cfg.SocketPath, cfg.PIDFile, cfg.SocketTimeout, false)
+	if err != nil {
+		return "", fmt.Errorf("connecting to daemon: %w", err)
+	}
+	version, err := dm.GetVersion()
+	if err != nil {
+		return "", fmt.Errorf("querying daemon version: %w", err)
+	}
+	return version.Version, nil
+}
+
+// resolveSystemdDaemonVersion handles the case systemd-managed daemons aren't
+// reachable through the IPC socket path above (see newManager in root.go: a
+// systemd-managed DaemonConfig always resolves to a local in-process manager,
+// never DaemonManager) by instead following /proc/<pid>/exe to the actual
+// running binary and asking it directly — the same drift
+// systemdDaemonRunningVersion already reports in 'eos daemon info'.
+func resolveSystemdDaemonVersion(ctx context.Context, cfg *config.SystemdConfig) (string, error) {
+	full, err := systemdDaemonRunningVersion(ctx, cfg.UserUnit)
+	if err != nil {
+		return "", err
+	}
+	return firstVersionToken(full)
+}
+
+// firstVersionToken extracts the version number from buildinfo.Get()'s
+// "vX.Y.Z (commit: ..., built: ...)" format. Pure — no I/O.
+func firstVersionToken(full string) (string, error) {
+	fields := strings.Fields(full)
+	if len(fields) == 0 {
+		return "", errors.New("empty version output")
+	}
+	return fields[0], nil
+}
+
+// resolveLatestVersion fetches the latest published release tag. It returns
+// ("", nil) when the current version is already latest or ahead — an empty
+// string signals "nothing to report", distinct from a lookup failure.
+func resolveLatestVersion(ctx context.Context, currentVersion string) (string, error) {
+	if currentVersion == "dev" {
+		return "", errors.New("dev build: no release to compare against")
+	}
+	release, err := fetchLatestRelease(ctx, false)
+	if err != nil {
+		return "", err
+	}
+	if semver.Compare(currentVersion, release.TagName) >= 0 {
+		return "", nil
+	}
+	return release.TagName, nil
+}
+
+// versionDriftInfo is the pure comparison data printVersionDrift renders —
+// split out from the printing so the "what counts as drift, what to print"
+// branching can be table-tested without a cobra.Command or network access.
+type versionDriftInfo struct {
+	cliVersion    string
+	daemonVersion string
+	latestVersion string // "" when no newer release was found
+	daemonKnown   bool
+}
+
+// gatherVersionDrift runs both lookups. Each is best-effort: an unreachable
+// daemon or an offline GitHub check are normal states, not failures worth
+// surfacing, so a failed lookup just leaves its field at its zero value.
+func gatherVersionDrift(ctx context.Context, daemon config.DaemonConfig) versionDriftInfo {
+	cliVersion := buildinfo.GetVersionOnly()
+	info := versionDriftInfo{cliVersion: cliVersion}
+
+	if daemonVersion, err := resolveDaemonVersion(ctx, daemon); err == nil {
+		info.daemonVersion = daemonVersion
+		info.daemonKnown = true
+	}
+	if latestVersion, err := resolveLatestVersion(ctx, cliVersion); err == nil {
+		info.latestVersion = latestVersion
+	}
+	return info
+}
+
+func (v versionDriftInfo) daemonDrift() bool {
+	return v.daemonKnown && v.daemonVersion != v.cliVersion
+}
+
+func (v versionDriftInfo) latestDrift() bool {
+	return v.latestVersion != ""
+}
+
+// versionDriftLines renders the drift diff and its suggested fix as one line
+// per element (nil when nothing diverges) — pure, so it's table-tested
+// directly instead of through cmd output.
+func versionDriftLines(v versionDriftInfo) []string {
+	if !v.daemonDrift() && !v.latestDrift() {
+		return nil
+	}
+
+	lines := []string{
+		"",
+		ui.TextBold.Render("Version drift detected"),
+		"",
+		fmt.Sprintf("  %s %s", ui.TextMuted.Render("CLI:"), v.cliVersion),
+	}
+	if v.daemonKnown {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("Daemon:"), v.daemonVersion))
+	}
+	if v.latestDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("Latest:"), v.latestVersion))
+	}
+	lines = append(lines, "")
+
+	if v.latestDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system update")))
+	}
+	if v.daemonDrift() {
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("note:"), "the running daemon won't pick up a binary update until it's restarted (eos daemon stop && eos daemon start); as root, 'eos system update' only restarts the invoking user's daemon, so other users' daemons stay stale"))
+	}
+	lines = append(lines, "")
+	return lines
+}
+
+// printVersionDrift compares the CLI's own version against the running
+// daemon's and the latest published release, printing a diff and the fix only
+// when they actually disagree.
+func printVersionDrift(cmd *cobra.Command, daemon config.DaemonConfig) {
+	for _, line := range versionDriftLines(gatherVersionDrift(cmd.Context(), daemon)) {
+		cmd.Println(line)
 	}
 }
 
@@ -349,9 +652,18 @@ type unitData struct {
 }
 
 func renderUnitFile(installDir string, user string, userUnit bool) (string, error) {
+	// StartLimitIntervalSec/StartLimitBurst bound the crash-loop: without them,
+	// a persistent startup failure (e.g. a state database whose schema version
+	// is ahead of this binary after a rollback) restarts forever because the
+	// systemd default burst of 5 within a 10s window never trips at one restart
+	// every RestartSec=5s. Widening the window to 60s lets 5 restarts land
+	// inside it, so systemd gives up and enters "failed" instead of looping
+	// indefinitely. This mirrors OpenRC's supervise-daemon --respawn-max 5.
 	const systemUnitTemplate = `[Unit]
 Description=eos deployment daemon
 After=network.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -366,6 +678,8 @@ WantedBy=multi-user.target`
 	const userUnitTemplate = `[Unit]
 Description=eos deployment daemon
 After=network.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -643,7 +957,7 @@ func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.Standalon
 	return nil
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
+func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
 	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
 		return err
 	}
@@ -670,7 +984,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 
 	unitKind := unitScope(userUnit) + " file"
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", unitKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", unitKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" creation canceled")
 		return nil
 	}
@@ -699,7 +1013,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by systemd on next start")
 		return nil
 	}
@@ -754,14 +1068,14 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, verbos
 	return nil
 }
 
-func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
+func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
 	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
 		return err
 	}
 
 	unitKind := unitScope(userUnit)
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
 		return nil
 	}
@@ -787,7 +1101,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):") {
 		return nil
 	}
 
@@ -976,7 +1290,7 @@ func bootstrapLaunchdJob(ctx context.Context, cmd *cobra.Command, verbose bool, 
 	return nil
 }
 
-func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, launchdDir, plistFileName string, userAgent, verbose bool, run runCmdFn) error {
+func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, launchdDir, plistFileName string, userAgent, verbose, flagYes bool, run runCmdFn) error {
 	fullTargetName := filepath.Join(launchdDir, plistFileName)
 	helpers.Debugf(cmd, verbose, "target plist file: %s", fullTargetName)
 
@@ -1000,7 +1314,7 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 
 	plistKind := launchdScope(userAgent) + " file"
 
-	if !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", plistKind)) {
+	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", plistKind)) {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), plistKind+" creation canceled")
 		return nil
 	}
@@ -1028,7 +1342,7 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
 	}
 
-	if !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
+	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by launchd on next start")
 		return nil
 	}
@@ -1052,10 +1366,10 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 // bootout" both stops the job and unloads it in one step (the combined equivalent of
 // "systemctl stop" + "systemctl disable"): the plist stays on disk until removed below,
 // but won't be re-bootstrapped until the next "eos system startup", boot, or login.
-func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose bool, run runCmdFn, identity userutil.Identity) error {
+func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose, flagYes bool, run runCmdFn, identity userutil.Identity) error {
 	scopeKind := launchdScope(userAgent)
 
-	confirmed := helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind))
+	confirmed := flagYes || helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind))
 	if !confirmed {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
 		return nil
@@ -1106,7 +1420,7 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig c
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	confirmed = helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
+	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
 	if !confirmed {
 		return nil
 	}
@@ -1211,6 +1525,13 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 	}
 
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "checksums match")
+
+	if err := verifyReleaseSignature(ctx, cmd, result); err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), err.Error())
+		cleanupTempDir(cmd, tempDir)
+		return nil, "", helpers.ErrCommandFailed
+	}
+
 	return binary, tempDir, nil
 }
 
@@ -1329,73 +1650,137 @@ type Asset struct {
 }
 
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Name    string  `json:"name"`
-	Assets  []Asset `json:"assets"`
+	TagName    string  `json:"tag_name"`
+	Name       string  `json:"name"`
+	Assets     []Asset `json:"assets"`
+	Prerelease bool    `json:"prerelease"`
 }
 
+// errReleaseNotFound signals that GitHub's /releases/latest 404'd, which
+// happens when every published release is a prerelease (that endpoint only
+// ever returns the newest non-prerelease, non-draft release).
+var errReleaseNotFound = errors.New("release not found")
+
+// fetchLatestRelease picks the release to update to. For the plain path it
+// trusts GitHub's own "latest" resolution, falling back to the full release
+// list (see pickLatestRelease) only when /releases/latest 404s because every
+// release is a prerelease. The --pre path always walks the full list since
+// GitHub does not expose a "latest including prereleases" endpoint and the
+// list is not guaranteed to be sorted (Elysium-Labs-EU/argus#74).
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
-	url := "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest"
-	if includePre {
-		url = "https://api.github.com/repos/Elysium-Labs-EU/eos/releases"
+	if !includePre {
+		release, err := fetchLatestStableRelease(ctx)
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, errReleaseNotFound) {
+			return nil, err
+		}
 	}
+
+	releases, err := fetchAllReleases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pickLatestRelease(releases)
+}
+
+func fetchGitHubAPI(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set("Accept", "application/vnd.github+json")
 
-	// #nosec G704
-	resp, err := httpClient.Do(req)
-	defer func() {
-		if resp == nil {
-			return
-		}
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing response body: %w", closeErr)
-		}
-	}()
+	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
+	return resp, nil
+}
 
+func fetchLatestStableRelease(ctx context.Context) (*Release, error) {
+	resp, err := fetchGitHubAPI(ctx, "https://api.github.com/repos/Elysium-Labs-EU/eos/releases/latest")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errReleaseNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	if includePre {
-		var releases []Release
-		if err = json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON: %w", err)
-		}
-		if len(releases) == 0 {
-			return nil, fmt.Errorf("no releases found")
-		}
-		// GitHub's list order isn't a reliable "newest first" guarantee (the
-		// same list-ordering hazard install.sh's fetch_latest_version guards
-		// against, issue #43), so pick the highest semver tag directly
-		// instead of trusting releases[0].
-		latest := &releases[0]
-		for i := 1; i < len(releases); i++ {
-			if semver.Compare(releases[i].TagName, latest.TagName) > 0 {
-				latest = &releases[i]
-			}
-		}
-		return latest, nil
-	}
-
 	var release Release
-	if err = json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 	return &release, nil
 }
 
+func fetchAllReleases(ctx context.Context) ([]Release, error) {
+	resp, err := fetchGitHubAPI(ctx, "https://api.github.com/repos/Elysium-Labs-EU/eos/releases")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("no releases found")
+	}
+	return releases, nil
+}
+
+// pickLatestRelease returns the highest stable release by semver, falling
+// back to the highest prerelease only when no stable release exists in the
+// list (Elysium-Labs-EU/argus#74).
+func pickLatestRelease(releases []Release) (*Release, error) {
+	if best := highestByTag(releases, false); best != nil {
+		return best, nil
+	}
+	if best := highestByTag(releases, true); best != nil {
+		return best, nil
+	}
+	return nil, fmt.Errorf("no releases found")
+}
+
+// highestByTag returns the release with the highest valid semver tag.
+// includePrerelease also considers releases flagged as prerelease.
+func highestByTag(releases []Release, includePrerelease bool) *Release {
+	var best *Release
+	for i := range releases {
+		r := &releases[i]
+		if r.Prerelease && !includePrerelease {
+			continue
+		}
+		if !semver.IsValid(r.TagName) {
+			continue
+		}
+		if best == nil || semver.Compare(r.TagName, best.TagName) > 0 {
+			best = r
+		}
+	}
+	return best
+}
+
 type UpdateResult struct {
 	Asset          *Asset
 	ChecksumsAsset *Asset
+	SignatureAsset *Asset
 	LatestVersion  string
 }
 
@@ -1408,6 +1793,7 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 
 	var usableAsset *Asset
 	var checksumsAsset *Asset
+	var signatureAsset *Asset
 	for i, asset := range release.Assets {
 		if strings.Contains(asset.Name, arch) && strings.Contains(asset.Name, os) {
 			usableAsset = &release.Assets[i]
@@ -1415,13 +1801,16 @@ func checkForUpdates(release *Release, current string, arch string, os string) (
 		if asset.Name == "sha256sums.txt" {
 			checksumsAsset = &release.Assets[i]
 		}
+		if asset.Name == "sha256sums.txt.sig" {
+			signatureAsset = &release.Assets[i]
+		}
 	}
 
 	if usableAsset == nil {
 		return UpdateResult{}, fmt.Errorf("no usable asset found")
 	}
 
-	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, LatestVersion: latest}, nil
+	return UpdateResult{Asset: usableAsset, ChecksumsAsset: checksumsAsset, SignatureAsset: signatureAsset, LatestVersion: latest}, nil
 }
 
 // fetchAssetResponse validates the asset URL (https + github.com), issues the
@@ -1437,6 +1826,7 @@ func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
@@ -1544,6 +1934,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	if err != nil {
 		return "", fmt.Errorf("building request: %w", err)
 	}
+	req.Header.Set("User-Agent", updateUserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

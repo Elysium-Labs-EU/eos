@@ -3,18 +3,23 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,7 +97,7 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
 		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -105,7 +110,7 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false,
+	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
 		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
@@ -122,7 +127,7 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	_ = startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false,
+	}, tempDir+"/", "eos.service", false, false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
@@ -143,7 +148,7 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, true,
+	}, tempDir+"/", "eos.service", false, true, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
@@ -175,7 +180,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false,
+	}, tempDir+"/", "eos.service", false, false, false,
 		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
@@ -188,6 +193,60 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	}
 }
 
+// TestStartupCmdFlagYesSkipsPrompts deliberately does NOT call setStdin — a
+// script/tool invoking `eos system startup --yes` non-interactively has no
+// stdin to answer a confirmation prompt with, so flagYes must skip both
+// PromptConfirm calls entirely rather than fall through to a read that
+// would hang or silently decline (see eos#29).
+func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
+	tempDir := t.TempDir()
+	c, _, _ := makeTestCmd(t)
+
+	var calls []string
+	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", "eos.service", false, false, true,
+		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	unitFilePath := filepath.Join(tempDir, "eos.service")
+	if _, statErr := os.Stat(unitFilePath); os.IsNotExist(statErr) {
+		t.Error("expected unit file to be written despite no stdin provided")
+	}
+
+	want := []string{"systemctl daemon-reload", "systemctl enable eos", "systemctl start eos"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+	}
+}
+
+func TestRenderUnitFile_CapsCrashLoop(t *testing.T) {
+	// A version-ahead / rollback state database makes eos fail on every start.
+	// The generated unit must bound the restart burst so systemd eventually
+	// enters "failed" instead of looping forever. See issue #11.
+	for _, userUnit := range []bool{false, true} {
+		name := "system"
+		if userUnit {
+			name = "user"
+		}
+		t.Run(name, func(t *testing.T) {
+			unit, err := renderUnitFile("/usr/local/bin", "eos", userUnit)
+			if err != nil {
+				t.Fatalf("renderUnitFile returned error: %v", err)
+			}
+			for _, want := range []string{"StartLimitIntervalSec=60s", "StartLimitBurst=5", "Restart=always"} {
+				if !strings.Contains(unit, want) {
+					t.Errorf("expected unit to contain %q, got:\n%s", want, unit)
+				}
+			}
+		})
+	}
+}
+
 func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
@@ -195,7 +254,7 @@ func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -214,7 +273,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -243,7 +302,7 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
 		SystemdTargetDir:      tempDir + "/",
 		SystemdTargetFileName: "eos.service",
-	}, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -321,7 +380,7 @@ func TestStartupCmdLaunchdDeclinePlist(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when user declines, got: %v", calls)
@@ -342,7 +401,7 @@ func TestStartupCmdLaunchdWritesPlistAndEnablesWithoutRestart(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", plistFileName, false, true, recordingRunCmd(t, &calls))
+	}, tempDir+"/", plistFileName, false, true, false, recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
 		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
@@ -381,7 +440,7 @@ func TestStartupCmdLaunchdFullRestartPath(t *testing.T) {
 	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
 		PIDFile:    filepath.Join(tempDir, "eos.pid"),
 		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, recordingRunCmd(t, &calls))
+	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -404,7 +463,7 @@ func TestUnstartupCmdLaunchdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, false, recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when declined, got: %v", calls)
@@ -434,7 +493,7 @@ func TestUnstartupCmdLaunchdRemovesPlistAndBootsOut(t *testing.T) {
 	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, recordingRunCmd(t, &calls), identity)
+	}, false, false, false, recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -477,7 +536,7 @@ func TestUnstartupCmdLaunchdToleratesJobNotLoaded(t *testing.T) {
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 3), identity)
+	}, false, false, false, exitCodeRunCmd(t, &calls, 3), identity)
 
 	if err != nil {
 		t.Errorf("expected exit code 3 to be tolerated, got error: %v", err)
@@ -517,7 +576,7 @@ func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
 	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
 		LaunchdTargetDir:     tempDir + "/",
 		LaunchdPlistFileName: plistFileName,
-	}, false, false, exitCodeRunCmd(t, &calls, 1), identity)
+	}, false, false, false, exitCodeRunCmd(t, &calls, 1), identity)
 
 	if err == nil {
 		t.Fatal("expected a non-3 exit code to be a fatal error")
@@ -1113,6 +1172,429 @@ func TestFetchLatestRelease_badJSON(t *testing.T) {
 	}
 }
 
+// TestFetchLatestRelease_preOutOfOrder guards against Elysium-Labs-EU/argus#74:
+// GitHub's /releases list is not guaranteed to be sorted, so --pre must not
+// just return releases[0].
+func TestFetchLatestRelease_preOutOfOrder(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v1.4.0"},
+			{TagName: "v1.6.0"},
+			{TagName: "v1.5.0"},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v1.6.0" {
+		t.Errorf("got tag %q, want v1.6.0", rel.TagName)
+	}
+}
+
+// TestFetchLatestRelease_allPrereleaseFallback guards against
+// Elysium-Labs-EU/argus#74: when every release is a prerelease,
+// /releases/latest 404s and the plain (non---pre) path must fall back to the
+// full list instead of hard-erroring.
+func TestFetchLatestRelease_allPrereleaseFallback(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v2.0.0-rc.1", Prerelease: true},
+			{TagName: "v2.0.0-rc.2", Prerelease: true},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v2.0.0-rc.2" {
+		t.Errorf("got tag %q, want v2.0.0-rc.2", rel.TagName)
+	}
+}
+
+func TestPickLatestRelease(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantTag  string
+		releases []Release
+		wantErr  bool
+	}{
+		{
+			name: "out of order stable releases picks highest by semver",
+			releases: []Release{
+				{TagName: "v1.4.0"},
+				{TagName: "v1.6.0"},
+				{TagName: "v1.5.0"},
+			},
+			wantTag: "v1.6.0",
+		},
+		{
+			name: "stable release preferred over higher-tagged prerelease",
+			releases: []Release{
+				{TagName: "v1.5.0"},
+				{TagName: "v2.0.0-rc.1", Prerelease: true},
+			},
+			wantTag: "v1.5.0",
+		},
+		{
+			name: "all prerelease falls back to highest prerelease",
+			releases: []Release{
+				{TagName: "v2.0.0-rc.1", Prerelease: true},
+				{TagName: "v2.0.0-rc.10", Prerelease: true},
+				{TagName: "v2.0.0-rc.2", Prerelease: true},
+			},
+			wantTag: "v2.0.0-rc.10",
+		},
+		{
+			name:    "empty release list errors",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rel, err := pickLatestRelease(tt.releases)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rel.TagName != tt.wantTag {
+				t.Errorf("got tag %q, want %q", rel.TagName, tt.wantTag)
+			}
+		})
+	}
+}
+
+func TestResolveLatestVersion_devBuildSkipped(t *testing.T) {
+	_, err := resolveLatestVersion(t.Context(), "dev")
+	if err == nil {
+		t.Fatal("expected error for dev build")
+	}
+}
+
+func TestResolveLatestVersion_newerAvailable(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Release{TagName: "v1.5.0"})
+	})
+	latest, err := resolveLatestVersion(t.Context(), "v1.4.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if latest != "v1.5.0" {
+		t.Errorf("got %q, want v1.5.0", latest)
+	}
+}
+
+func TestResolveLatestVersion_alreadyLatest(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Release{TagName: "v1.5.0"})
+	})
+	latest, err := resolveLatestVersion(t.Context(), "v1.5.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if latest != "" {
+		t.Errorf("expected empty string when already latest, got %q", latest)
+	}
+}
+
+func TestResolveDaemonVersion_standaloneNotRunning(t *testing.T) {
+	tempDir := t.TempDir()
+	daemon := config.DaemonConfig{
+		Standalone: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+	}
+	_, err := resolveDaemonVersion(t.Context(), daemon)
+	if err == nil {
+		t.Fatal("expected error when daemon is not running")
+	}
+}
+
+func TestResolveDaemonVersion_unsupportedSupervisor(t *testing.T) {
+	_, err := resolveDaemonVersion(t.Context(), config.DaemonConfig{})
+	if err == nil {
+		t.Fatal("expected error for a daemon config with no supervisor set")
+	}
+}
+
+// TestResolveDaemonVersion_systemdBranch only exercises the dispatch into the
+// systemd branch — systemdDaemonRunningVersion itself shells out to the real
+// systemctl/proc filesystem, which is environment-dependent, so this doesn't
+// assert a particular outcome, just that resolveDaemonVersion routes there.
+func TestResolveDaemonVersion_systemdBranch(t *testing.T) {
+	daemon := config.DaemonConfig{Systemd: &config.SystemdConfig{UserUnit: true}}
+	_, _ = resolveDaemonVersion(t.Context(), daemon)
+}
+
+func TestResolveStandaloneDaemonVersion_notRunning(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}
+	_, err := resolveStandaloneDaemonVersion(t.Context(), cfg)
+	if err == nil {
+		t.Fatal("expected error when daemon is not running")
+	}
+}
+
+func TestResolveStandaloneDaemonVersion_connectError(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("writing pid file: %v", err)
+	}
+	// No listener on this socket: the daemon "looks" alive via the PID file
+	// (our own PID always is), but the IPC round-trip must fail cleanly.
+	cfg := &config.StandaloneDaemonConfig{
+		PIDFile:       pidFile,
+		SocketPath:    filepath.Join(tempDir, "missing.sock"),
+		SocketTimeout: 100 * time.Millisecond,
+	}
+	_, err := resolveStandaloneDaemonVersion(t.Context(), cfg)
+	if err == nil {
+		t.Fatal("expected error when the daemon socket is unreachable")
+	}
+}
+
+func TestResolveStandaloneDaemonVersion_runningSuccess(t *testing.T) {
+	// A short os.MkdirTemp root, not t.TempDir(): the latter nests under this
+	// test's (long) name, and a unix socket path is capped at ~104 bytes —
+	// nesting under the test name alone can blow that budget.
+	tempDir, err := os.MkdirTemp("", "eos-sock-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+	pidFile := filepath.Join(tempDir, "eos.pid")
+	socketPath := filepath.Join(tempDir, "eos.sock")
+	if writeErr := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); writeErr != nil {
+		t.Fatalf("writing pid file: %v", writeErr)
+	}
+
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var req types.DaemonRequest
+		if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+			return
+		}
+		data, _ := json.Marshal(types.GetVersionResponse{Version: "v9.9.9"})
+		_ = json.NewEncoder(conn).Encode(types.DaemonResponse{Success: true, Data: data})
+	}()
+
+	cfg := &config.StandaloneDaemonConfig{PIDFile: pidFile, SocketPath: socketPath, SocketTimeout: time.Second}
+	version, err := resolveStandaloneDaemonVersion(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if version != "v9.9.9" {
+		t.Errorf("got %q, want v9.9.9", version)
+	}
+}
+
+func TestFirstVersionToken(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "full buildinfo string", in: "v1.2.3 (commit: abc, built: 2026-01-01)", want: "v1.2.3"},
+		{name: "bare version", in: "v1.2.3", want: "v1.2.3"},
+		{name: "empty", in: "", wantErr: true},
+		{name: "whitespace only", in: "   ", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := firstVersionToken(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersionDriftLines(t *testing.T) {
+	tests := []struct {
+		name        string
+		info        versionDriftInfo
+		wantContain []string
+		wantOmit    []string
+		wantNil     bool
+	}{
+		{
+			name:    "no daemon known, no newer release: no drift",
+			info:    versionDriftInfo{cliVersion: "v1.0.0"},
+			wantNil: true,
+		},
+		{
+			name:    "daemon known and matches, no newer release: no drift",
+			info:    versionDriftInfo{cliVersion: "v1.0.0", daemonVersion: "v1.0.0", daemonKnown: true},
+			wantNil: true,
+		},
+		{
+			name:        "daemon version differs: drift",
+			info:        versionDriftInfo{cliVersion: "v1.0.1", daemonVersion: "v1.0.0", daemonKnown: true},
+			wantContain: []string{"CLI:", "v1.0.1", "Daemon:", "v1.0.0", "daemon stop && eos daemon start"},
+			wantOmit:    []string{"Latest:"},
+		},
+		{
+			name:        "newer release available: drift",
+			info:        versionDriftInfo{cliVersion: "v1.0.0", latestVersion: "v1.1.0"},
+			wantContain: []string{"CLI:", "v1.0.0", "Latest:", "v1.1.0", "eos system update"},
+			wantOmit:    []string{"Daemon:", "daemon stop && eos daemon start"},
+		},
+		{
+			name: "both daemon and release drift",
+			info: versionDriftInfo{cliVersion: "v1.0.1", daemonVersion: "v1.0.0", daemonKnown: true, latestVersion: "v1.1.0"},
+			wantContain: []string{
+				"CLI:", "v1.0.1", "Daemon:", "v1.0.0", "Latest:", "v1.1.0",
+				"eos system update", "daemon stop && eos daemon start",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := versionDriftLines(tt.info)
+			if tt.wantNil {
+				if lines != nil {
+					t.Fatalf("expected nil lines, got %v", lines)
+				}
+				return
+			}
+			joined := strings.Join(lines, "\n")
+			for _, want := range tt.wantContain {
+				if !strings.Contains(joined, want) {
+					t.Errorf("expected output to contain %q, got: %s", want, joined)
+				}
+			}
+			for _, omit := range tt.wantOmit {
+				if strings.Contains(joined, omit) {
+					t.Errorf("expected output to omit %q, got: %s", omit, joined)
+				}
+			}
+		})
+	}
+}
+
+// TestPrintVersionDrift_fullDrift wires a real running standalone daemon
+// (older version) and a fake release server (newer version) together, driving
+// gatherVersionDrift and printVersionDrift through their success paths rather
+// than only the best-effort-failure paths covered elsewhere.
+func TestPrintVersionDrift_fullDrift(t *testing.T) {
+	origVersion := buildinfo.Version
+	t.Cleanup(func() { buildinfo.Version = origVersion })
+	buildinfo.Version = "v1.0.0"
+
+	// Short os.MkdirTemp root, not t.TempDir() — see the comment in
+	// TestResolveStandaloneDaemonVersion_runningSuccess on unix socket path limits.
+	tempDir, err := os.MkdirTemp("", "eos-sock-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+	pidFile := filepath.Join(tempDir, "eos.pid")
+	socketPath := filepath.Join(tempDir, "eos.sock")
+	if writeErr := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); writeErr != nil {
+		t.Fatalf("writing pid file: %v", writeErr)
+	}
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var req types.DaemonRequest
+		if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+			return
+		}
+		data, _ := json.Marshal(types.GetVersionResponse{Version: "v0.9.0"})
+		_ = json.NewEncoder(conn).Encode(types.DaemonResponse{Success: true, Data: data})
+	}()
+
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Release{TagName: "v1.1.0"})
+	})
+
+	daemon := config.DaemonConfig{
+		Standalone: &config.StandaloneDaemonConfig{PIDFile: pidFile, SocketPath: socketPath, SocketTimeout: time.Second},
+	}
+
+	var out bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(t.Context())
+
+	printVersionDrift(cmd, daemon)
+
+	output := out.String()
+	for _, want := range []string{"v1.0.0", "v0.9.0", "v1.1.0", "eos system update", "daemon stop && eos daemon start"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected output to contain %q, got: %s", want, output)
+		}
+	}
+}
+
+func TestPrintVersionDrift_noDriftNoOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	daemon := config.DaemonConfig{
+		Standalone: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+	}
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var out bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(t.Context())
+
+	printVersionDrift(cmd, daemon)
+
+	if out.Len() != 0 {
+		t.Errorf("expected no output when daemon is unreachable and latest-release check fails, got: %q", out.String())
+	}
+}
+
 func TestHandleDownloadBinary_success(t *testing.T) {
 	content := []byte("fake binary content")
 	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -1319,6 +1801,9 @@ func (m *mockMgr) GetServiceLogFilePath(string, bool) (*string, error) {
 }
 func (m *mockMgr) RestartService(string, time.Duration, time.Duration) (int, error) { return 0, nil }
 func (m *mockMgr) StartService(string) (int, error)                                 { return 0, nil }
+func (m *mockMgr) GetVersion() (types.GetVersionResponse, error) {
+	return types.GetVersionResponse{}, nil
+}
 
 func TestStopServices_allSuccess(t *testing.T) {
 	mgr := &mockMgr{
@@ -1533,4 +2018,113 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 			t.Errorf("expected temp dir removed, stat err = %v", statErr)
 		}
 	})
+}
+
+func TestParseReleaseSigningPublicKey(t *testing.T) {
+	pub, err := parseReleaseSigningPublicKey()
+	if err != nil {
+		t.Fatalf("parseReleaseSigningPublicKey: %v", err)
+	}
+	if pub.Curve != elliptic.P256() {
+		t.Errorf("public key curve = %v, want P-256", pub.Curve)
+	}
+}
+
+// generateTestSigningKey returns a throwaway ECDSA P-256 key for signing
+// test fixtures — never the embedded production key, which has no private
+// half checked into this repo.
+func generateTestSigningKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating test signing key: %v", err)
+	}
+	return key
+}
+
+func TestVerifySignature(t *testing.T) {
+	key := generateTestSigningKey(t)
+	data := []byte("eos release checksums fixture")
+
+	digest := sha256.Sum256(data)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatalf("signing fixture: %v", err)
+	}
+
+	if err := verifySignature(&key.PublicKey, data, sig); err != nil {
+		t.Errorf("verifySignature with a valid signature: %v", err)
+	}
+
+	if err := verifySignature(&key.PublicKey, []byte("tampered data"), sig); err == nil {
+		t.Error("expected an error when the signed data doesn't match")
+	}
+
+	otherKey := generateTestSigningKey(t)
+	if err := verifySignature(&otherKey.PublicKey, data, sig); err == nil {
+		t.Error("expected an error when the signature was made by a different key")
+	}
+
+	if err := verifySignature(&key.PublicKey, data, []byte("not a signature")); err == nil {
+		t.Error("expected an error for a malformed signature")
+	}
+}
+
+func TestVerifyChecksumsSignatureRejectsForgedSignature(t *testing.T) {
+	// verifyChecksumsSignature always checks against the embedded production
+	// public key, so a signature not produced by its (deliberately absent)
+	// private key must be rejected regardless of content.
+	if err := verifyChecksumsSignature([]byte("sha256sums.txt contents"), []byte("forged signature bytes")); err == nil {
+		t.Error("expected an error for a signature not made by the production key")
+	}
+}
+
+func TestVerifyReleaseSignatureMissingAssetWarnsAndContinues(t *testing.T) {
+	useHTTPTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "sha256sums.txt") {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+	})
+
+	cmd, outBuf, _ := makeTestCmd(t)
+	result := UpdateResult{
+		LatestVersion:  "v1.0.0",
+		ChecksumsAsset: &Asset{Name: "sha256sums.txt", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"},
+		// SignatureAsset intentionally nil.
+	}
+
+	if err := verifyReleaseSignature(t.Context(), cmd, result); err != nil {
+		t.Fatalf("verifyReleaseSignature: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "has no signature") {
+		t.Errorf("output = %q, want a no-signature warning", outBuf.String())
+	}
+}
+
+func TestVerifyReleaseSignaturePresentButInvalidFails(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "sha256sums.txt.sig"):
+			_, _ = w.Write([]byte("not a real signature"))
+		case strings.HasSuffix(r.URL.Path, "sha256sums.txt"):
+			_, _ = w.Write([]byte("checksums"))
+		default:
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+	})
+
+	cmd, _, _ := makeTestCmd(t)
+	result := UpdateResult{
+		LatestVersion:  "v1.0.0",
+		ChecksumsAsset: &Asset{Name: "sha256sums.txt", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"},
+		SignatureAsset: &Asset{Name: "sha256sums.txt.sig", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt.sig"},
+	}
+
+	err := verifyReleaseSignature(t.Context(), cmd, result)
+	if err == nil {
+		t.Fatal("expected an error for an invalid signature")
+	}
+	if !strings.Contains(err.Error(), "signature verification failed") {
+		t.Errorf("error = %v, want a signature-verification-failed message", err)
+	}
 }

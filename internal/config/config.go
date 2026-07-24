@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,6 @@ const (
 	HealthBackoffMaxMs                = 60000
 	HealthCheckIntervalMs             = 2000
 	HealthMemSampleIntervalMs         = 30000
-	HealthMaxRestart                  = 10
 	HealthMemoryForceRestartThreshold = 0.95
 	HealthMemorySoftRestartThreshold  = 0.85
 	HealthMemoryWarningThreshold      = 0.75
@@ -50,6 +50,7 @@ type DaemonConfig struct {
 	Standalone *StandaloneDaemonConfig `json:"standalone" yaml:"standalone"`
 	Systemd    *SystemdConfig          `json:"systemd" yaml:"systemd"`
 	Launchd    *LaunchdConfig          `json:"launchd" yaml:"launchd"`
+	OpenRC     *OpenRCConfig           `json:"openrc" yaml:"openrc"`
 }
 
 type StandaloneDaemonConfig struct {
@@ -69,7 +70,13 @@ type DaemonLogConfig struct {
 type SystemdConfig struct {
 	SystemdTargetDir      string `json:"systemd_target_dir" yaml:"systemdTargetDir"`
 	SystemdTargetFileName string `json:"systemd_target_file_name" yaml:"systemdTargetFileName"`
-	UserUnit              bool   `json:"user_unit" yaml:"userUnit"`
+	// SocketPath is the Unix socket the systemd-managed daemon listens on for
+	// THIS base dir (baseDir/eos.sock). A systemd unit supervises exactly one
+	// base dir, so probing this socket is the only base-dir-scoped liveness
+	// signal; `systemctl is-active eos` is host-global and says nothing about
+	// which EOS_BASE_DIR the active unit serves (issue #12).
+	SocketPath string `json:"socket_path" yaml:"socketPath"`
+	UserUnit   bool   `json:"user_unit" yaml:"userUnit"`
 }
 
 // LaunchdConfig mirrors SystemdConfig for macOS: UserAgent plays the same role as
@@ -79,6 +86,15 @@ type LaunchdConfig struct {
 	LaunchdTargetDir     string `json:"launchd_target_dir" yaml:"launchdTargetDir"`
 	LaunchdPlistFileName string `json:"launchd_plist_file_name" yaml:"launchdPlistFileName"`
 	UserAgent            bool   `json:"user_agent" yaml:"userAgent"`
+}
+
+// OpenRCConfig is the OpenRC analog of SystemdConfig. OpenRC has no per-user
+// service manager (no `systemctl --user` equivalent), so the eos init script is
+// always system-wide — there is no UserUnit field. InitDir/InitFileName locate
+// the generated /etc/init.d/eos script that `rc-service`/`rc-update` operate on.
+type OpenRCConfig struct {
+	InitDir      string `json:"init_dir" yaml:"initDir"`
+	InitFileName string `json:"init_file_name" yaml:"initFileName"`
 }
 
 type TimeOutConfig struct {
@@ -100,7 +116,6 @@ type MemoryThresholdConfig struct {
 type HealthConfig struct {
 	CheckInterval             time.Duration         `json:"check_interval" yaml:"checkInterval"`
 	MemSampleInterval         time.Duration         `json:"mem_sample_interval" yaml:"memSampleInterval"`
-	MaxRestart                int                   `json:"max_restart" yaml:"maxRestart"`
 	RestartCounterResetWindow time.Duration         `json:"restart_counter_reset_window" yaml:"restartCounterResetWindow"`
 	Timeout                   TimeOutConfig         `json:"timeout" yaml:"timeout"`
 	Backoff                   BackoffConfig         `json:"backoff" yaml:"backoff"`
@@ -276,6 +291,46 @@ func IsLaunchdManaged(launchdTargetDir string, launchdPlistFileName string) (boo
 		return false, nil
 	}
 	return false, fmt.Errorf("checking launchd plist file: %w", err)
+}
+
+// IsUnderOpenRC reports whether the current process was started by OpenRC's
+// supervise-daemon (i.e. we ARE the supervised daemon, and must run standalone
+// in the foreground rather than delegating back to rc-service).
+//
+// Unlike systemd (INVOCATION_ID) and launchd (XPC_SERVICE_NAME), OpenRC's
+// supervise-daemon sanitizes the child's environment down to a minimal set
+// (HOME, PATH, USER, …) and drops all RC_* variables, so there is no env marker
+// to key on — verified empirically on Alpine 3.23. Instead we inspect the parent
+// process: the supervised daemon's direct parent is the supervise-daemon that
+// exec'd it, whose argv[0] basename is "supervise-daemon".
+func IsUnderOpenRC() bool {
+	ppid := os.Getppid()
+	if ppid <= 1 {
+		return false
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", ppid)) // #nosec G304 -- ppid comes from the kernel, not user input
+	if err != nil {
+		return false
+	}
+	// /proc/<pid>/cmdline is NUL-separated; argv[0] is up to the first NUL.
+	if i := bytes.IndexByte(data, 0); i >= 0 {
+		data = data[:i]
+	}
+	return filepath.Base(string(data)) == "supervise-daemon"
+}
+
+// IsOpenRCManaged reports whether the eos OpenRC init script is installed on
+// disk, the OpenRC analog of IsSystemdManaged. OpenRC is always system-wide, so
+// unlike systemd/launchd there is no per-user location to also check.
+func IsOpenRCManaged(initDir, initFileName string) (bool, error) {
+	_, err := os.Stat(filepath.Join(initDir, initFileName))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking OpenRC init script: %w", err)
 }
 
 // ResolveLaunchdScope is the launchd analog of ResolveSystemdScope: it finds which

@@ -57,7 +57,7 @@ profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF
 
 setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
 	@echo "Installing golangci-lint v2.12.2..."
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.12.2
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 	@echo "Installing git-cliff..."
 	cargo install git-cliff 2>/dev/null || echo "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
 	@echo "Installing lefthook..."
@@ -182,12 +182,17 @@ test-openrc-orb: ## Run runtime-detection/OpenRC tests on OrbStack $(ORB_MACHINE
 test-install-orb: release-local ## Build and test install.sh on OrbStack $(ORB_MACHINE) with local binary
 	orb run -m $(ORB_MACHINE) bash -lc "arch=\$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-linux-\$$arch"
 
+test-install-darwin: release-local ## Build and test install.sh natively on macOS with local binary (no orb needed — darwin is native here)
+	arch=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-darwin-$$arch
+
 release-local: ## Build release binaries locally
 	@echo "Building release binaries..."
 	@mkdir -p dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/eos-linux-amd64 .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/eos-linux-arm64 .
-	cd dist && sha256sum eos-linux-* > sha256sums.txt
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o dist/eos-darwin-amd64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o dist/eos-darwin-arm64 .
+	cd dist && sha256sum eos-linux-* eos-darwin-* > sha256sums.txt
 	@echo "Release binaries built in ./dist/"
 	@ls -lh dist/
 
