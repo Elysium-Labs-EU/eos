@@ -7,7 +7,7 @@ Go 1.26.4 or later and `make` are required. Verify with `go version` and `make -
 ## Setup
 
 ```bash
-git clone https://codeberg.org/Elysium_Labs/eos
+git clone https://github.com/Elysium-Labs-EU/eos
 cd eos
 make setup
 ```

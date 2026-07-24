@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 

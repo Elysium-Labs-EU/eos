@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/buildinfo"
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
-	"codeberg.org/Elysium_Labs/eos/internal/userutil"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
 
@@ -894,7 +894,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 			Assets: []Asset{
 				{
 					Name:               "eos-linux-arm64",
-					BrowserDownloadURL: "https://codeberg.org/fake/download",
+					BrowserDownloadURL: "https://github.com/fake/download",
 				},
 			},
 		}, nil
@@ -1012,7 +1012,7 @@ func TestSystemVersionCommand(t *testing.T) {
 }
 
 // hostRedirectTransport rewrites any request to hit addr over plain HTTP.
-// Lets tests intercept hardcoded codeberg.org URLs.
+// Lets tests intercept hardcoded github.com URLs.
 type hostRedirectTransport struct{ addr string }
 
 func (h *hostRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -1061,6 +1061,28 @@ func TestFetchLatestRelease_includePre(t *testing.T) {
 	}
 }
 
+// TestFetchLatestRelease_includePre_outOfOrderList guards the same
+// list-ordering hazard install.sh's fetch_latest_version guards against
+// (issue #43): a freshly published release can be present but not first in
+// the list, so fetchLatestRelease must pick the highest semver tag rather
+// than trusting releases[0].
+func TestFetchLatestRelease_includePre_outOfOrderList(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v0.0.12-rc.4"},
+			{TagName: "v0.0.12-rc.5"},
+			{TagName: "v0.0.12-rc.3"},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v0.0.12-rc.5" {
+		t.Errorf("got tag %q, want the highest semver tag even though it wasn't first in the list", rel.TagName)
+	}
+}
+
 func TestFetchLatestRelease_nonOKStatus(t *testing.T) {
 	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -1098,7 +1120,7 @@ func TestHandleDownloadBinary_success(t *testing.T) {
 	})
 	asset := &Asset{
 		Name:               "eos-linux-amd64",
-		BrowserDownloadURL: "https://codeberg.org/fake/download",
+		BrowserDownloadURL: "https://github.com/fake/download",
 	}
 	f, tempDir, err := handleDownloadBinary(t.Context(), asset)
 	if err != nil {
@@ -1119,11 +1141,11 @@ func TestHandleDownloadBinary_success(t *testing.T) {
 func TestHandleDownloadBinary_invalidURL(t *testing.T) {
 	asset := &Asset{
 		Name:               "eos-linux-amd64",
-		BrowserDownloadURL: "https://github.com/fake/download",
+		BrowserDownloadURL: "https://codeberg.org/fake/download",
 	}
 	_, _, err := handleDownloadBinary(t.Context(), asset)
 	if err == nil {
-		t.Fatal("expected error for non-codeberg URL")
+		t.Fatal("expected error for non-github URL")
 	}
 }
 
@@ -1133,7 +1155,7 @@ func TestHandleDownloadBinary_nonOK(t *testing.T) {
 	})
 	asset := &Asset{
 		Name:               "eos-linux-amd64",
-		BrowserDownloadURL: "https://codeberg.org/fake/download",
+		BrowserDownloadURL: "https://github.com/fake/download",
 	}
 	_, _, err := handleDownloadBinary(t.Context(), asset)
 	if err == nil {
@@ -1149,7 +1171,7 @@ func TestFetchChecksumForBinary_success(t *testing.T) {
 	})
 	asset := &Asset{
 		Name:               "sha256sums.txt",
-		BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt",
+		BrowserDownloadURL: "https://github.com/fake/sha256sums.txt",
 	}
 	got, err := fetchChecksumForBinary(t.Context(), asset, binaryName)
 	if err != nil {
@@ -1171,7 +1193,7 @@ func TestFetchChecksumForBinary_notFound(t *testing.T) {
 	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintf(w, "abc123  eos-linux-arm64\n")
 	})
-	asset := &Asset{BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt"}
+	asset := &Asset{BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"}
 	_, err := fetchChecksumForBinary(t.Context(), asset, "eos-linux-amd64")
 	if err == nil {
 		t.Fatal("expected error when binary not found in checksums")
@@ -1182,7 +1204,7 @@ func TestFetchChecksumForBinary_nonOK(t *testing.T) {
 	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	asset := &Asset{BrowserDownloadURL: "https://codeberg.org/fake/sha256sums.txt"}
+	asset := &Asset{BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"}
 	_, err := fetchChecksumForBinary(t.Context(), asset, "eos-linux-amd64")
 	if err == nil {
 		t.Fatal("expected error for non-OK status")

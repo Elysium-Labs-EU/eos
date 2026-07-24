@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/cmd/helpers"
-	"codeberg.org/Elysium_Labs/eos/internal/manager"
-	"codeberg.org/Elysium_Labs/eos/internal/ui"
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )

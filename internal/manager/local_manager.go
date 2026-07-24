@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/logutil"
-	"codeberg.org/Elysium_Labs/eos/internal/otelx"
-	"codeberg.org/Elysium_Labs/eos/internal/procutil"
-	"codeberg.org/Elysium_Labs/eos/internal/types"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/otelx"
+	"github.com/Elysium-Labs-EU/eos/internal/procutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 type LocalManager struct {

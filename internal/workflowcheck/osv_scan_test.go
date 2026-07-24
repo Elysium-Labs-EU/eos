@@ -54,7 +54,7 @@ func loadWorkflow(t *testing.T, relPath string) workflow {
 // osv-scanner-action does not publish a floating major-version tag (e.g.
 // "v2"); only fully-qualified "vX.Y.Z" release tags exist. Pinning to a
 // bare major tag fails action resolution before the scan ever runs
-// (codeberg.org/Elysium_Labs/eos#54).
+// (github.com/Elysium-Labs-EU/eos#54).
 var pinnedVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 func TestOSVScannerActionPinnedToConcreteVersion(t *testing.T) {

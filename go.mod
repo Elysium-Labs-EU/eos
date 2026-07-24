@@ -1,4 +1,4 @@
-module codeberg.org/Elysium_Labs/eos
+module github.com/Elysium-Labs-EU/eos
 
 go 1.26.5
 

@@ -37,7 +37,7 @@ func UserCredentials(u *user.User) (uid uint32, gid uint32, err error) {
 // running as." The field is unexported so the only way to obtain a value is
 // through ResolveIdentity — callers cannot fake or re-derive one by hand,
 // which is what makes this a compiler-enforced guarantee rather than a
-// convention (see https://codeberg.org/Elysium_Labs/eos/issues/97).
+// convention (see https://github.com/Elysium-Labs-EU/eos/issues/97).
 type Identity struct {
 	u   *user.User
 	uid uint32

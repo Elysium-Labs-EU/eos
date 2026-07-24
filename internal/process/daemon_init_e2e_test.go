@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/Elysium_Labs/eos/internal/config"
-	"codeberg.org/Elysium_Labs/eos/internal/database"
-	"codeberg.org/Elysium_Labs/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 )
 
 // shortTempDir creates a temp dir under /tmp to avoid hitting the macOS Unix
