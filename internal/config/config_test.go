@@ -325,6 +325,7 @@ func TestLoadEosConfig_ThresholdsOutOfOrder(t *testing.T) {
 	_, err := LoadEosConfig(dir)
 	if err == nil {
 		t.Fatal("expected error for out-of-order thresholds, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "ascending") {
 		t.Errorf("expected 'ascending' in error, got: %v", err)
@@ -405,6 +406,7 @@ func TestEosConfig_Validate_SinkMissingType(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected error for sink missing type, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "sinks.broken") {
 		t.Errorf("expected error to mention sinks.broken, got: %v", err)

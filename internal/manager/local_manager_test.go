@@ -43,6 +43,7 @@ func TestNewManager(t *testing.T) {
 
 	if manager == nil {
 		t.Fatal("Manager should not be nil")
+		return
 	}
 	services, err := manager.GetAllServiceCatalogEntries()
 	if err != nil {
@@ -98,6 +99,7 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
 	if err == nil {
 		t.Fatalf("Expected error on adding the same service catalog entry twice")
+		return
 	}
 	if strings.Contains(err.Error(), "service name cannot be empty") {
 		t.Errorf("Expected a duplicate-entry error, got the unrelated empty-name error: %v", err)
@@ -263,6 +265,7 @@ func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 	}
 	if staleEntry == nil {
 		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+		return
 	}
 	if staleEntry.State != types.ProcessStateFailed {
 		t.Errorf("expected stale entry to be marked Failed, got state %q", staleEntry.State)
@@ -345,6 +348,7 @@ func TestStartServiceSelfHealsStaleServiceInstance(t *testing.T) {
 	}
 	if staleEntry == nil {
 		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+		return
 	}
 	if staleEntry.State != types.ProcessStateStopped {
 		t.Errorf("expected stale entry to be marked Stopped, got state %q", staleEntry.State)

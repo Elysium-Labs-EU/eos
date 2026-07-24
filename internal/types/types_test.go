@@ -30,6 +30,7 @@ func TestLogSinkRef_UnmarshalYAML_Inline(t *testing.T) {
 	}
 	if ref.Inline == nil {
 		t.Fatal("expected Inline to be set")
+		return
 	}
 	if ref.Inline.Type != "file" || ref.Inline.Address != "/var/log/eos" {
 		t.Errorf("unexpected inline sink: %+v", ref.Inline)
