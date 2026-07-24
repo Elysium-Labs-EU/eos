@@ -38,7 +38,7 @@ func readJSONLines(t *testing.T, path string) []map[string]any {
 		t.Fatalf("reading log file %q: %v", path, err)
 	}
 	var entries []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		if line == "" {
 			continue
 		}

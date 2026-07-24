@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func readDaemonLog(t *testing.T, standalone *config.StandaloneDaemonConfig) []ma
 		t.Fatalf("reading log %q: %v", logPath, err)
 	}
 	var entries []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -97,14 +98,7 @@ func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T
 	}
 
 	for _, want := range wantDebugMsgs {
-		found := false
-		for _, got := range debugMsgs {
-			if got == want {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(debugMsgs, want) {
 			t.Errorf("expected DEBUG log %q not found; got: %v", want, debugMsgs)
 		}
 	}
