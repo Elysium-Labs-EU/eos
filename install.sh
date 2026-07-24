@@ -11,8 +11,9 @@ readonly DIM='\033[2m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly REPO="Elysium_Labs/eos"
-readonly CODEBERG_URL="https://codeberg.org"
+readonly REPO="Elysium-Labs-EU/eos"
+readonly GITHUB_API_URL="https://api.github.com"
+readonly GITHUB_URL="https://github.com"
 readonly BINARY_NAME="eos"
 readonly INSTALL_DIR="${EOS_INSTALL_DIR:-/usr/local/bin}"
 readonly HOME_DIR="${HOME}/.${BINARY_NAME}"
@@ -48,7 +49,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --local <path>    Use a local binary instead of downloading from Codeberg"
+    echo "  --local <path>    Use a local binary instead of downloading from GitHub"
     echo "  --help            Show this help message"
     echo "  --yes, -y         Skip all confirmation prompts (non-interactive mode)"
     echo ""
@@ -151,17 +152,17 @@ pick_latest_tag() {
 }
 
 # fetch_latest_version resolves the newest release tag for $REPO. It tries
-# /releases/latest first (Codeberg's own "newest published, non-prerelease"
+# /releases/latest first (GitHub's own "newest published, non-prerelease"
 # answer, unaffected by the list-ordering bug below) and only falls back to
 # scanning the full /releases list when that 404s — e.g. every release so
-# far is a prerelease. This avoids trusting /releases?limit=1's list order,
-# which has been observed to place a freshly published release below older
-# ones (issue #43).
+# far is a prerelease. This avoids trusting /releases?per_page=1's list
+# order, which has been observed to place a freshly published release below
+# older ones (issue #43).
 fetch_latest_version() {
     local tool="$1"
     local api_base url release_json
 
-    api_base="${EOS_API_BASE:-${CODEBERG_URL}/api/v1/repos/${REPO}}"
+    api_base="${EOS_API_BASE:-${GITHUB_API_URL}/repos/${REPO}}"
 
     url="${api_base}/releases/latest"
     if [ "$tool" = "curl" ]; then
@@ -175,7 +176,7 @@ fetch_latest_version() {
         return
     fi
 
-    url="${api_base}/releases?limit=100"
+    url="${api_base}/releases?per_page=100"
     if [ "$tool" = "curl" ]; then
         release_json=$(curl -fsSL "$url") || return 1
     else
@@ -183,6 +184,14 @@ fetch_latest_version() {
     fi
 
     printf '%s' "$release_json" | pick_latest_tag
+}
+
+# build_download_url returns the GitHub release-asset download URL for repo/version/asset.
+build_download_url() {
+    local repo="$1"
+    local version="$2"
+    local asset="$3"
+    echo "${GITHUB_URL}/${repo}/releases/download/${version}/${asset}"
 }
 
 detect_arch() {
@@ -514,7 +523,6 @@ main() {
             step "Fetching latest version..."
             version=$(fetch_latest_version "$download_tool") || true
 
-
             if [ -z "$version" ]; then
                 error "Failed to fetch latest version"
                 dim "  Set EOS_VERSION environment variable to specify manually"
@@ -535,7 +543,7 @@ main() {
     if [ -n "$local_binary" ]; then
         echo "  1. Use local binary: ${local_binary}"
     else
-        echo "  1. Download binary from Codeberg"
+        echo "  1. Download binary from GitHub"
     fi
     echo "  2. Install to ${INSTALL_DIR}/${BINARY_NAME}"
     echo "  3. Install SQLite3 (if needed)"
@@ -556,10 +564,11 @@ main() {
         echo ""
         step "Downloading ${BINARY_NAME} ${version} for linux-${arch}..."
         
-        local download_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/eos-linux-${arch}"
+        local download_url
+        download_url=$(build_download_url "$REPO" "$version" "eos-linux-${arch}")
         local tmp_dir
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
-        trap 'rm -rf "$tmp_dir"' EXIT
+        trap 'rm -rf "${tmp_dir:-}"' EXIT
         tmp_binary="${tmp_dir}/${BINARY_NAME}"
         
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
@@ -576,7 +585,8 @@ main() {
         success "Downloaded successfully"
 
         step "Verifying checksum..."
-        local checksums_url="${CODEBERG_URL}/${REPO}/releases/download/${version}/sha256sums.txt"
+        local checksums_url
+        checksums_url=$(build_download_url "$REPO" "$version" "sha256sums.txt")
         local tmp_checksums="${tmp_dir}/${BINARY_NAME}_sha256sums.txt"
 
         if ! download_file "$checksums_url" "$tmp_checksums" "$download_tool"; then
@@ -655,8 +665,8 @@ main() {
     echo ""
 }
 
-# EOS_INSTALL_SOURCE_ONLY lets tests `source` this file to call its helper
-# functions (e.g. pick_latest_tag) directly, without running the installer.
-if [ "${EOS_INSTALL_SOURCE_ONLY:-}" != "1" ]; then
+# Only run main when this file is executed directly, not when tests `source`
+# it to call its helper functions (e.g. pick_latest_tag) in isolation.
+if [[ "${BASH_SOURCE[0]:-${0}}" == "${0}" ]]; then
     main "$@"
 fi
