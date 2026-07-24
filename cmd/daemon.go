@@ -23,6 +23,9 @@ import (
 type DaemonController interface {
 	Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error
 	Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error)
+	// IsRunning reports whether the daemon is currently running, without side
+	// effects — used to gate restart prompts before Stop() is ever called.
+	IsRunning(ctx context.Context) bool
 	Remove() error
 	Info(cmd *cobra.Command)
 	Logs(cmd *cobra.Command, lines int, follow bool)
@@ -57,6 +60,18 @@ func (c *standaloneDaemonController) Stop(_ context.Context, cmd *cobra.Command,
 		helpers.Debugf(cmd, verbose, "sent termination signal, removing socket: %s", c.cfg.SocketPath)
 	}
 	return killed, nil
+}
+
+// IsRunning checks the PID file/process directly, the same primitive Remove()
+// uses to refuse acting on a live daemon. A status-check error is treated as
+// "running" so callers fall back to the old prompt-first behavior rather than
+// silently skipping a restart we couldn't actually confirm was unnecessary.
+func (c *standaloneDaemonController) IsRunning(_ context.Context) bool {
+	status, err := process.StatusStandaloneDaemon(&c.cfg)
+	if err != nil {
+		return true
+	}
+	return status.Running
 }
 
 func (c *standaloneDaemonController) Remove() error {
@@ -197,6 +212,13 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 	return true, nil
 }
 
+// IsRunning reuses the same "systemctl is-active" check daemonIsDown() uses to
+// decide whether to print the daemon-down banner, so both call sites agree on
+// what "running" means for a systemd-managed daemon.
+func (c systemdDaemonController) IsRunning(ctx context.Context) bool {
+	return systemdUnitActive(ctx, c.cfg.UserUnit)
+}
+
 func (c systemdDaemonController) Remove() error {
 	return os.Remove(c.cfg.SystemdTargetDir + c.cfg.SystemdTargetFileName)
 }
@@ -321,6 +343,15 @@ func (c launchdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 	}
 	helpers.Debugf(cmd, verbose, "launchctl bootout succeeded")
 	return true, nil
+}
+
+// IsRunning always reports true: unlike systemd's "is-active" or standalone's
+// PID/socket check, there's no cheap, reliable "is this launchd job loaded"
+// primitive in this codebase (daemonIsDown() treats launchd the same way, as
+// "not confirmed down"). Assuming running preserves the existing prompt-first
+// behavior rather than risking a false "not running" skip.
+func (c launchdDaemonController) IsRunning(_ context.Context) bool {
+	return true
 }
 
 func (c launchdDaemonController) Remove() error {

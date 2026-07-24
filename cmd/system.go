@@ -1246,6 +1246,12 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 // restartDaemonAfterUpdate optionally restarts the daemon on the new binary,
 // removes the temp dir, and prints the final success summary.
 func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl DaemonController, tempDir, latestVersion string) error {
+	if !ctrl.IsRunning(ctx) {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+		return nil
+	}
+
 	if !helpers.PromptConfirm(cmd, "restart daemon? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "manual daemon restart required")
 		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))

@@ -189,6 +189,68 @@ func TestStandaloneDaemonController_Stop(t *testing.T) {
 	})
 }
 
+func TestStandaloneDaemonController_IsRunning(t *testing.T) {
+	t.Run("no pid file reports not running", func(t *testing.T) {
+		c := newStandaloneController(t, t.TempDir())
+
+		if c.IsRunning(t.Context()) {
+			t.Error("expected IsRunning=false when no pid file exists")
+		}
+	})
+
+	t.Run("stale pid reports not running", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		writePIDFile(t, c.cfg.PIDFile, deadPID(t))
+
+		if c.IsRunning(t.Context()) {
+			t.Error("expected IsRunning=false for a dead pid")
+		}
+	})
+
+	t.Run("live process reports running", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		child := spawnDisposableChild(t)
+		writePIDFile(t, c.cfg.PIDFile, child.Process.Pid)
+
+		if !c.IsRunning(t.Context()) {
+			t.Error("expected IsRunning=true for a live process")
+		}
+	})
+
+	t.Run("status error reports running to preserve the prompt", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		if err := os.WriteFile(c.cfg.PIDFile, []byte("not-a-pid"), 0644); err != nil {
+			t.Fatalf("writing pid file: %v", err)
+		}
+
+		if !c.IsRunning(t.Context()) {
+			t.Error("expected IsRunning=true when status cannot be determined")
+		}
+	})
+}
+
+func TestSystemdDaemonController_IsRunning(t *testing.T) {
+	// No active eos systemd unit exists in the test environment (and on macOS
+	// systemctl is absent), so is-active never returns "active" -> not running.
+	c := systemdDaemonController{cfg: config.SystemdConfig{}}
+	if c.IsRunning(t.Context()) {
+		t.Error("expected IsRunning=false for an inactive/absent systemd eos unit")
+	}
+}
+
+func TestLaunchdDaemonController_IsRunning(t *testing.T) {
+	// No cheap, reliable "is loaded" check exists for launchd in this codebase;
+	// IsRunning always assumes running so callers keep prompting rather than
+	// risk a false "not running" skip.
+	c := launchdDaemonController{cfg: config.LaunchdConfig{}}
+	if !c.IsRunning(t.Context()) {
+		t.Error("expected IsRunning=true always for launchd")
+	}
+}
+
 func TestStandaloneDaemonController_Remove(t *testing.T) {
 	t.Run("running daemon cannot be removed", func(t *testing.T) {
 		tempDir := t.TempDir()

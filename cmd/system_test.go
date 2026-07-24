@@ -1396,6 +1396,7 @@ type stubUpdateController struct {
 	startErr   error
 	startCount int
 	killed     bool
+	running    bool
 }
 
 func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
@@ -1405,6 +1406,7 @@ func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
 func (s *stubUpdateController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
 	return s.killed, s.stopErr
 }
+func (s *stubUpdateController) IsRunning(_ context.Context) bool     { return s.running }
 func (s *stubUpdateController) Remove() error                        { return nil }
 func (s *stubUpdateController) Info(_ *cobra.Command)                {}
 func (s *stubUpdateController) Logs(_ *cobra.Command, _ int, _ bool) {}
@@ -1414,7 +1416,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 	t.Run("declined leaves manual restart hint", func(t *testing.T) {
 		cmd, outBuf, _, _ := setupCmd(t)
 		setStdin(cmd, "n\n")
-		ctrl := &stubUpdateController{}
+		ctrl := &stubUpdateController{running: true}
 
 		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
 			t.Fatalf("expected nil error when declined, got %v", err)
@@ -1427,10 +1429,34 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		}
 	})
 
-	t.Run("not running short-circuits before start", func(t *testing.T) {
+	t.Run("not running skips the prompt entirely", func(t *testing.T) {
+		cmd, outBuf, _, _ := setupCmd(t)
+		// No stdin provided: if the prompt were reached, PromptConfirm would hit
+		// EOF and print its own "reading input" error, which none of the
+		// assertions below look for — proving IsRunning gates before any read.
+		ctrl := &stubUpdateController{running: false}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if ctrl.startCount != 0 {
+			t.Errorf("Start should not be called when daemon was not running")
+		}
+		if strings.Contains(outBuf.String(), "restart daemon?") {
+			t.Errorf("expected prompt to be skipped, got %s", outBuf.String())
+		}
+		if !strings.Contains(outBuf.String(), "daemon was not running") {
+			t.Errorf("expected not-running message, got %s", outBuf.String())
+		}
+	})
+
+	t.Run("stop discovers already-stopped after a confirmed prompt", func(t *testing.T) {
+		// IsRunning() said yes (running: true) but Stop() reports killed=false —
+		// e.g. the daemon exited between the check and the confirm. The old
+		// Stop()-return-based check is still the safety net for this race.
 		cmd, outBuf, _, _ := setupCmd(t)
 		setStdin(cmd, "y\n")
-		ctrl := &stubUpdateController{killed: false}
+		ctrl := &stubUpdateController{running: true, killed: false}
 
 		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
 			t.Fatalf("expected nil error, got %v", err)
@@ -1446,7 +1472,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 	t.Run("stop error fails the command", func(t *testing.T) {
 		cmd, _, _, _ := setupCmd(t)
 		setStdin(cmd, "y\n")
-		ctrl := &stubUpdateController{stopErr: errors.New("boom")}
+		ctrl := &stubUpdateController{running: true, stopErr: errors.New("boom")}
 
 		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
 			t.Fatal("expected error when stop fails")
@@ -1456,7 +1482,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 	t.Run("start error surfaces logs hint", func(t *testing.T) {
 		cmd, _, errBuf, _ := setupCmd(t)
 		setStdin(cmd, "y\n")
-		ctrl := &stubUpdateController{killed: true, startErr: errors.New("nope")}
+		ctrl := &stubUpdateController{running: true, killed: true, startErr: errors.New("nope")}
 
 		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
 			t.Fatal("expected error when start fails")
@@ -1469,7 +1495,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 	t.Run("successful restart cleans up and reports success", func(t *testing.T) {
 		cmd, outBuf, _, _ := setupCmd(t)
 		setStdin(cmd, "y\n")
-		ctrl := &stubUpdateController{killed: true}
+		ctrl := &stubUpdateController{running: true, killed: true}
 		tempDir := t.TempDir()
 
 		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, tempDir, "v9.9.9"); err != nil {
