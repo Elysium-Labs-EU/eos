@@ -74,11 +74,12 @@ func TestAPIValidateInvalidYaml(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// An invalid config is a validation outcome, not a command failure: it still
-	// exits 0 and reports errors inside the JSON result's "errors" field.
+	// An invalid config still prints its full JSON result to stdout, but the
+	// command returns a non-zero exit so scripts can check $? directly.
 	cmd.SetArgs([]string{"api", "validate", yamlPath})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("expected no error (validation result in JSON), got: %v\n%s", err, errBuf.String())
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed, got: %v\n%s", err, errBuf.String())
 	}
 
 	var result apiValidateResult
