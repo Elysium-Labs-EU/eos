@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -24,7 +25,25 @@ func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Id
 		SilenceUsage:  true,
 	}
 	daemonCmd.AddCommand(newAPIDaemonLogsCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonStartCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonStopCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonRemoveCmd(getConfig))
+	daemonCmd.AddCommand(newAPIDaemonInfoCmd(getConfig))
 	return daemonCmd
+}
+
+// newAPIDaemonController builds the same DaemonController the human-facing
+// "eos daemon" command uses (see newDaemonCmd's PersistentPreRun in daemon.go),
+// so the api daemon subcommands delegate to identical start/stop/remove logic.
+func newAPIDaemonController(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) (DaemonController, error) {
+	baseDir, cfg, identity, err := getConfig()
+	if err != nil {
+		return nil, fmt.Errorf("getting config: %w", err)
+	}
+	if cfg == nil {
+		return nil, errors.New("getting config: got nil config")
+	}
+	return newDaemonController(cfg.Daemon, baseDir, &cfg.Health, cfg.Shutdown, cfg.Telemetry, cfg.UnderSystemd, identity)
 }
 
 func newAPIDaemonLogsCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
