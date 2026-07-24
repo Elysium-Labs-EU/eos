@@ -1459,6 +1459,8 @@ func validateUpdatePreconditions(cmd *cobra.Command, installDir, version string)
 
 	if version == "dev" {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "updating not supported for dev builds")
+		cmd.PrintErr(ui.TextMuted.Render("  this binary has no version stamped in it, so eos can't tell what to update from") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  download the latest release manually: ") + ui.TextCommand.Render("https://github.com/Elysium-Labs-EU/eos/releases/latest") + "\n\n")
 		return helpers.ErrCommandFailed
 	}
 
