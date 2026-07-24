@@ -74,6 +74,21 @@ func NewDB(ctx context.Context, baseDir string) (*DB, error) {
 	return db, nil
 }
 
+// statOwner reports the uid/gid that own path, or ok=false on a non-POSIX
+// filesystem where that information isn't available. Split out from
+// alignDataFileOwnership so it can be exercised directly without root.
+func statOwner(path string) (uid, gid int, err error, ok bool) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return 0, 0, fmt.Errorf("stat %s for ownership: %w", path, statErr), true
+	}
+	stat, isStatT := info.Sys().(*syscall.Stat_t)
+	if !isStatT {
+		return 0, 0, nil, false
+	}
+	return int(stat.Uid), int(stat.Gid), nil, true
+}
+
 // alignDataFileOwnership makes state.db and its WAL/SHM sidecar files owned by
 // the same user that owns baseDir. Under sudo (euid 0) the sqlite driver creates
 // these files as root even though config.CreateBaseDir already chowned the base
@@ -90,25 +105,26 @@ func alignDataFileOwnership(baseDir, dbPath string) error {
 		return nil
 	}
 
-	info, err := os.Stat(baseDir)
-	if err != nil {
-		return fmt.Errorf("stat base dir for ownership: %w", err)
+	uid, gid, err, ok := statOwner(baseDir)
+	if err != nil || !ok {
+		return err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return nil
-	}
-	uid, gid := int(stat.Uid), int(stat.Gid)
 
 	// WAL/SHM sidecars are created alongside state.db in WAL mode; chown them too
 	// so the daemon owns every file backing the database, not just the main file.
 	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
-		if chownErr := os.Chown(path, uid, gid); chownErr != nil {
-			if os.IsNotExist(chownErr) {
-				continue
-			}
-			return fmt.Errorf("chown %s to uid %d gid %d: %w", path, uid, gid, chownErr)
+		if err := chownTolerant(path, uid, gid); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// chownTolerant chowns path to uid/gid, treating a missing file as success —
+// the WAL/SHM sidecars aren't guaranteed to exist (e.g. no writes yet landed).
+func chownTolerant(path string, uid, gid int) error {
+	if err := os.Chown(path, uid, gid); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("chown %s to uid %d gid %d: %w", path, uid, gid, err)
 	}
 	return nil
 }
