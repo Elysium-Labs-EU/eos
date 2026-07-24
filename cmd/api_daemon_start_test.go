@@ -31,6 +31,7 @@ func (f *fakeAPIDaemonController) Stop(_ context.Context, _ *cobra.Command, _ bo
 
 func (f *fakeAPIDaemonController) Remove() error                        { return f.removeErr }
 func (f *fakeAPIDaemonController) Info(_ *cobra.Command)                {}
+func (f *fakeAPIDaemonController) IsRunning(_ context.Context) bool     { return !f.stopped }
 func (f *fakeAPIDaemonController) Logs(_ *cobra.Command, _ int, _ bool) {}
 func (f *fakeAPIDaemonController) LogsHint() string                     { return "" }
 
