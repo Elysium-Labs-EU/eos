@@ -911,7 +911,7 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		}, nil
 	}
 
-	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
+	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, systemConfig.Daemon, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
 
 	output := errBuf.String()
 
@@ -982,7 +982,7 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	setStdin(cmd, "y\ny\n")
 
-	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
+	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, systemConfig.Daemon, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 
 	output := outBuf.String()
 
@@ -1880,6 +1880,7 @@ type stubUpdateController struct {
 	stopErr    error
 	startErr   error
 	startCount int
+	stopCount  int
 	killed     bool
 }
 
@@ -1888,6 +1889,7 @@ func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
 	return s.startErr
 }
 func (s *stubUpdateController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
+	s.stopCount++
 	return s.killed, s.stopErr
 }
 func (s *stubUpdateController) Remove() error                        { return nil }
@@ -1901,7 +1903,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		setStdin(cmd, "n\n")
 		ctrl := &stubUpdateController{}
 
-		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, config.DaemonConfig{}, t.TempDir(), "v9.9.9"); err != nil {
 			t.Fatalf("expected nil error when declined, got %v", err)
 		}
 		if ctrl.startCount != 0 {
@@ -1917,11 +1919,40 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		setStdin(cmd, "y\n")
 		ctrl := &stubUpdateController{killed: false}
 
-		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, config.DaemonConfig{}, t.TempDir(), "v9.9.9"); err != nil {
 			t.Fatalf("expected nil error, got %v", err)
 		}
 		if ctrl.startCount != 0 {
 			t.Errorf("Start should not be called when daemon was not running")
+		}
+		if !strings.Contains(outBuf.String(), "daemon was not running") {
+			t.Errorf("expected not-running message, got %s", outBuf.String())
+		}
+	})
+
+	t.Run("confirmed down daemon skips prompt entirely", func(t *testing.T) {
+		cmd, outBuf, _, _ := setupCmd(t)
+		// No stdin fed: if the prompt were shown, PromptConfirm would hit EOF and
+		// this test would still pass by accident, so also assert the prompt text
+		// never printed and Stop was never called — the real regression guard.
+		daemon := config.DaemonConfig{
+			Standalone: &config.StandaloneDaemonConfig{
+				SocketPath: filepath.Join(shortTempSocketDir(t), "eos.sock"),
+			},
+		}
+		ctrl := &stubUpdateController{}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, daemon, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if ctrl.stopCount != 0 {
+			t.Errorf("Stop should not be called when daemon is confirmed down, got %d calls", ctrl.stopCount)
+		}
+		if ctrl.startCount != 0 {
+			t.Errorf("Start should not be called when daemon is confirmed down")
+		}
+		if strings.Contains(outBuf.String(), "restart daemon?") {
+			t.Errorf("expected prompt to be skipped, got %s", outBuf.String())
 		}
 		if !strings.Contains(outBuf.String(), "daemon was not running") {
 			t.Errorf("expected not-running message, got %s", outBuf.String())
@@ -1933,7 +1964,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		setStdin(cmd, "y\n")
 		ctrl := &stubUpdateController{stopErr: errors.New("boom")}
 
-		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, config.DaemonConfig{}, t.TempDir(), "v9.9.9"); err == nil {
 			t.Fatal("expected error when stop fails")
 		}
 	})
@@ -1943,7 +1974,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		setStdin(cmd, "y\n")
 		ctrl := &stubUpdateController{killed: true, startErr: errors.New("nope")}
 
-		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, config.DaemonConfig{}, t.TempDir(), "v9.9.9"); err == nil {
 			t.Fatal("expected error when start fails")
 		}
 		if !strings.Contains(errBuf.String(), "eos daemon logs") {
@@ -1957,7 +1988,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		ctrl := &stubUpdateController{killed: true}
 		tempDir := t.TempDir()
 
-		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, tempDir, "v9.9.9"); err != nil {
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, config.DaemonConfig{}, tempDir, "v9.9.9"); err != nil {
 			t.Fatalf("expected nil error, got %v", err)
 		}
 		if ctrl.startCount != 1 {

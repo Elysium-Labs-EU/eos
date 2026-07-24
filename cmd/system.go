@@ -350,7 +350,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, _, _, err := newSystemConfig()
+			installDir, _, systemConfig, _, err := newSystemConfig()
 			if err != nil {
 				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				return helpers.ErrCommandFailed
@@ -374,7 +374,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 			if override := os.Getenv("USER_OS"); override != "" {
 				userOS = override
 			}
-			return updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
+			return updateCmd(cmd.Context(), cmd, version, installDir, ctrl, systemConfig.Daemon, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -1565,8 +1565,15 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 }
 
 // restartDaemonAfterUpdate optionally restarts the daemon on the new binary,
-// removes the temp dir, and prints the final success summary.
-func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl DaemonController, tempDir, latestVersion string) error {
+// removes the temp dir, and prints the final success summary. It skips the
+// confirmation prompt entirely when daemonIsDown confirms there's nothing to
+// restart, rather than asking first and only discovering that afterward.
+func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl DaemonController, daemon config.DaemonConfig, tempDir, latestVersion string) error {
+	if daemonIsDown(ctx, &daemon) {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		return nil
+	}
+
 	if !helpers.PromptConfirm(cmd, "restart daemon? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "manual daemon restart required")
 		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
@@ -1600,7 +1607,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 	return nil
 }
 
-func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, ctrl DaemonController, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) error {
+func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, ctrl DaemonController, daemon config.DaemonConfig, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) error {
 	binaryPath := filepath.Join(installDir, "eos")
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
@@ -1635,7 +1642,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 	refreshInstalledCompletions(ctx, cmd, binaryPath)
 
-	return restartDaemonAfterUpdate(ctx, cmd, ctrl, tempDir, result.LatestVersion)
+	return restartDaemonAfterUpdate(ctx, cmd, ctrl, daemon, tempDir, result.LatestVersion)
 }
 
 type Asset struct {
