@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -325,12 +326,7 @@ func sinkWantsStream(s *sinkProcess, stream string) bool {
 	if len(s.sink.Streams) == 0 {
 		return true
 	}
-	for _, st := range s.sink.Streams {
-		if st == stream {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.sink.Streams, stream)
 }
 
 // buildOptionsEnv JSON-encodes the options map (with ${VAR} expansion on string values)
