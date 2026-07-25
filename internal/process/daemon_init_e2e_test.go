@@ -75,7 +75,7 @@ func TestNewStandaloneDaemon_E2E_VerboseOn_WritesDebugLifecycleLogs(t *testing.T
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, true /* verbose */, dbDir, standalone, config.TelemetryConfig{})
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, true /* verbose */, dbDir, standalone, config.ShutdownConfig{}, config.TelemetryConfig{})
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.TelemetryConfig{})
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.ShutdownConfig{}, config.TelemetryConfig{})
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership(t *testing.T) 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.TelemetryConfig{})
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.ShutdownConfig{}, config.TelemetryConfig{})
 	if err != nil {
 		t.Fatalf("newStandaloneDaemon: %v", err)
 	}

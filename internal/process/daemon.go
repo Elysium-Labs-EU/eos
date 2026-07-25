@@ -52,7 +52,7 @@ type daemon struct {
 const otelShutdownTimeout = 3 * time.Second
 
 func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, telemetryConfig config.TelemetryConfig, underSystemd bool) error {
-	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig, telemetryConfig)
+	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig, shutdownConfig, telemetryConfig)
 	if err != nil {
 		return err
 	}
@@ -173,8 +173,26 @@ func reconcileMarkStopped(ctx context.Context, db *database.DB, logger *slog.Log
 // parameter, not d.ctx) so the telemetry flush gets a fresh deadline: d.ctx
 // is already Done() by the time shutdown runs, since it's the context
 // signal.NotifyContext canceled on SIGTERM/SIGINT.
+//
+// d.stop() cancels d.ctx, which is also the context every service process was
+// launched under (exec.CommandContext(d.ctx, ...) in buildLaunchCommand). That
+// same cancellation is what triggers each process's graceful stop: the
+// LocalManager built for this daemon is configured with a non-zero
+// shutdownGracePeriod (see WithShutdownGracePeriod), so every launched cmd.Cmd
+// has cmd.Cancel set to SIGTERM the process group and cmd.WaitDelay set to the
+// grace period — Go's exec runtime enforces signal-then-wait-then-kill on
+// context cancellation independent of this function, with no DB/manager call
+// needed here (issue #93: d.mgr's own ctx is this same d.ctx, so any manager
+// call made after d.stop() would itself see a canceled context and fail).
+//
+// d.mgr.WaitServices() then blocks until that has actually happened: canceling
+// a context only closes a channel, it does not itself run anything, so without
+// waiting here this function could return — and the whole process exit before
+// the goroutine watching d.ctx even gets scheduled to invoke cmd.Cancel,
+// silently skipping the SIGTERM-then-wait sequence entirely.
 func (d *daemon) shutdown(ctx context.Context) {
 	d.stop()
+	d.mgr.WaitServices()
 	if err := d.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		d.logger.Error("closing listener", "error", err)
 	}
@@ -262,7 +280,7 @@ func removeExistingSocket(socketPath string, logger *slog.Logger) error {
 	return nil
 }
 
-func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, telemetryConfig config.TelemetryConfig) (*daemon, error) {
+func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, shutdownConfig config.ShutdownConfig, telemetryConfig config.TelemetryConfig) (*daemon, error) {
 	startedAt := time.Now()
 
 	logger, err := manager.NewDaemonLogger(baseDir, logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
@@ -330,7 +348,7 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	}
 	logger.Debug("database connected")
 
-	tel, err := setupDaemonTelemetry(ctx, telemetryConfig, db, baseDir, logger, startedAt)
+	tel, err := setupDaemonTelemetry(ctx, telemetryConfig, shutdownConfig, db, baseDir, logger, startedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +386,7 @@ type daemonTelemetry struct {
 // services, so a construction failure on the real provider falls back to the
 // disabled (no-op) one — cfg.Enable false, which otelx.NewProvider never
 // errors on — rather than failing daemon startup.
-func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
+func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryConfig, shutdownConfig config.ShutdownConfig, db *database.DB, baseDir string, logger *slog.Logger, startedAt time.Time) (daemonTelemetry, error) {
 	otelx.SetErrorHandler(logger)
 
 	otelProvider, err := otelx.NewProvider(ctx, otelx.Config{
@@ -389,7 +407,7 @@ func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryC
 		return daemonTelemetry{}, fmt.Errorf("failed to set up telemetry instruments: %w", err)
 	}
 
-	mgr := manager.NewLocalManager(db, baseDir, ctx, logger, manager.WithTelemetry(otelHandles))
+	mgr := manager.NewLocalManager(db, baseDir, ctx, logger, manager.WithTelemetry(otelHandles), manager.WithShutdownGracePeriod(shutdownConfig.GracePeriod))
 
 	if regErr := otelx.RegisterDaemonGauges(otelProvider.MeterProvider, startedAt,
 		func() int { return len(catalogEntriesOrEmpty(mgr, logger)) },
@@ -521,9 +539,18 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *slog.Log
 // in cmd/system.go) call Start() while the old process was still mid-shutdown,
 // tripping its "already running" guard and leaving no daemon running at all
 // after a successful update (issue #73).
+//
+// stopExitTimeout must comfortably cover the daemon's own worst-case shutdown
+// latency, not just the time to deliver the initial SIGTERM: (*daemon).shutdown
+// now waits for every running service's configured ShutdownConfig.GracePeriod
+// (issue #93) before tearing down the rest (listener/pidfile/socket/db, then
+// up to otelShutdownTimeout to flush telemetry). At the config default
+// (GracePeriod 5s + otelShutdownTimeout 3s), a too-short stopExitTimeout would
+// make this function report a spurious failure for a daemon that's still
+// correctly, if slowly, shutting down.
 const (
 	stopPollInterval = 50 * time.Millisecond
-	stopExitTimeout  = 5 * time.Second
+	stopExitTimeout  = 15 * time.Second
 )
 
 // waitForProcessExit polls process with signal 0 until it reports

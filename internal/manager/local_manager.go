@@ -46,11 +46,27 @@ type LocalManager struct {
 	// of each opening their own handle onto the same path, which would let one
 	// writer's rotate() rename the file out from under the other's fd.
 	// logWritersMu guards the map itself.
-	logWriters     map[string]*sharedLogWriter
-	baseDir        string
-	pipeWg         sync.WaitGroup
+	logWriters map[string]*sharedLogWriter
+	baseDir    string
+	pipeWg     sync.WaitGroup
+	// serviceWg tracks the async cmd.Wait() reaper goroutine launched for
+	// every started service (see captureIdentity). WaitServices blocks until
+	// every launched service has actually exited: without this, a caller that
+	// cancels m.ctx and then immediately tears down/exits (the daemon
+	// shutdown path) can terminate the whole process before the goroutine
+	// watching m.ctx even gets scheduled to run cmd.Cancel — silently
+	// skipping the SIGTERM-then-wait sequence WithShutdownGracePeriod is
+	// meant to guarantee (see issue #93).
+	serviceWg      sync.WaitGroup
 	serviceLocksMu sync.Mutex
 	logWritersMu   sync.Mutex
+	// shutdownGracePeriod is set only on the LocalManager backing the real
+	// standalone daemon (see WithShutdownGracePeriod). When positive, every
+	// launched service's cmd.Cancel/cmd.WaitDelay are configured so that
+	// canceling m.ctx signals the process group with SIGTERM and waits this
+	// long before force-killing it, instead of os/exec's default of an
+	// immediate SIGKILL on context cancellation (see issue #93).
+	shutdownGracePeriod time.Duration
 }
 
 // sharedLogWriter is a reference-counted RotatingFileWriter: refs tracks how
@@ -123,6 +139,18 @@ func (m *LocalManager) WaitPipes() {
 	m.pipeWg.Wait()
 }
 
+// WaitServices blocks until every launched service's async cmd.Wait() reaper
+// goroutine has completed — i.e. until every service process this manager
+// started has actually exited. Bounded by cmd.WaitDelay when
+// WithShutdownGracePeriod was set (see shutdownGracePeriod), so this returns
+// in at most that long even if a service ignores SIGTERM. The daemon
+// shutdown path must call this after canceling m.ctx and before tearing down
+// the rest of the process, or the process can exit before the goroutine
+// watching m.ctx is even scheduled to run cmd.Cancel (issue #93).
+func (m *LocalManager) WaitServices() {
+	m.serviceWg.Wait()
+}
+
 // lockService acquires the per-service lifecycle mutex for name, creating it on
 // first use, and returns its unlock function. All of StartService,
 // RestartService, StopService, and ForceStopService take this lock so a
@@ -172,6 +200,18 @@ func WithSinkRegistry(registry map[string]types.LogSink) LocalManagerOption {
 func WithTelemetry(h *otelx.Handles) LocalManagerOption {
 	return func(m *LocalManager) {
 		m.telemetry = h
+	}
+}
+
+// WithShutdownGracePeriod sets how long a canceled m.ctx waits for a launched
+// service to exit after SIGTERM before force-killing it (see
+// LocalManager.shutdownGracePeriod). Only the real standalone daemon's
+// LocalManager should set this: m.ctx is only ever canceled there (on
+// SIGTERM/SIGINT to the daemon itself), so callers that never cancel their
+// ctx (tests, one-off command invocations) can safely omit it.
+func WithShutdownGracePeriod(d time.Duration) LocalManagerOption {
+	return func(m *LocalManager) {
+		m.shutdownGracePeriod = d
 	}
 }
 
@@ -336,6 +376,44 @@ func newPipeForStd() (r *os.File, w *os.File, err error) {
 	return r, w, nil
 }
 
+// closePipeOnCancel starts a goroutine that force-closes r once m.ctx is
+// canceled AND m.shutdownGracePeriod has then elapsed, as a bound on how long
+// a pipe-forwarding goroutine can hang waiting for EOF if some grandchild the
+// service spawned outlives it while still holding the pipe's write end open.
+// The close is delayed rather than immediate: force-closing the instant m.ctx
+// is canceled — before the service has had any chance to exit on its own —
+// would SIGPIPE a service that's still gracefully draining in response to its
+// own SIGTERM trap, an uncaught, fatal signal that kills it before the trap
+// ever runs, silently defeating WithShutdownGracePeriod (see issue #93).
+//
+// The returned stop func must be called once the caller's own read loop
+// exits (EOF, or any error) so this goroutine can return immediately instead
+// of sleeping out its timer — using context.AfterFunc's own stop() for this
+// is not enough, since it cannot interrupt a callback already in
+// time.Sleep, which would leak the goroutine until the timer fires on its
+// own.
+func (m *LocalManager) closePipeOnCancel(r *os.File) func() {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-m.ctx.Done():
+		case <-done:
+			return
+		}
+		if m.shutdownGracePeriod > 0 {
+			t := time.NewTimer(m.shutdownGracePeriod)
+			defer t.Stop()
+			select {
+			case <-t.C:
+			case <-done:
+				return
+			}
+		}
+		_ = r.Close()
+	}()
+	return func() { close(done) }
+}
+
 // pipeToLogFile forwards r (the service's stdout) into w — the service's
 // shared rotating log writer, acquired by the caller — line by line, and
 // releases that acquire once r hits EOF (the process exited and the pipe's
@@ -348,7 +426,7 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks
 	if wg != nil {
 		defer wg.Done()
 	}
-	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
+	stop := m.closePipeOnCancel(r)
 	defer stop()
 	logger := logutil.NewJSONLogger(w, false)
 	scanner := bufio.NewScanner(r)
@@ -381,7 +459,7 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger
 	if wg != nil {
 		defer wg.Done()
 	}
-	stop := context.AfterFunc(m.ctx, func() { _ = r.Close() })
+	stop := m.closePipeOnCancel(r)
 	defer stop()
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -498,6 +576,18 @@ func (lio launchIO) closeAll(m *LocalManager, serviceName string) error {
 func (m *LocalManager) buildLaunchCommand(service types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO) (*exec.Cmd, error) {
 	cmd := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Without this, canceling m.ctx (daemon shutdown on SIGTERM/SIGINT) falls
+	// back to os/exec's default cancellation policy: cmd.Process.Kill()
+	// (SIGKILL) the instant the context is canceled, with no signal-then-wait
+	// sequence at all — bypassing shutdownGracePeriod entirely (issue #93).
+	// Setting Cancel/WaitDelay makes Go's own exec runtime enforce
+	// SIGTERM-then-wait-then-SIGKILL on cancellation instead.
+	if m.shutdownGracePeriod > 0 {
+		cmd.Cancel = func() error {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		}
+		cmd.WaitDelay = m.shutdownGracePeriod
+	}
 	cmd.Dir = service.DirectoryPath
 	env, err := buildEnvironment(config, service.DirectoryPath)
 	if err != nil {
@@ -551,9 +641,10 @@ func killAndWrap(pgid int, err error, action string) (int, error) {
 
 // captureIdentity derives the process-group id from a freshly started leader
 // (its PID, since Setpgid makes it the group leader), reads its start time
-// before the reaper can collect it, then launches the async reaper. On a
-// start-time read failure it kills the group and reaps synchronously.
-func captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks int64, err error) {
+// before the reaper can collect it, then launches the async reaper tracked by
+// m.serviceWg (see WaitServices). On a start-time read failure it kills the
+// group and reaps synchronously.
+func (m *LocalManager) captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks int64, err error) {
 	pgid = cmd.Process.Pid
 	startedAtTicks, err = procutil.StartTime(pgid)
 	if err != nil {
@@ -561,9 +652,9 @@ func captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks int64, err error) 
 		_ = cmd.Wait() // reap; the async reaper below never launched on this path
 		return cleanPGID, 0, wrapErr
 	}
-	go func() {
+	m.serviceWg.Go(func() {
 		_ = cmd.Wait()
-	}()
+	})
 	return pgid, startedAtTicks, nil
 }
 
@@ -651,7 +742,7 @@ func (m *LocalManager) launchAndCapture(service types.ServiceCatalogEntry, confi
 	// time before the reaper runs, so an instant-exit process is still readable
 	// and Getpgid can't race the reap into an ESRCH failure.
 	m.logger.Debug("process started", "service", service.Name, "pgid", cmd.Process.Pid)
-	return captureIdentity(cmd)
+	return m.captureIdentity(cmd)
 }
 
 // recordStartedInstance persists the service instance and process-history rows
