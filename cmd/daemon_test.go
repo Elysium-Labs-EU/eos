@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -588,80 +587,10 @@ func TestBuildForkCommandStderrIsRealFile(t *testing.T) {
 	}
 }
 
-// TestBuildForkCommand_AlignsStderrOwnershipUnderRoot covers issue #94: a
-// sudo-triggered fork opens fork-stderr.log while still running as root, at
-// the same euid=0 moment daemon.log/eos.pid used to get stranded root-owned
-// before #91. buildForkCommand must chown it to the base dir's owner so it
-// doesn't permanently lock out a later unprivileged `eos daemon start`.
-func TestBuildForkCommand_AlignsStderrOwnershipUnderRoot(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("requires root to exercise the chown branch")
-	}
-	const targetUID, targetGID = 12345, 12345
-
-	tempDir := t.TempDir()
-	if err := os.Chown(tempDir, targetUID, targetGID); err != nil {
-		t.Fatalf("chown base dir to target uid: %v", err)
-	}
-	pidFile := filepath.Join(tempDir, "eos.pid")
-
-	identity, err := userutil.ResolveIdentity()
-	if err != nil {
-		t.Fatalf("resolving identity: %v", err)
-	}
-
-	_, stderrFile, err := buildForkCommand(t.Context(), "/usr/bin/true", false, identity, pidFile)
-	if err != nil {
-		t.Fatalf("buildForkCommand should not error: %v", err)
-	}
-	defer func() { _ = stderrFile.Close() }()
-
-	info, err := os.Stat(stderrFile.Name())
-	if err != nil {
-		t.Fatalf("stat fork-stderr.log: %v", err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Skip("non-POSIX filesystem; cannot read owner uid")
-	}
-	if int(stat.Uid) != targetUID {
-		t.Errorf("expected fork-stderr.log owner uid %d (matching base dir), got %d", targetUID, stat.Uid)
-	}
-}
-
-// TestBuildForkCommand_StderrOwnershipNonRootNoop mirrors
-// ownership.TestAlign_NonRootNoop: the common non-sudo path must not error
-// and must leave ownership untouched.
-func TestBuildForkCommand_StderrOwnershipNonRootNoop(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("this case asserts the non-root no-op; skip when running as root")
-	}
-	tempDir := t.TempDir()
-	pidFile := filepath.Join(tempDir, "eos.pid")
-
-	identity, err := userutil.ResolveIdentity()
-	if err != nil {
-		t.Fatalf("resolving identity: %v", err)
-	}
-
-	_, stderrFile, err := buildForkCommand(t.Context(), "/usr/bin/true", false, identity, pidFile)
-	if err != nil {
-		t.Fatalf("buildForkCommand should not error: %v", err)
-	}
-	defer func() { _ = stderrFile.Close() }()
-
-	info, err := os.Stat(stderrFile.Name())
-	if err != nil {
-		t.Fatalf("stat fork-stderr.log: %v", err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Skip("non-POSIX filesystem; cannot read owner uid")
-	}
-	if int(stat.Uid) != os.Getuid() {
-		t.Errorf("non-root call changed ownership: expected uid %d, got %d", os.Getuid(), stat.Uid)
-	}
-}
+// Ownership alignment on the fork-stderr.log fd (issue #94, #91) is exercised
+// once in internal/manager against OpenForkStderrLog itself — the single site
+// both buildForkCommand here and buildDaemonCommand share — rather than
+// duplicated per caller here.
 
 // TestWaitForForkPIDFileReadyReturnsNil is the fast-path companion to
 // TestWaitForForkPIDFileTimesOutOnDeadPID: a PID file naming a live process

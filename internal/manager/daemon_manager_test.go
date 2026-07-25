@@ -447,12 +447,13 @@ func TestOpenForkStderrLog_SitsBesidePIDFile(t *testing.T) {
 	}
 }
 
-// TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot covers issue #94: a
-// sudo-triggered restart opens fork-stderr.log while still running as root.
-// buildDaemonCommand must chown it to the base dir's owner, the same as
-// buildForkCommand (cmd/daemon.go), so it doesn't permanently lock out a
-// later unprivileged `eos daemon start`.
-func TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot(t *testing.T) {
+// TestOpenForkStderrLog_AlignsOwnershipUnderRoot covers issue #94: a
+// sudo-triggered start/restart/fork opens fork-stderr.log while still
+// running as root. OpenForkStderrLog must chown it to the base dir's owner
+// so it doesn't permanently lock out a later unprivileged `eos daemon
+// start` — exercised once here on behalf of both callers (buildDaemonCommand
+// in this package, buildForkCommand in cmd/daemon.go).
+func TestOpenForkStderrLog_AlignsOwnershipUnderRoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to exercise the chown branch")
 	}
@@ -464,13 +465,13 @@ func TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot(t *testing.T) {
 	}
 	pidFile := filepath.Join(tempDir, "eos.pid")
 
-	_, stderrFile, err := buildDaemonCommand(t.Context(), "/usr/bin/true", false, pidFile)
+	f, err := OpenForkStderrLog(pidFile)
 	if err != nil {
-		t.Fatalf("buildDaemonCommand should not error: %v", err)
+		t.Fatalf("OpenForkStderrLog should not error: %v", err)
 	}
-	defer func() { _ = stderrFile.Close() }()
+	defer func() { _ = f.Close() }()
 
-	info, err := os.Stat(stderrFile.Name())
+	info, err := os.Stat(f.Name())
 	if err != nil {
 		t.Fatalf("stat fork-stderr.log: %v", err)
 	}
@@ -483,23 +484,23 @@ func TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot(t *testing.T) {
 	}
 }
 
-// TestBuildDaemonCommand_StderrOwnershipNonRootNoop mirrors
+// TestOpenForkStderrLog_StderrOwnershipNonRootNoop mirrors
 // ownership.TestAlign_NonRootNoop: the common non-sudo path must not error
 // and must leave ownership untouched.
-func TestBuildDaemonCommand_StderrOwnershipNonRootNoop(t *testing.T) {
+func TestOpenForkStderrLog_StderrOwnershipNonRootNoop(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("this case asserts the non-root no-op; skip when running as root")
 	}
 	tempDir := t.TempDir()
 	pidFile := filepath.Join(tempDir, "eos.pid")
 
-	_, stderrFile, err := buildDaemonCommand(t.Context(), "/usr/bin/true", false, pidFile)
+	f, err := OpenForkStderrLog(pidFile)
 	if err != nil {
-		t.Fatalf("buildDaemonCommand should not error: %v", err)
+		t.Fatalf("OpenForkStderrLog should not error: %v", err)
 	}
-	defer func() { _ = stderrFile.Close() }()
+	defer func() { _ = f.Close() }()
 
-	info, err := os.Stat(stderrFile.Name())
+	info, err := os.Stat(f.Name())
 	if err != nil {
 		t.Fatalf("stat fork-stderr.log: %v", err)
 	}

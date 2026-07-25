@@ -46,6 +46,17 @@ func OpenForkStderrLog(pidFile string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening fork stderr capture file: %w", err)
 	}
+
+	// Under sudo this process still runs as root at the moment it opens this
+	// file. Align it to the base dir's owner so it doesn't strand a later
+	// unprivileged `eos daemon start` the way daemon.log/eos.pid did before
+	// #91. Both callers (buildDaemonCommand here, buildForkCommand in
+	// cmd/daemon.go) rely on this single alignment site.
+	if alignErr := ownership.Align(filepath.Dir(pidFile), f.Name()); alignErr != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
+	}
+
 	return f, nil
 }
 
@@ -128,15 +139,6 @@ func buildDaemonCommand(ctx context.Context, exePath string, verbose bool, pidFi
 	stderrFile, err := OpenForkStderrLog(pidFile)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// Under sudo this process still runs as root at the moment it opens this
-	// file. Align it to the base dir's owner so it doesn't strand a later
-	// unprivileged `eos daemon start` the way daemon.log/eos.pid did before
-	// #91. Stay in sync with buildForkCommand (cmd/daemon.go).
-	if alignErr := ownership.Align(filepath.Dir(pidFile), stderrFile.Name()); alignErr != nil {
-		_ = stderrFile.Close()
-		return nil, nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
 	}
 	cmd.Stderr = stderrFile
 	return cmd, stderrFile, nil
