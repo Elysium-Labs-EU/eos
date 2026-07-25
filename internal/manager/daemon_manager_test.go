@@ -139,7 +139,7 @@ func TestNewDaemonLogger(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestNewDaemonLoggerCreatesDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	_, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	_, err := NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRotatingFileWriterWrite(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(tempDir, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRotatingFileWriterSizeTracking(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(tempDir, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRotatingFileWriterRotation(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(tempDir, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRotatingFileWriterRotation_EnforcesMaxFiles(t *testing.T) {
 	const maxFiles = 3
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"), testutil.WithLogMaxFiles(maxFiles))
 
-	rw, err := newRotatingFileWriter(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	rw, err := newRotatingFileWriter(tempDir, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("newRotatingFileWriter should not error, got: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestDaemonLoggerWritesJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("test.log"))
 
-	logger, err := NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger should not error, got: %v", err)
 	}

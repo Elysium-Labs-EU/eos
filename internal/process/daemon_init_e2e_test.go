@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -123,6 +124,59 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 		if e["level"] == "DEBUG" {
 			raw, _ := json.Marshal(e)
 			t.Errorf("unexpected DEBUG entry with verbose=false: %s", raw)
+		}
+	}
+}
+
+// ownerUID returns the owning uid of path, or fails the test.
+func ownerUID(t *testing.T, path string) int {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("non-POSIX filesystem; cannot read owner uid")
+	}
+	return int(stat.Uid)
+}
+
+// TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership verifies the
+// fix for issue #91: when newStandaloneDaemon runs as root, the PID file and
+// the log dir/file it creates are chowned to match baseDir's owner rather
+// than being left root-owned — the same self-healing behavior
+// alignDataFileOwnership already gives state.db (issue #14). PIDFile/LogDir
+// deliberately live under sockDir here, separate from baseDir (dbDir), to
+// prove ownership is aligned to baseDir's owner regardless of where those
+// paths sit relative to it.
+func TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to chown files to another uid")
+	}
+	const targetUID, targetGID = 12345, 12345
+
+	sockDir := shortTempDir(t)
+	_, _, dbDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	if err := os.Chown(dbDir, targetUID, targetGID); err != nil {
+		t.Fatalf("chown base dir to target uid: %v", err)
+	}
+
+	standalone := daemonInitCfg(sockDir)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.TelemetryConfig{})
+	if err != nil {
+		t.Fatalf("newStandaloneDaemon: %v", err)
+	}
+	defer d.shutdown(ctx)
+
+	logPath := filepath.Join(standalone.Log.LogDir, standalone.Log.LogFileName)
+	for _, p := range []string{standalone.PIDFile, standalone.Log.LogDir, logPath} {
+		if got := ownerUID(t, p); got != targetUID {
+			t.Errorf("%s: expected owner uid %d (matching base dir), got %d", p, targetUID, got)
 		}
 	}
 }

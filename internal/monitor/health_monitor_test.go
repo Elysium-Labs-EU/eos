@@ -99,7 +99,7 @@ func TestHealthMonitor_Lifecycle(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 
 	if err != nil {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
@@ -246,7 +246,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 
 	if err != nil {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
@@ -635,7 +635,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("unable to set up daemon logger: %v", err)
 	}
@@ -747,7 +747,7 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("unable to set up daemon logger: %v", err)
 	}
@@ -863,7 +863,7 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 
 	if err != nil {
 		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
@@ -994,7 +994,7 @@ func TestHealthMonitor_CheckRunningProcess_ResetsRestartCounter(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
@@ -1097,7 +1097,7 @@ func TestHealthMonitor_CheckRunningProcess_DoesNotResetRestartCounterBeforeWindo
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
@@ -1197,7 +1197,7 @@ func TestHealthMonitor_CheckFailedProcess_RetriesIndefinitely(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
@@ -1483,7 +1483,7 @@ func TestHealthMonitor_CheckAllServices_MultipleServicesInDifferentStates(t *tes
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
@@ -1689,7 +1689,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
 	}
@@ -1819,7 +1819,7 @@ func TestHealthMonitor_CheckRunningProcess_PortUnreachable(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
@@ -1926,7 +1926,7 @@ func TestHealthMonitor_CheckAllServices_PanicInOneServiceDoesNotStopOthers(t *te
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(realMgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, true, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Unable to set up daemon logger, got: %v", err)
 	}
@@ -2121,7 +2121,7 @@ func TestCheckMemoryLinux(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2148,7 +2148,7 @@ func TestCheckUnknownProcess_alive(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2216,7 +2216,7 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2285,7 +2285,7 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2341,7 +2341,7 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2419,7 +2419,7 @@ func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2513,7 +2513,7 @@ func TestRestartOnMemoryThreshold_Halted(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2570,7 +2570,7 @@ func TestHealthMonitor_CheckCronRestart_EmptyExprNoop(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2608,7 +2608,7 @@ func TestHealthMonitor_CheckCronRestart_SchedulesFirstFireTime(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2654,7 +2654,7 @@ func TestHealthMonitor_CheckCronRestart_NotDueYet(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2698,7 +2698,7 @@ func TestHealthMonitor_CheckCronRestart_DueTriggersRestart(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("failed to setup logger: %v", err)
 	}
@@ -2806,7 +2806,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(realMgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
@@ -2924,7 +2924,7 @@ func TestHealthMonitor_CheckFailedProcess_SurfacesChildStderr(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(realMgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}
@@ -3050,7 +3050,7 @@ func TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles(
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(realMgr.WaitPipes)
-	logger, err := manager.NewDaemonLogger(true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("Failed to setup logger: %v", err)
 	}

@@ -22,7 +22,7 @@ func newE2ELogger(t *testing.T, verbose bool) (logger interface {
 	cfg := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("e2e.log"))
 	lc := cfg.Standalone.Log
 
-	l, err := manager.NewDaemonLogger(false, verbose, lc.LogDir, lc.LogFileName, lc.LogMaxFiles, lc.LogFileSizeLimit)
+	l, err := manager.NewDaemonLogger(tempDir, false, verbose, lc.LogDir, lc.LogFileName, lc.LogMaxFiles, lc.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestDaemonLogger_E2E_MultiWriter_WritesToFile(t *testing.T) {
 	lc := cfg.Standalone.Log
 
 	// logToFileAndConsole=true — also writes to stdout, but we only assert the file.
-	logger, err := manager.NewDaemonLogger(true, false, lc.LogDir, lc.LogFileName, lc.LogMaxFiles, lc.LogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, lc.LogDir, lc.LogFileName, lc.LogMaxFiles, lc.LogFileSizeLimit)
 	if err != nil {
 		t.Fatalf("NewDaemonLogger: %v", err)
 	}

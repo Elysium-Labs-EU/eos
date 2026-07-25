@@ -26,6 +26,7 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/monitor"
 	"github.com/Elysium-Labs-EU/eos/internal/otelx"
+	"github.com/Elysium-Labs-EU/eos/internal/ownership"
 	"github.com/Elysium-Labs-EU/eos/internal/procutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
@@ -264,7 +265,7 @@ func removeExistingSocket(socketPath string, logger *slog.Logger) error {
 func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, telemetryConfig config.TelemetryConfig) (*daemon, error) {
 	startedAt := time.Now()
 
-	logger, err := manager.NewDaemonLogger(logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
+	logger, err := manager.NewDaemonLogger(baseDir, logToFileAndConsole, verbose, standaloneDaemonConfig.Log.LogDir, standaloneDaemonConfig.Log.LogFileName, standaloneDaemonConfig.Log.LogMaxFiles, config.DaemonLogFileSizeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup daemon logger: %w", err)
 	}
@@ -289,6 +290,15 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	err = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", myPID), 0600)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to write to pid file: %w", err)
+		logger.Info(errorMessage.Error())
+		return nil, errorMessage
+	}
+	// Under sudo the daemon (re)starts as root even though the base dir was
+	// already chowned to the invoking user; align the freshly written PID file
+	// to that owner so an unprivileged `eos status` isn't locked out afterward.
+	// See issue #91.
+	if alignErr := ownership.Align(baseDir, pidFile); alignErr != nil {
+		errorMessage := fmt.Errorf("failed to align pid file ownership: %w", alignErr)
 		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}

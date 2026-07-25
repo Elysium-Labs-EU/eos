@@ -81,7 +81,7 @@ func (m *LocalManager) acquireLogWriter(logDir, fileName string, maxFiles int, s
 		return entry.writer, nil
 	}
 
-	w, err := newRotatingFileWriter(logDir, fileName, maxFiles, sizeLimit)
+	w, err := newRotatingFileWriter(m.baseDir, logDir, fileName, maxFiles, sizeLimit)
 	if err != nil {
 		return nil, err
 	}
