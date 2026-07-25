@@ -15,6 +15,7 @@ import (
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/ownership"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
@@ -681,6 +682,15 @@ func buildForkCommand(ctx context.Context, exePath string, verbose bool, identit
 	stderrFile, err := manager.OpenForkStderrLog(pidFile)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Under sudo the parent (this process) still runs as root at the moment it
+	// opens this file, even though the child below drops to identity's uid/gid.
+	// Align it to the base dir's owner so it doesn't strand a later unprivileged
+	// `eos daemon start` the way daemon.log/eos.pid did before #91.
+	if alignErr := ownership.Align(filepath.Dir(pidFile), stderrFile.Name()); alignErr != nil {
+		_ = stderrFile.Close()
+		return nil, nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
 	}
 	cmd.Stderr = stderrFile
 
