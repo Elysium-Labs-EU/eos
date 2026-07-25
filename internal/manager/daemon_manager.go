@@ -129,6 +129,15 @@ func buildDaemonCommand(ctx context.Context, exePath string, verbose bool, pidFi
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Under sudo this process still runs as root at the moment it opens this
+	// file. Align it to the base dir's owner so it doesn't strand a later
+	// unprivileged `eos daemon start` the way daemon.log/eos.pid did before
+	// #91. Stay in sync with buildForkCommand (cmd/daemon.go).
+	if alignErr := ownership.Align(filepath.Dir(pidFile), stderrFile.Name()); alignErr != nil {
+		_ = stderrFile.Close()
+		return nil, nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
+	}
 	cmd.Stderr = stderrFile
 	return cmd, stderrFile, nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -443,6 +444,71 @@ func TestOpenForkStderrLog_SitsBesidePIDFile(t *testing.T) {
 	wantPath := filepath.Join(tempDir, "fork-stderr.log")
 	if _, statErr := os.Stat(wantPath); statErr != nil {
 		t.Errorf("expected fork stderr log at %s, got stat error: %v", wantPath, statErr)
+	}
+}
+
+// TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot covers issue #94: a
+// sudo-triggered restart opens fork-stderr.log while still running as root.
+// buildDaemonCommand must chown it to the base dir's owner, the same as
+// buildForkCommand (cmd/daemon.go), so it doesn't permanently lock out a
+// later unprivileged `eos daemon start`.
+func TestBuildDaemonCommand_AlignsStderrOwnershipUnderRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to exercise the chown branch")
+	}
+	const targetUID, targetGID = 12345, 12345
+
+	tempDir := t.TempDir()
+	if err := os.Chown(tempDir, targetUID, targetGID); err != nil {
+		t.Fatalf("chown base dir to target uid: %v", err)
+	}
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	_, stderrFile, err := buildDaemonCommand(t.Context(), "/usr/bin/true", false, pidFile)
+	if err != nil {
+		t.Fatalf("buildDaemonCommand should not error: %v", err)
+	}
+	defer func() { _ = stderrFile.Close() }()
+
+	info, err := os.Stat(stderrFile.Name())
+	if err != nil {
+		t.Fatalf("stat fork-stderr.log: %v", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("non-POSIX filesystem; cannot read owner uid")
+	}
+	if int(stat.Uid) != targetUID {
+		t.Errorf("expected fork-stderr.log owner uid %d (matching base dir), got %d", targetUID, stat.Uid)
+	}
+}
+
+// TestBuildDaemonCommand_StderrOwnershipNonRootNoop mirrors
+// ownership.TestAlign_NonRootNoop: the common non-sudo path must not error
+// and must leave ownership untouched.
+func TestBuildDaemonCommand_StderrOwnershipNonRootNoop(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("this case asserts the non-root no-op; skip when running as root")
+	}
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "eos.pid")
+
+	_, stderrFile, err := buildDaemonCommand(t.Context(), "/usr/bin/true", false, pidFile)
+	if err != nil {
+		t.Fatalf("buildDaemonCommand should not error: %v", err)
+	}
+	defer func() { _ = stderrFile.Close() }()
+
+	info, err := os.Stat(stderrFile.Name())
+	if err != nil {
+		t.Fatalf("stat fork-stderr.log: %v", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("non-POSIX filesystem; cannot read owner uid")
+	}
+	if int(stat.Uid) != os.Getuid() {
+		t.Errorf("non-root call changed ownership: expected uid %d, got %d", os.Getuid(), stat.Uid)
 	}
 }
 
