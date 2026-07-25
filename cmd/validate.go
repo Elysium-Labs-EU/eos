@@ -41,9 +41,7 @@ func newValidateCmd() *cobra.Command {
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("valid"), ui.TextBold.Render(config.Name), "configuration is valid")
 			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("file:"), yamlFile)
 
-			for _, w := range manager.DetectSelfDetachRisk(config.Command) {
-				cmd.PrintErrf("%s %s\n", ui.LabelWarning.Render("warning"), w)
-			}
+			printSelfDetachWarnings(cmd, config.Command)
 
 			return nil
 		},
