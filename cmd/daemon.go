@@ -99,7 +99,7 @@ func (c *standaloneDaemonController) Info(cmd *cobra.Command) {
 			printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
 			return
 		}
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon not found"))
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is not running"))
 		return
 	}
 	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))

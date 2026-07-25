@@ -24,7 +24,7 @@ func warnIfDaemonDown(cmd *cobra.Command) {
 		return
 	}
 	if daemonIsDown(cmd.Context(), &systemConfig.Daemon) {
-		printDaemonDownBanner(cmd)
+		printDaemonDownBanner(cmd, &systemConfig.Daemon)
 	}
 }
 
@@ -107,7 +107,20 @@ func printDaemonDownStartWarning(cmd *cobra.Command) {
 // house style: a bold severity label, then an aligned hint line naming the exact
 // fix command. The ui styles collapse to plain text when stderr is not a TTY or
 // NO_COLOR is set, so piped output stays clean.
-func printDaemonDownBanner(cmd *cobra.Command) {
+//
+// Standalone mode gets its own wording (issue #67): the very next call this
+// process makes — getManager(), right after this banner — auto-starts a
+// standalone daemon, so telling the operator to run "eos daemon start"
+// themselves would be false; state below is still stale relative to the
+// daemon that is about to come up, but no manual action is required.
+func printDaemonDownBanner(cmd *cobra.Command, daemon *config.DaemonConfig) {
+	if daemon != nil && daemon.Standalone != nil {
+		cmd.PrintErrf("%s %s\n\n",
+			ui.LabelWarning.Render("warning:"),
+			"eos daemon is not running - state below is last-known and may be stale; a standalone instance will be started automatically to serve this request",
+		)
+		return
+	}
 	cmd.PrintErrf("%s %s\n",
 		ui.LabelWarning.Render("warning:"),
 		"eos daemon is not running - state below is last-known and may be stale",

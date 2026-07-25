@@ -27,12 +27,12 @@ func stubSystemctl(t *testing.T, pid int) {
 	t.Setenv("PATH", dir)
 }
 
-func TestPrintDaemonDownBanner(t *testing.T) {
+func TestPrintDaemonDownBanner_Systemd(t *testing.T) {
 	var errBuf bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetErr(&errBuf)
 
-	printDaemonDownBanner(cmd)
+	printDaemonDownBanner(cmd, &config.DaemonConfig{Systemd: &config.SystemdConfig{}})
 
 	out := errBuf.String()
 	if !strings.Contains(out, "warning:") {
@@ -41,8 +41,34 @@ func TestPrintDaemonDownBanner(t *testing.T) {
 	if !strings.Contains(out, "eos daemon is not running - state below is last-known and may be stale") {
 		t.Errorf("banner missing headline, got: %q", out)
 	}
+	// Systemd never auto-starts, so the operator genuinely must run this themselves.
 	if !strings.Contains(out, "start it with:") || !strings.Contains(out, "eos daemon start") {
 		t.Errorf("banner missing fix-command hint, got: %q", out)
+	}
+}
+
+// TestPrintDaemonDownBanner_Standalone is the regression test for issue #67:
+// standalone mode auto-starts the daemon via the very next getManager() call,
+// so the banner must not tell the operator to start it manually.
+func TestPrintDaemonDownBanner_Standalone(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	printDaemonDownBanner(cmd, &config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{}})
+
+	out := errBuf.String()
+	if !strings.Contains(out, "warning:") {
+		t.Errorf("banner missing severity label, got: %q", out)
+	}
+	if !strings.Contains(out, "eos daemon is not running") {
+		t.Errorf("banner missing headline, got: %q", out)
+	}
+	if !strings.Contains(out, "will be started automatically") {
+		t.Errorf("banner missing auto-start disclosure, got: %q", out)
+	}
+	if strings.Contains(out, "start it with:") {
+		t.Errorf("banner should not tell the operator to start it manually, got: %q", out)
 	}
 }
 

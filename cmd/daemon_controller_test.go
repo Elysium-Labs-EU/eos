@@ -102,8 +102,8 @@ func TestStandaloneDaemonController_Info(t *testing.T) {
 
 		c.Info(cmd)
 
-		if !strings.Contains(out.String(), "daemon not found") {
-			t.Errorf("expected 'daemon not found', got: %s", out.String())
+		if !strings.Contains(out.String(), "daemon is not running") {
+			t.Errorf("expected 'daemon is not running', got: %s", out.String())
 		}
 	})
 
