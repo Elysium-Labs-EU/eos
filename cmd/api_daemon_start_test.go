@@ -52,7 +52,10 @@ func TestAPIDaemonStart_ControllerError(t *testing.T) {
 }
 
 func TestAPIDaemonStart_StartError(t *testing.T) {
-	fake := &fakeAPIDaemonController{startErr: errors.New("already running")}
+	// stopped:true -> IsRunning() reports false, so the new idempotency
+	// pre-check falls through to Start(), which fails for some other reason
+	// (e.g. fork/permission failure), not because it's already running.
+	fake := &fakeAPIDaemonController{stopped: true, startErr: errors.New("boom")}
 	cmd := newAPIDaemonStartCmdWithController(func() (DaemonController, error) { return fake, nil })
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
@@ -61,13 +64,13 @@ func TestAPIDaemonStart_StartError(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(errBuf.String(), "already running") {
+	if !strings.Contains(errBuf.String(), "boom") {
 		t.Errorf("expected start error in output, got: %s", errBuf.String())
 	}
 }
 
 func TestAPIDaemonStart_Success(t *testing.T) {
-	fake := &fakeAPIDaemonController{}
+	fake := &fakeAPIDaemonController{stopped: true}
 	cmd := newAPIDaemonStartCmdWithController(func() (DaemonController, error) { return fake, nil })
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
@@ -83,5 +86,28 @@ func TestAPIDaemonStart_Success(t *testing.T) {
 	}
 	if !result.Started {
 		t.Error("expected started=true")
+	}
+}
+
+// TestAPIDaemonStart_AlreadyRunning mirrors TestAPIDaemonStop_NotRunning:
+// calling start on an already-running daemon is idempotent, exits 0, and
+// reports started=false instead of erroring (issue #68).
+func TestAPIDaemonStart_AlreadyRunning(t *testing.T) {
+	fake := &fakeAPIDaemonController{stopped: false}
+	cmd := newAPIDaemonStartCmdWithController(func() (DaemonController, error) { return fake, nil })
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result apiDaemonStartResult
+	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
+		t.Fatalf("expected valid JSON output, got: %s (%v)", outBuf.String(), err)
+	}
+	if result.Started {
+		t.Error("expected started=false")
 	}
 }

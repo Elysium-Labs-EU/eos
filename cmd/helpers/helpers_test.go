@@ -82,6 +82,16 @@ func TestDetermineUptimeAPI(t *testing.T) {
 			if !tt.nilOk && got == nil {
 				t.Error("expected non-nil uptime string, got nil")
 			}
+			if !tt.nilOk && got != nil {
+				// Must match DetermineUptimeHuman's format (relative, e.g. "12 seconds ago"),
+				// not an absolute timestamp restatement of started_at — see issue #68.
+				if *got == tt.input.StartedAt.String() {
+					t.Errorf("expected relative duration string like DetermineUptimeHuman, got absolute timestamp %q", *got)
+				}
+				if want := DetermineUptimeHuman(tt.input); *got != want {
+					t.Errorf("expected api uptime %q to match human uptime %q", *got, want)
+				}
+			}
 		})
 	}
 }
