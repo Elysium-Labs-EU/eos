@@ -41,10 +41,20 @@ func ForkStderrLogPath(pidFile string) string {
 // pipe is orphaned, and the detached child gets SIGPIPE'd on its next stderr
 // write. A real file has no reader to lose: fork/exec gives the child its own
 // independent file descriptor.
+//
+// Under sudo the caller still runs as root at the moment this file is
+// opened. Align it to the base dir's owner here, once, so neither caller
+// (buildForkCommand in cmd/daemon.go, buildDaemonCommand below) can forget
+// it and strand a later unprivileged `eos daemon start` the way
+// daemon.log/eos.pid did before #91.
 func OpenForkStderrLog(pidFile string) (*os.File, error) {
 	f, err := os.OpenFile(ForkStderrLogPath(pidFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 -- path derived from configured pidFile, not user input
 	if err != nil {
 		return nil, fmt.Errorf("opening fork stderr capture file: %w", err)
+	}
+	if alignErr := ownership.Align(filepath.Dir(pidFile), f.Name()); alignErr != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
 	}
 	return f, nil
 }
@@ -128,15 +138,6 @@ func buildDaemonCommand(ctx context.Context, exePath string, verbose bool, pidFi
 	stderrFile, err := OpenForkStderrLog(pidFile)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// Under sudo this process still runs as root at the moment it opens this
-	// file. Align it to the base dir's owner so it doesn't strand a later
-	// unprivileged `eos daemon start` the way daemon.log/eos.pid did before
-	// #91. Stay in sync with buildForkCommand (cmd/daemon.go).
-	if alignErr := ownership.Align(filepath.Dir(pidFile), stderrFile.Name()); alignErr != nil {
-		_ = stderrFile.Close()
-		return nil, nil, fmt.Errorf("aligning fork stderr capture file ownership: %w", alignErr)
 	}
 	cmd.Stderr = stderrFile
 	return cmd, stderrFile, nil
