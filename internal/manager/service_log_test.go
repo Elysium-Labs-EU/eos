@@ -1,9 +1,11 @@
 package manager
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
@@ -137,5 +139,145 @@ func TestLogToServiceStdout_missingLogFile(t *testing.T) {
 
 	if err := mgr.LogToServiceStdout("no-such-svc", "message"); err == nil {
 		t.Fatal("expected error when log file doesn't exist")
+	}
+}
+
+// TestAcquireServiceLogWriter_ConcurrentAcquireSharesOneInstance is a
+// regression test for a bug where a running service's stdout/stderr
+// pipe-forwarding writer and the health monitor's breadcrumb writes
+// (LogToServiceStdout/LogToServiceStderr, which fires while a service is
+// running — see health_monitor.go's checkStartProcess) each opened their own
+// independent RotatingFileWriter onto the same log path. Two independent
+// writers meant two independent size counters and two independent *os.File
+// handles: one writer's rotate() renaming the file out from under the other's
+// fd broke both the size cap and log continuity. Every caller must now share
+// exactly one RotatingFileWriter per log path.
+func TestAcquireServiceLogWriter_ConcurrentAcquireSharesOneInstance(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const serviceName = "shared-writer-svc"
+	const holders = 20
+
+	var wg sync.WaitGroup
+	writers := make([]*RotatingFileWriter, holders)
+	errs := make([]error, holders)
+	for i := range holders {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w, err := mgr.acquireServiceLogWriter(serviceName, false, 5, 10*1024*1024)
+			writers[i] = w
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("acquire %d: %v", i, err)
+		}
+	}
+	first := writers[0]
+	if first == nil {
+		t.Fatal("acquire returned a nil writer")
+	}
+	for i, w := range writers {
+		if w != first {
+			t.Errorf("acquire %d returned a distinct *RotatingFileWriter instance; every concurrent acquire for the same log path must share one instance", i)
+		}
+	}
+
+	for i := range holders {
+		if err := mgr.releaseServiceLogWriter(serviceName, false); err != nil {
+			t.Errorf("release %d: %v", i, err)
+		}
+	}
+
+	mgr.logWritersMu.Lock()
+	_, stillTracked := mgr.logWriters[filepath.Join(CreateLogDirPath(tempDir), CreateOutputLogFilename(serviceName))]
+	mgr.logWritersMu.Unlock()
+	if stillTracked {
+		t.Error("expected the shared writer to be removed from the registry once every acquire was released")
+	}
+}
+
+// TestAcquireServiceLogWriter_ConcurrentPipeAndHealthEventWrites simulates the
+// real-world race from issue #78's follow-up: a running service's
+// pipe-forwarding goroutine holds the writer for the service's whole
+// lifetime (one long acquire, many writes, one release — like
+// pipeToLogFile), while concurrent health-monitor breadcrumbs each do a
+// short-lived acquire/write/release (like appendHealthEventToLog). With a
+// small size limit forcing frequent rotation, the rotated-file count must
+// still respect maxFiles and no write may error, which only holds if every
+// writer shares one RotatingFileWriter's lock and size counter.
+func TestAcquireServiceLogWriter_ConcurrentPipeAndHealthEventWrites(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const serviceName = "concurrent-rotate-svc"
+	const maxFiles = 3
+	const sizeLimit = int64(500)
+
+	pipeDone := make(chan error, 1)
+	go func() {
+		w, err := mgr.acquireServiceLogWriter(serviceName, false, maxFiles, sizeLimit)
+		if err != nil {
+			pipeDone <- fmt.Errorf("acquire: %w", err)
+			return
+		}
+		for i := range 300 {
+			if _, err := fmt.Fprintf(w, "pipe forwarder line %d ....................\n", i); err != nil {
+				pipeDone <- fmt.Errorf("write: %w", err)
+				return
+			}
+		}
+		pipeDone <- mgr.releaseServiceLogWriter(serviceName, false)
+	}()
+
+	const healthEvents = 200
+	var healthWg sync.WaitGroup
+	healthErrs := make([]error, healthEvents)
+	for i := range healthEvents {
+		healthWg.Add(1)
+		go func(i int) {
+			defer healthWg.Done()
+			w, err := mgr.acquireServiceLogWriter(serviceName, false, maxFiles, sizeLimit)
+			if err != nil {
+				healthErrs[i] = fmt.Errorf("acquire: %w", err)
+				return
+			}
+			if _, err := fmt.Fprintf(w, "health breadcrumb %d\n", i); err != nil {
+				healthErrs[i] = fmt.Errorf("write: %w", err)
+				return
+			}
+			healthErrs[i] = mgr.releaseServiceLogWriter(serviceName, false)
+		}(i)
+	}
+
+	if err := <-pipeDone; err != nil {
+		t.Fatalf("pipe forwarder: %v", err)
+	}
+	healthWg.Wait()
+	for i, err := range healthErrs {
+		if err != nil {
+			t.Errorf("health event %d: %v", i, err)
+		}
+	}
+
+	logDir := CreateLogDirPath(tempDir)
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("reading log dir: %v", err)
+	}
+	if len(entries) > maxFiles {
+		t.Errorf("expected at most %d rotated log files under maxFiles enforcement, got %d: %v", maxFiles, len(entries), entries)
+	}
+
+	mgr.logWritersMu.Lock()
+	remaining := len(mgr.logWriters)
+	mgr.logWritersMu.Unlock()
+	if remaining != 0 {
+		t.Errorf("expected every acquire to have been released and the registry emptied, got %d entries still tracked", remaining)
 	}
 }

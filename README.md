@@ -92,10 +92,14 @@ port: 1337
 env_file: "/home/user/.env"
 memory_limit_mb: 200
 cron_restart: "0 3 * * *"
+log_max_files: 5
+log_file_size_limit_bytes: 10485760
 runtime:
   type: "nodejs"
   path: "/usr/local/bin"
 ```
+
+`log_max_files` and `log_file_size_limit_bytes` cap a service's `<name>-out.log`/`<name>-error.log` rotation; both default to the daemon's own log rotation settings (`eos system info`) when unset.
 
 ## Boot-time Startup
 

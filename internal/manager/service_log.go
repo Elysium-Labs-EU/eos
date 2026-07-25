@@ -7,8 +7,54 @@ import (
 	"path/filepath"
 	"strings"
 
+	eosconfig "github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+// resolveServiceLogRotation returns the effective rotation file-count/size cap
+// for a service's stdout/stderr logs: the service's own service.yaml override
+// if set, otherwise the daemon's own log rotation default (the only rotation
+// cap that exists today, applied here so service logs stop growing unbounded).
+func resolveServiceLogRotation(config *types.ServiceConfig) (maxFiles int, sizeLimit int64) {
+	maxFiles = config.LogMaxFiles
+	if maxFiles <= 0 {
+		maxFiles = eosconfig.DaemonLogMaxFiles
+	}
+	sizeLimit = config.LogFileSizeLimitBytes
+	if sizeLimit <= 0 {
+		sizeLimit = eosconfig.DaemonLogFileSizeLimit
+	}
+	return maxFiles, sizeLimit
+}
+
+// acquireServiceLogWriter returns the shared, size-capped rotating writer for
+// serviceName's stdout (or, if errorLog, stderr) log file — creating it on the
+// first acquire. Every caller (the running service's own pipe-forwarding
+// goroutine, and the health monitor's breadcrumb writes) goes through this
+// same shared instance rather than opening an independent handle onto the
+// file, so a rotate() from one caller can't rename the file out from under
+// another caller's fd. Must be paired with a releaseServiceLogWriter call.
+func (m *LocalManager) acquireServiceLogWriter(serviceName string, errorLog bool, maxFiles int, sizeLimit int64) (*RotatingFileWriter, error) {
+	logDir := CreateLogDirPath(m.baseDir)
+	fileName := CreateOutputLogFilename(serviceName)
+	if errorLog {
+		fileName = CreateErrorOutputLogFilename(serviceName)
+	}
+	return m.acquireLogWriter(logDir, fileName, maxFiles, sizeLimit)
+}
+
+// releaseServiceLogWriter releases one reference to serviceName's stdout (or,
+// if errorLog, stderr) shared rotating writer, closing it once nothing else
+// holds it. Must only be called after a successful acquireServiceLogWriter.
+func (m *LocalManager) releaseServiceLogWriter(serviceName string, errorLog bool) error {
+	logDir := CreateLogDirPath(m.baseDir)
+	fileName := CreateOutputLogFilename(serviceName)
+	if errorLog {
+		fileName = CreateErrorOutputLogFilename(serviceName)
+	}
+	return m.releaseLogWriter(logDir, fileName)
+}
 
 // joinLogPath joins filename onto logDir and refuses the result if it
 // resolves outside logDir. ValidateServiceName already forbids the path
@@ -52,14 +98,6 @@ func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, e
 	}
 
 	return logPath, errorLogPath, nil
-}
-
-func OpenLogFile(logPath string) (*os.File, error) {
-	logFile, err := os.OpenFile(filepath.Clean(logPath), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
-	if err != nil {
-		return nil, fmt.Errorf("could not open log file: %w", err)
-	}
-	return logFile, nil
 }
 
 func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error) {
@@ -113,20 +151,22 @@ func (m *LocalManager) LogToServiceStderr(serviceName string, message string) er
 }
 
 func (m *LocalManager) appendHealthEventToLog(serviceName string, errorLog bool, level slog.Level, message string) (err error) {
-	logPath, pathErr := m.GetServiceLogFilePath(serviceName, errorLog)
-	if pathErr != nil {
+	// GetServiceLogFilePath also confirms the log file already exists: health
+	// breadcrumbs only append to a log a prior launch already created, never
+	// create one out of thin air.
+	if _, pathErr := m.GetServiceLogFilePath(serviceName, errorLog); pathErr != nil {
 		return pathErr
 	}
-	file, openErr := os.OpenFile(filepath.Clean(*logPath), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
+	w, openErr := m.acquireServiceLogWriter(serviceName, errorLog, eosconfig.DaemonLogMaxFiles, eosconfig.DaemonLogFileSizeLimit)
 	if openErr != nil {
 		return fmt.Errorf("opening log file: %w", openErr)
 	}
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing log file: %w", closeErr)
+		if closeErr := m.releaseServiceLogWriter(serviceName, errorLog); closeErr != nil && err == nil {
+			err = fmt.Errorf("releasing log file: %w", closeErr)
 		}
 	}()
-	l := logutil.NewJSONLogger(file, false)
+	l := logutil.NewJSONLogger(w, false)
 	switch {
 	case level >= slog.LevelError:
 		l.Error(message, "service", serviceName, "source", logutil.HealthBreadcrumbSource)
@@ -135,7 +175,7 @@ func (m *LocalManager) appendHealthEventToLog(serviceName string, errorLog bool,
 	default:
 		l.Info(message, "service", serviceName, "source", logutil.HealthBreadcrumbSource)
 	}
-	if syncErr := file.Sync(); syncErr != nil {
+	if syncErr := w.Sync(); syncErr != nil {
 		return fmt.Errorf("syncing log file: %w", syncErr)
 	}
 	return nil

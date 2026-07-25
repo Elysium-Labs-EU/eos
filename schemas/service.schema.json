@@ -44,6 +44,18 @@
       "minLength": 1,
       "examples": ["0 3 * * *", "*/30 * * * *"]
     },
+    "log_max_files": {
+      "type": "integer",
+      "description": "How many rotated stdout/stderr log files to keep for this service (active file plus this many rotated siblings). Default: the daemon's own log rotation default (5).",
+      "minimum": 1,
+      "examples": [3, 5, 10]
+    },
+    "log_file_size_limit_bytes": {
+      "type": "integer",
+      "description": "Rotate this service's stdout/stderr log once it reaches this size, in bytes. Default: the daemon's own log rotation default (10485760 = 10MB).",
+      "minimum": 1,
+      "examples": [1048576, 10485760, 52428800]
+    },
     "runtime": {
       "type": "object",
       "description": "Runtime configuration. Use 'type' to verify the runtime exists in system PATH, 'path' to prepend a directory to PATH, or both to verify a specific binary in that directory.",

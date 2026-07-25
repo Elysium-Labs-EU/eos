@@ -620,6 +620,21 @@ func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
+// Close closes the underlying file. Safe to call once the writer is no longer
+// in use (e.g. when a service's pipe-forwarding goroutine exits).
+func (w *RotatingFileWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Close()
+}
+
+// Sync flushes the underlying file to disk.
+func (w *RotatingFileWriter) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Sync()
+}
+
 func (w *RotatingFileWriter) rotate() error {
 	if err := w.file.Close(); err != nil {
 		return fmt.Errorf("closing file: %w", err)
