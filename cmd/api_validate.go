@@ -38,8 +38,8 @@ Error schema (stderr, JSON):
   { "error": "string" }
 
 Exit codes:
-  0  success (even when config is invalid — check "valid" field)
-  1  error (file not found, cannot parse path)`,
+  0  config is valid
+  1  config is invalid, or error (file not found, cannot parse path)`,
 		Example: `  eos api validate ./path/to/project
   eos api validate ./path/to/project/service.yaml
   eos api validate ./path/to/project | jq .valid`,
@@ -77,7 +77,13 @@ Exit codes:
 				}
 			}
 
-			return helpers.WriteJSON(cmd, result)
+			if err := helpers.WriteJSON(cmd, result); err != nil {
+				return err
+			}
+			if !result.Valid {
+				return helpers.ErrAPICommandFailed
+			}
+			return nil
 		},
 	}
 }
