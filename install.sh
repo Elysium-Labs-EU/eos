@@ -8,9 +8,8 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m' # No Color
+readonly NC='\033[0m'
 
-# Configuration
 readonly REPO="Elysium-Labs-EU/eos"
 readonly GITHUB_API_URL="https://api.github.com"
 readonly GITHUB_URL="https://github.com"
@@ -29,7 +28,6 @@ BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
 
 AUTO_YES=false
 
-# Print functions
 info() {
     echo -e "${BLUE}${BOLD}info${NC} $1"
 }
@@ -137,9 +135,9 @@ extract_tag_name() {
 # pick_latest_tag prints a tag_name from a /releases list JSON blob passed on
 # stdin, preferring the highest stable (non-prerelease) tag and only falling
 # back to the highest prerelease tag when no stable release exists. The
-# Codeberg (Gitea) releases list is documented newest-first but has been
-# observed live to return a freshly published release out of list order
-# (issue #43), so list position can't be trusted. `sort -V` on the raw tag
+# GitHub releases list is documented newest-first but has been observed
+# live to return a freshly published release out of list order (issue
+# #43), so list position can't be trusted. `sort -V` on the raw tag
 # list isn't a safe substitute either: it sorts a bare "v0.1.0" *before*
 # "v0.1.0-rc.9", the opposite of semver precedence. Pairing tag_name with
 # prerelease sidesteps both problems: both fields are release-level only
@@ -511,7 +509,6 @@ setup_sqlite3() {
 
 
 main() {
-    # Parse arguments
     local local_binary=""
 
     while [[ $# -gt 0 ]]; do
@@ -545,7 +542,6 @@ main() {
         esac
     done
 
-    # Validate local binary if specified
     if [ -n "$local_binary" ]; then
         if [ ! -f "$local_binary" ]; then
             error "Local binary not found: $local_binary"
@@ -582,7 +578,6 @@ main() {
 
     echo ""
 
-    # Version resolution - skip when using a local binary
     local version=""
     if [ -z "$local_binary" ]; then
         version="${EOS_VERSION:-}"
@@ -622,7 +617,6 @@ main() {
         exit 0
     fi
     
-    # Get the binary - either from local path or download
     local tmp_binary
     if [ -n "$local_binary" ]; then
         tmp_binary="$local_binary"
@@ -715,10 +709,8 @@ main() {
         rm -f "$tmp_checksums"
     fi
     
-    # Stop running daemon before overwriting binary
     stop_running_daemon
 
-    # Install binary
     step "Installing binary..."
     mkdir -p "$INSTALL_DIR"
     strip_quarantine "$tmp_binary"
@@ -730,13 +722,10 @@ main() {
     resign_darwin_binary "$final_binary"
     success "Installed to ${final_binary}"
 
-    # Refresh any shell completion already installed for the invoking user
     refresh_completions
 
-    # Setup SQLite3 (auto-detects if already installed)
     setup_sqlite3 "$pkg_manager"
-    
-    # Create home directory
+
     echo ""
     step "Creating home directory..."
     mkdir -p "$HOME_DIR"
