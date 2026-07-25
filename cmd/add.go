@@ -37,9 +37,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return helpers.ErrCommandFailed
 			}
 
-			for _, w := range manager.DetectSelfDetachRisk(config.Command) {
-				cmd.PrintErrf("%s %s\n", ui.LabelWarning.Render("warning"), w)
-			}
+			printSelfDetachWarnings(cmd, config.Command)
 
 			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 			if err != nil {
