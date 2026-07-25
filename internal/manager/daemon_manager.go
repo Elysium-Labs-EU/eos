@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/logutil"
+	"github.com/Elysium-Labs-EU/eos/internal/ownership"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
@@ -571,13 +572,14 @@ type RotatingFileWriter struct {
 	LogPath     string
 	logDir      string
 	fileName    string
+	baseDir     string
 	currentSize int64
 	maxSize     int64
-	mu          sync.Mutex
 	maxFiles    int
+	mu          sync.Mutex
 }
 
-func newRotatingFileWriter(logDir, fileName string, maxFiles int, fileSizeLimit int64) (*RotatingFileWriter, error) {
+func newRotatingFileWriter(baseDir, logDir, fileName string, maxFiles int, fileSizeLimit int64) (*RotatingFileWriter, error) {
 	logPath := filepath.Clean(filepath.Join(logDir, fileName))
 
 	err := os.MkdirAll(logDir, 0750)
@@ -588,6 +590,14 @@ func newRotatingFileWriter(logDir, fileName string, maxFiles int, fileSizeLimit 
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 -- log files should be readable by other users/tools
 	if err != nil {
 		return nil, err
+	}
+
+	// Under sudo the daemon (re)starts as root even though the base dir was
+	// already chowned to the invoking user; align the freshly created log dir
+	// and file to that owner so they don't strand an unprivileged `eos status`
+	// afterward. See issue #91.
+	if alignErr := ownership.Align(baseDir, logDir, logPath); alignErr != nil {
+		return nil, fmt.Errorf("aligning log ownership: %w", alignErr)
 	}
 
 	fileInfo, err := f.Stat()
@@ -603,6 +613,7 @@ func newRotatingFileWriter(logDir, fileName string, maxFiles int, fileSizeLimit 
 		currentSize: fileInfo.Size(),
 		maxSize:     fileSizeLimit,
 		maxFiles:    maxFiles,
+		baseDir:     baseDir,
 	}, nil
 }
 
@@ -649,6 +660,12 @@ func (w *RotatingFileWriter) rotate() error {
 		return fmt.Errorf("creating new log file: %w", err)
 	}
 
+	// The rotated-in file is freshly created; under sudo it starts root-owned
+	// like the initial one did, so align it too. See issue #91.
+	if alignErr := ownership.Align(w.baseDir, w.LogPath); alignErr != nil {
+		return fmt.Errorf("aligning rotated log ownership: %w", alignErr)
+	}
+
 	w.file = newF
 	w.currentSize = 0
 	return nil
@@ -657,8 +674,8 @@ func (w *RotatingFileWriter) rotate() error {
 // NewDaemonLogger creates a *slog.Logger backed by a rotating JSON file.
 // When logToFileAndConsole is true, output goes to both file and stdout.
 // JSON format is Loki/Promtail-compatible.
-func NewDaemonLogger(logToFileAndConsole bool, verbose bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*slog.Logger, error) {
-	rw, err := newRotatingFileWriter(logDir, fileName, maxFiles, fileSizeLimit)
+func NewDaemonLogger(baseDir string, logToFileAndConsole bool, verbose bool, logDir string, fileName string, maxFiles int, fileSizeLimit int64) (*slog.Logger, error) {
+	rw, err := newRotatingFileWriter(baseDir, logDir, fileName, maxFiles, fileSizeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("creating rotating file writer: %w", err)
 	}
