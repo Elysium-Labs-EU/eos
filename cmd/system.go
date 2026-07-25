@@ -1583,7 +1583,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	killed, killErr := ctrl.Stop(ctx, cmd, verbose)
-	if killErr != nil {
+	if killErr != nil && !killed {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
 		return helpers.ErrCommandFailed
 	}
@@ -1591,9 +1591,20 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
 		return nil
 	}
+	if killErr != nil {
+		// killed=true but the exit-wait timed out: SIGTERM was delivered but we
+		// couldn't confirm the old process actually exited. Bailing out here
+		// would reproduce issue #73's original symptom (binary updated, no
+		// daemon running, nothing attempted to fix it) — so still try Start()
+		// rather than giving up outright.
+		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("old daemon did not confirm exit (%v) — attempting to start the new daemon anyway", killErr))
+	}
 
 	if err := ctrl.Start(ctx, true, false, false); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		if killErr != nil {
+			cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "the previous daemon process may still be alive — check with 'ps' and stop it manually, then run 'eos daemon start'")
+		}
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(" → check daemon logs") + "\n")
 		return helpers.ErrCommandFailed
 	}

@@ -498,6 +498,31 @@ func handleSIGCHLDRequest(ctx context.Context, db *database.DB, logger *slog.Log
 	}
 }
 
+// stopPollInterval and stopExitTimeout bound how long StopStandaloneDaemon
+// waits for a SIGTERM'd daemon to actually exit before reporting killed=true.
+// Returning immediately after signaling let callers (e.g. restartDaemonAfterUpdate
+// in cmd/system.go) call Start() while the old process was still mid-shutdown,
+// tripping its "already running" guard and leaving no daemon running at all
+// after a successful update (issue #73).
+const (
+	stopPollInterval = 50 * time.Millisecond
+	stopExitTimeout  = 5 * time.Second
+)
+
+// waitForProcessExit polls process with signal 0 until it reports
+// os.ErrProcessDone or timeout elapses.
+func waitForProcessExit(process *os.Process, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		err := process.Signal(syscall.Signal(0))
+		if err != nil && errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		time.Sleep(stopPollInterval)
+	}
+	return fmt.Errorf("daemon (pid %d) did not exit within %s of SIGTERM", process.Pid, timeout)
+}
+
 func StopStandaloneDaemon(pidFile, socketPath string) (bool, error) {
 	_, err := os.Stat(pidFile)
 	if err != nil {
@@ -542,6 +567,11 @@ func StopStandaloneDaemon(pidFile, socketPath string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("killing active daemon: %w", err)
 	}
+
+	if err := waitForProcessExit(process, stopExitTimeout); err != nil {
+		return true, err
+	}
+
 	return true, nil
 }
 

@@ -21,16 +21,24 @@ import (
 
 // spawnDisposableChild starts a real, short-lived child process (`sleep 30`) so tests can
 // exercise Signal(0)-based liveness checks and SIGTERM delivery without touching the test
-// process itself. The caller must Kill+Wait it in cleanup.
+// process itself. It reaps the child in the background as soon as it exits, mirroring how a
+// real standalone daemon (reparented to init on fork) is reaped immediately rather than
+// lingering as a zombie visible to signal(0) — StopStandaloneDaemon's exit-wait polls
+// signal(0), which would otherwise never observe an unreaped zombie as gone.
 func spawnDisposableChild(t *testing.T) *exec.Cmd {
 	t.Helper()
 	child := exec.Command("sleep", "30")
 	if err := child.Start(); err != nil {
 		t.Fatalf("failed to spawn disposable child: %v", err)
 	}
+	reaped := make(chan struct{})
+	go func() {
+		_ = child.Wait()
+		close(reaped)
+	}()
 	t.Cleanup(func() {
 		_ = child.Process.Kill()
-		_ = child.Wait()
+		<-reaped
 	})
 	return child
 }
