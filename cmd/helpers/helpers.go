@@ -71,7 +71,7 @@ func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
 	if mostRecentProcess.StartedAt == nil {
 		return nil
 	}
-	return new(mostRecentProcess.StartedAt.String())
+	return new(humanize.Time(*mostRecentProcess.StartedAt))
 }
 
 func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStatus) string {
