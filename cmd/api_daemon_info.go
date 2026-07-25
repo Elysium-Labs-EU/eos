@@ -30,13 +30,13 @@ func newAPIDaemonInfoCmd(getConfig func() (string, *config.SystemConfig, useruti
 	return &cobra.Command{
 		Use:   "info",
 		Short: "Return daemon status and configuration as JSON",
-		Long: `Return the daemon's supervisor mode and configuration. For a standalone daemon, includes live running status, PID, socket, and log paths. For systemd- or launchd-managed daemons, only the supervisor mode and unit scope are returned — use the native tool (systemctl/launchctl) for runtime state.
+		Long: `Return the daemon's supervisor mode and configuration. For a standalone daemon, includes live running status, PID, socket, and log paths. For a systemd-managed daemon, includes live running status (via a base-dir-scoped socket probe, not the host-global "systemctl is-active") and PID when running. For a launchd-managed daemon, only the supervisor mode and unit scope are returned — use the native tool (launchctl) for runtime state.
 
 Output schema (stdout, JSON):
   {
     "mode":                string        -- "standalone", "systemd", or "launchd"
-    "running":             bool|omitted  -- standalone only
-    "pid":                 int|omitted   -- standalone only, present when running
+    "running":             bool|omitted  -- standalone and systemd only
+    "pid":                 int|omitted   -- standalone and systemd only, present when running
     "pid_file":            string|omitted-- standalone only
     "socket_path":         string|omitted-- standalone only
     "socket_timeout":      string|omitted-- standalone only
@@ -84,7 +84,14 @@ Exit codes:
 					LogFileSizeLimit: cfg.Daemon.Standalone.Log.LogFileSizeLimit,
 				})
 			case cfg.Daemon.Systemd != nil:
-				return helpers.WriteJSON(cmd, apiDaemonInfoResult{Mode: "systemd", UserUnit: &cfg.Daemon.Systemd.UserUnit})
+				running := socketResponds(cmd.Context(), cfg.Daemon.Systemd.SocketPath)
+				result := apiDaemonInfoResult{Mode: "systemd", UserUnit: &cfg.Daemon.Systemd.UserUnit, Running: &running}
+				if running {
+					if pid, pidErr := systemdMainPID(cmd.Context(), cfg.Daemon.Systemd.UserUnit); pidErr == nil {
+						result.Pid = &pid
+					}
+				}
+				return helpers.WriteJSON(cmd, result)
 			case cfg.Daemon.Launchd != nil:
 				return helpers.WriteJSON(cmd, apiDaemonInfoResult{Mode: "launchd", UserAgent: &cfg.Daemon.Launchd.UserAgent})
 			default:

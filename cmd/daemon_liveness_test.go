@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,6 +12,20 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// stubSystemctl points PATH at a fake systemctl script that unconditionally
+// prints pid, so tests can deterministically exercise the code path that
+// shells out to `systemctl show -p MainPID` without depending on a real
+// systemd unit or bus being present in the test environment.
+func stubSystemctl(t *testing.T, pid int) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\necho %d\n", pid)
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatalf("writing fake systemctl: %v", err)
+	}
+	t.Setenv("PATH", dir)
+}
 
 func TestPrintDaemonDownBanner(t *testing.T) {
 	var errBuf bytes.Buffer

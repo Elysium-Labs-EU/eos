@@ -229,7 +229,7 @@ func (c systemdDaemonController) Remove() error {
 }
 
 func (c systemdDaemonController) Info(cmd *cobra.Command) {
-	printSystemdDaemonDetails(cmd, c.cfg.UserUnit)
+	printSystemdDaemonDetails(cmd, c.cfg)
 }
 
 func (c systemdDaemonController) LogsHint() string {
@@ -856,10 +856,10 @@ func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) 
 	}
 }
 
-func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
+func printSystemdDaemonDetails(cmd *cobra.Command, cfg config.SystemdConfig) {
 	statusCmd := "systemctl status eos.service"
 	logsCmd := "journalctl -u eos.service"
-	if userUnit {
+	if cfg.UserUnit {
 		statusCmd = "systemctl --user status eos.service"
 		logsCmd = "journalctl --user -u eos.service"
 
@@ -874,7 +874,16 @@ func printSystemdDaemonDetails(cmd *cobra.Command, userUnit bool) {
 		}
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
-	if version, err := systemdDaemonRunningVersion(cmd.Context(), userUnit); err == nil {
+	if socketResponds(cmd.Context(), cfg.SocketPath) {
+		if pid, err := systemdMainPID(cmd.Context(), cfg.UserUnit); err == nil {
+			cmd.Printf("  %s %s\n", ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
+		} else {
+			cmd.Printf("  %s %s\n", ui.LabelSuccess.Render("✓"), "running")
+		}
+	} else {
+		cmd.Printf("  %s %s\n", ui.LabelInfo.Render("○"), ui.TextMuted.Render("not running"))
+	}
+	if version, err := systemdDaemonRunningVersion(cmd.Context(), cfg.UserUnit); err == nil {
 		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
 	}
 	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
@@ -894,19 +903,34 @@ func systemdUserBusReachable(uid int) bool {
 	return isAccessibleDir(os.Getenv("XDG_RUNTIME_DIR"), uid)
 }
 
+// systemdMainPID resolves the PID systemd currently attributes to the "eos"
+// unit's MainPID property. Safe to treat as this daemon's PID only once the
+// caller has independently confirmed liveness via the base-dir-scoped socket
+// probe (socketResponds): MainPID itself is queried against the one literal
+// "eos" unit for this user/system scope, with no base-dir awareness of its
+// own — the same host/user-global blind spot documented on
+// config.SystemdConfig.SocketPath (issue #12).
+func systemdMainPID(ctx context.Context, userUnit bool) (int, error) {
+	pidOut, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(userUnit, "show", "-p", "MainPID", "--value", "eos")...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	if err != nil {
+		return 0, fmt.Errorf("querying systemd for daemon pid: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || pid <= 0 {
+		return 0, errors.New("daemon is not running")
+	}
+	return pid, nil
+}
+
 // systemdDaemonRunningVersion resolves the version string embedded in the binary
 // actually backing the running systemd-managed daemon process, by following
 // /proc/<pid>/exe rather than trusting the currently installed binary — the two
 // differ exactly when the unit hasn't been restarted since an update replaced the
 // binary on disk (the same drift StaleBinary detects for standalone daemons).
 func systemdDaemonRunningVersion(ctx context.Context, userUnit bool) (string, error) {
-	pidOut, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(userUnit, "show", "-p", "MainPID", "--value", "eos")...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	pid, err := systemdMainPID(ctx, userUnit)
 	if err != nil {
-		return "", fmt.Errorf("querying systemd for daemon pid: %w", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
-	if err != nil || pid <= 0 {
-		return "", errors.New("daemon is not running")
+		return "", err
 	}
 	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
