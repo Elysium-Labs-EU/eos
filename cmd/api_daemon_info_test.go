@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,6 +72,49 @@ func TestAPIDaemonInfo_Systemd(t *testing.T) {
 	}
 	if result.UserUnit == nil || !*result.UserUnit {
 		t.Error("expected user_unit=true")
+	}
+	if result.Running == nil || *result.Running {
+		t.Error("expected running=false when nothing is listening on the unit's socket")
+	}
+	if result.Pid != nil {
+		t.Errorf("expected no pid when not running, got %d", *result.Pid)
+	}
+}
+
+// TestAPIDaemonInfo_Systemd_Running is the regression test for issue #65: a
+// systemd-managed daemon must report live running/pid state instead of the
+// static {"user_unit":...,"mode":"systemd"} payload, regardless of whether the
+// unit is actually active.
+func TestAPIDaemonInfo_Systemd_Running(t *testing.T) {
+	dir := shortTempSocketDir(t)
+	sockPath := filepath.Join(dir, "eos.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Listen unix: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	stubSystemctl(t, 424242)
+
+	getConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
+		return t.TempDir(), &config.SystemConfig{
+			Daemon: config.DaemonConfig{Systemd: &config.SystemdConfig{UserUnit: true, SocketPath: sockPath}},
+		}, userutil.Identity{}, nil
+	}
+
+	outBuf, _, err := runAPIDaemonInfo(t, getConfig)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result apiDaemonInfoResult
+	if jsonErr := json.Unmarshal(outBuf.Bytes(), &result); jsonErr != nil {
+		t.Fatalf("expected valid JSON output, got: %s (%v)", outBuf.String(), jsonErr)
+	}
+	if result.Running == nil || !*result.Running {
+		t.Errorf("expected running=true when the unit's socket is accepting connections, got: %s", outBuf.String())
+	}
+	if result.Pid == nil || *result.Pid != 424242 {
+		t.Errorf("expected pid=424242 from the stubbed systemctl, got: %s", outBuf.String())
 	}
 }
 

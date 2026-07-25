@@ -584,7 +584,7 @@ func TestPrintSystemdDaemonDetails(t *testing.T) {
 		cmd.SetErr(&errOut)
 		cmd.SetContext(context.Background())
 
-		printSystemdDaemonDetails(cmd, userUnit)
+		printSystemdDaemonDetails(cmd, config.SystemdConfig{UserUnit: userUnit})
 
 		combined := out.String() + errOut.String()
 		if !strings.Contains(combined, "systemd managed") {
@@ -593,6 +593,37 @@ func TestPrintSystemdDaemonDetails(t *testing.T) {
 		if !strings.Contains(combined, "journalctl") {
 			t.Errorf("userUnit=%v: expected journalctl hint, got: %s", userUnit, combined)
 		}
+	}
+}
+
+// TestPrintSystemdDaemonDetails_Running is the human-output regression test for
+// issue #65: alongside TestAPIDaemonInfo_Systemd_Running (its JSON-API
+// counterpart), it proves `eos daemon info` reports actual liveness instead of
+// only redirecting to `systemctl status`.
+func TestPrintSystemdDaemonDetails_Running(t *testing.T) {
+	dir := shortTempSocketDir(t)
+	sockPath := filepath.Join(dir, "eos.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Listen unix: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	stubSystemctl(t, 424242)
+
+	var out, errOut bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetContext(context.Background())
+
+	printSystemdDaemonDetails(cmd, config.SystemdConfig{UserUnit: true, SocketPath: sockPath})
+
+	combined := out.String() + errOut.String()
+	if !strings.Contains(combined, "running (pid 424242)") {
+		t.Errorf("expected running status with pid 424242, got: %s", combined)
+	}
+	if strings.Contains(combined, "not running") {
+		t.Errorf("expected no 'not running' text when the socket is live, got: %s", combined)
 	}
 }
 
@@ -632,7 +663,7 @@ func TestPrintSystemdDaemonDetails_WarnsWhenXDGRuntimeDirUnset(t *testing.T) {
 	cmd.SetContext(context.Background())
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
-	printSystemdDaemonDetails(cmd, true)
+	printSystemdDaemonDetails(cmd, config.SystemdConfig{UserUnit: true})
 
 	combined := out.String() + errOut.String()
 	if !strings.Contains(combined, "no active systemd user bus") {
@@ -673,7 +704,7 @@ func TestPrintSystemdDaemonDetails_NoWarningWhenXDGRuntimeDirAccessible(t *testi
 	cmd.SetContext(context.Background())
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 
-	printSystemdDaemonDetails(cmd, true)
+	printSystemdDaemonDetails(cmd, config.SystemdConfig{UserUnit: true})
 
 	combined := out.String() + errOut.String()
 	if strings.Contains(combined, "no active systemd user bus") {
