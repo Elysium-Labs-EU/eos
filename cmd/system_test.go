@@ -1999,6 +1999,52 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("stop timeout still attempts start and recovers", func(t *testing.T) {
+		// killed=true, err!=nil is what StopStandaloneDaemon's exit-wait now
+		// returns on timeout (SIGTERM delivered, exit unconfirmed). Bailing out
+		// here without ever calling Start() would reproduce issue #73's
+		// original symptom, so Start() must still be attempted — and if the old
+		// process had in fact exited by then, the restart should succeed.
+		cmd, outBuf, _, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{running: true, killed: true, stopErr: errors.New("timed out waiting for exit")}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error when start recovers after a stop timeout, got %v", err)
+		}
+		if ctrl.startCount != 1 {
+			t.Errorf("expected Start called once despite stop timeout, got %d", ctrl.startCount)
+		}
+		if !strings.Contains(outBuf.String(), "attempting to start the new daemon anyway") {
+			t.Errorf("expected stop-timeout warning, got %s", outBuf.String())
+		}
+		if !strings.Contains(outBuf.String(), "eos updated to") {
+			t.Errorf("expected success message, got %s", outBuf.String())
+		}
+	})
+
+	t.Run("stop timeout and start failure surfaces manual-recovery hint", func(t *testing.T) {
+		cmd, outBuf, errBuf, _ := setupCmd(t)
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{running: true, killed: true, stopErr: errors.New("timed out waiting for exit"), startErr: errors.New("daemon already running (pid 123)")}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err == nil {
+			t.Fatal("expected error when start also fails after a stop timeout")
+		}
+		if ctrl.startCount != 1 {
+			t.Errorf("expected Start still attempted once, got %d", ctrl.startCount)
+		}
+		if !strings.Contains(outBuf.String(), "attempting to start the new daemon anyway") {
+			t.Errorf("expected stop-timeout warning, got %s", outBuf.String())
+		}
+		if !strings.Contains(outBuf.String(), "may still be alive") {
+			t.Errorf("expected manual-recovery hint, got %s", outBuf.String())
+		}
+		if !strings.Contains(errBuf.String(), "eos daemon logs") {
+			t.Errorf("expected logs hint in output, got %s", errBuf.String())
+		}
+	})
+
 	t.Run("successful restart cleans up and reports success", func(t *testing.T) {
 		cmd, outBuf, _, _ := setupCmd(t)
 		setStdin(cmd, "y\n")

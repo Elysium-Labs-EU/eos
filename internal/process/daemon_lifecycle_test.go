@@ -1,24 +1,38 @@
 package process
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 )
 
+// spawnDisposableChild spawns a child and reaps it in the background as soon
+// as it exits, mirroring how a real standalone daemon (reparented to init on
+// fork) gets reaped immediately rather than lingering as a zombie visible to
+// signal(0) — StopStandaloneDaemon's exit-wait polls signal(0), which would
+// otherwise never observe an unreaped zombie as gone.
 func spawnDisposableChild(t *testing.T) *exec.Cmd {
 	t.Helper()
 	child := exec.Command("sleep", "30")
 	if err := child.Start(); err != nil {
 		t.Fatalf("failed to spawn disposable child: %v", err)
 	}
+	reaped := make(chan struct{})
+	go func() {
+		_ = child.Wait()
+		close(reaped)
+	}()
 	t.Cleanup(func() {
 		_ = child.Process.Kill()
-		_ = child.Wait()
+		<-reaped
 	})
 	return child
 }
@@ -106,6 +120,53 @@ func TestStopStandaloneDaemon_liveProcess(t *testing.T) {
 	}
 	if !stopped {
 		t.Error("expected stopped=true for a live process")
+	}
+}
+
+// spawnSIGTERMIgnoringChild starts a child that traps SIGTERM and ignores it,
+// so tests can exercise waitForProcessExit's timeout branch instead of only
+// ever hitting the fast-exit path. It blocks until the child's own "ready"
+// line confirms the trap is actually installed before returning — sending
+// SIGTERM any earlier races the shell's default (terminating) disposition
+// for TERM against the trap statement that's supposed to replace it.
+func spawnSIGTERMIgnoringChild(t *testing.T) *exec.Cmd {
+	t.Helper()
+	child := exec.Command("sh", "-c", "trap '' TERM; echo ready; sleep 30")
+	stdout, pipeErr := child.StdoutPipe()
+	if pipeErr != nil {
+		t.Fatalf("creating stdout pipe: %v", pipeErr)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatalf("failed to spawn SIGTERM-ignoring child: %v", err)
+	}
+	if _, err := bufio.NewReader(stdout).ReadString('\n'); err != nil {
+		t.Fatalf("waiting for child to install its TERM trap: %v", err)
+	}
+	reaped := make(chan struct{})
+	go func() {
+		_ = child.Wait()
+		close(reaped)
+	}()
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		<-reaped
+	})
+	return child
+}
+
+func TestWaitForProcessExit_timesOutWhenProcessIgnoresSIGTERM(t *testing.T) {
+	child := spawnSIGTERMIgnoringChild(t)
+
+	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("sending SIGTERM: %v", err)
+	}
+
+	err := waitForProcessExit(child.Process, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error when process ignores SIGTERM")
+	}
+	if !strings.Contains(err.Error(), "did not exit within") {
+		t.Errorf("expected timeout message, got: %v", err)
 	}
 }
 
