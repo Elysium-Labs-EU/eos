@@ -136,8 +136,8 @@ extract_tag_name() {
 # stdin, preferring the highest stable (non-prerelease) tag and only falling
 # back to the highest prerelease tag when no stable release exists. The
 # GitHub releases list is documented newest-first but has been observed
-# live to return a freshly published release out of list order (issue
-# #43), so list position can't be trusted. `sort -V` on the raw tag
+# live to return a freshly published release out of list order, so list
+# position can't be trusted. `sort -V` on the raw tag
 # list isn't a safe substitute either: it sorts a bare "v0.1.0" *before*
 # "v0.1.0-rc.9", the opposite of semver precedence. Pairing tag_name with
 # prerelease sidesteps both problems: both fields are release-level only
@@ -164,7 +164,7 @@ pick_latest_tag() {
 # scanning the full /releases list when that 404s — e.g. every release so
 # far is a prerelease. This avoids trusting /releases?per_page=1's list
 # order, which has been observed to place a freshly published release below
-# older ones (issue #43).
+# older ones.
 fetch_latest_version() {
     local tool="$1"
     local api_base url release_json
