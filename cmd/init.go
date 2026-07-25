@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const initSchemaHeader = "# yaml-language-server: $schema=https://github.com/Elysium-Labs-EU/eos/raw/branch/main/schemas/service.schema.json\n\n"
+const initSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n"
 
 const initLogSinkHint = "\n# Optional: route logs to a sink plugin.\n# log_sinks:\n#   - type: logbench\n#     options:\n#       project_id: \"your-project-id\"\n"
 
