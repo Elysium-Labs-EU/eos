@@ -64,6 +64,12 @@ func TestResolveLinuxDaemonConfig(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("EOS_SYSTEMD_TARGET_DIR", systemdDir+"/")
 		t.Setenv("EOS_OPENRC_INIT_DIR", t.TempDir()+"/")
+		// Clear a real INVOCATION_ID the test process may have inherited (e.g.
+		// GitHub Actions Linux runners are themselves launched under systemd) —
+		// otherwise config.IsUnderSystemd() sees "under systemd" and
+		// newDaemonConfig's isSystemdManaged && !underSystemd branch never
+		// fires, leaving cfg.Systemd nil.
+		t.Setenv("INVOCATION_ID", "")
 
 		cfg, err := resolveLinuxDaemonConfig(t.TempDir(), logCfg)
 		if err != nil {
