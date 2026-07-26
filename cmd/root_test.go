@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,6 +49,75 @@ func TestNewDaemonConfigOpenRC(t *testing.T) {
 		}
 		if cfg.Standalone == nil {
 			t.Fatal("expected Standalone config when not OpenRC-managed")
+		}
+	})
+}
+
+func TestResolveLinuxDaemonConfig(t *testing.T) {
+	logCfg := config.EosLogConfig{}
+
+	t.Run("systemd managed delegates to systemd", func(t *testing.T) {
+		systemdDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(systemdDir, config.SystemdTargetFileName), []byte("[Unit]"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("EOS_SYSTEMD_TARGET_DIR", systemdDir+"/")
+		t.Setenv("EOS_OPENRC_INIT_DIR", t.TempDir()+"/")
+
+		cfg, err := resolveLinuxDaemonConfig(t.TempDir(), logCfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Systemd == nil {
+			t.Fatal("expected Systemd config when a systemd unit is installed")
+		}
+		if cfg.Standalone != nil {
+			t.Error("expected Standalone to be nil when delegating to systemd")
+		}
+		if cfg.OpenRC != nil {
+			t.Error("expected OpenRC to be nil when systemd wins")
+		}
+	})
+
+	t.Run("openrc managed when systemd is not", func(t *testing.T) {
+		initDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(initDir, config.OpenRCTargetFileName), []byte("#!/sbin/openrc-run"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("EOS_SYSTEMD_TARGET_DIR", t.TempDir()+"/")
+		t.Setenv("EOS_OPENRC_INIT_DIR", initDir+"/")
+
+		cfg, err := resolveLinuxDaemonConfig(t.TempDir(), logCfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.OpenRC == nil {
+			t.Fatal("expected OpenRC config when an OpenRC init script is installed and systemd is not managed")
+		}
+		if cfg.Standalone != nil {
+			t.Error("expected Standalone to be nil when delegating to OpenRC")
+		}
+		if cfg.Systemd != nil {
+			t.Error("expected Systemd to be nil when OpenRC wins")
+		}
+	})
+
+	t.Run("neither managed runs standalone", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("EOS_SYSTEMD_TARGET_DIR", t.TempDir()+"/")
+		t.Setenv("EOS_OPENRC_INIT_DIR", t.TempDir()+"/")
+
+		cfg, err := resolveLinuxDaemonConfig(t.TempDir(), logCfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Standalone == nil {
+			t.Fatal("expected Standalone config when nothing is installed")
+		}
+		if cfg.Systemd != nil || cfg.OpenRC != nil {
+			t.Error("expected Systemd and OpenRC to both be nil when nothing is installed")
 		}
 	})
 }

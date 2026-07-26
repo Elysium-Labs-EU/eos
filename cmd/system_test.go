@@ -224,6 +224,43 @@ func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
 	}
 }
 
+// TestStartupCmdUserUnitFullPath exercises the userUnit=true branch: the user
+// bus prep call, the "user unit enabled" + linger hint messages, and the
+// --user systemctl args, none of which the system-unit tests above touch.
+func TestStartupCmdUserUnitFullPath(t *testing.T) {
+	tempDir := t.TempDir()
+	// A dir owned by this process's own uid satisfies isAccessibleDir, so
+	// ensureUserBusAvailable returns immediately instead of prompting to
+	// enable linger.
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	c, outBuf, _ := makeTestCmd(t)
+	// confirm unit file creation, confirm restart
+	setStdin(c, "y\ny\n")
+
+	var calls []string
+	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempDir, "eos.pid"),
+		SocketPath: filepath.Join(tempDir, "eos.sock"),
+	}, tempDir+"/", "eos.service", true, false, false,
+		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"systemctl --user daemon-reload", "systemctl --user enable eos", "systemctl --user start eos"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+	}
+
+	if !strings.Contains(outBuf.String(), "user unit enabled, eos will start on login") {
+		t.Errorf("expected 'user unit enabled' message, got: %s", outBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "loginctl enable-linger") {
+		t.Errorf("expected linger hint, got: %s", outBuf.String())
+	}
+}
+
 func TestRenderUnitFile_CapsCrashLoop(t *testing.T) {
 	// A version-ahead / rollback state database makes eos fail on every start.
 	// The generated unit must bound the restart burst so systemd eventually
@@ -586,6 +623,87 @@ func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
 	}
 	if _, statErr := os.Stat(plistFile); statErr != nil {
 		t.Error("expected plist file to be left in place when bootout fails fatally")
+	}
+}
+
+func TestPrepareSystemUnitDir_MissingDir(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+
+	if prepareSystemUnitDir(c, "/nonexistent/eos-test-dir", "/nonexistent/eos-test-dir/eos.service") {
+		t.Error("expected false for an inaccessible directory")
+	}
+	if !strings.Contains(errBuf.String(), "not accessible") {
+		t.Errorf("expected 'not accessible' in stderr, got: %s", errBuf.String())
+	}
+}
+
+func TestPrepareSystemUnitDir_NotWritable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: cannot test directory permission restrictions as root")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("errored during test setup: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+
+	c, _, errBuf := makeTestCmd(t)
+
+	if prepareSystemUnitDir(c, dir, filepath.Join(dir, "eos.service")) {
+		t.Error("expected false for a non-writable directory")
+	}
+	if !strings.Contains(errBuf.String(), "checking destination file") {
+		t.Errorf("expected writability error in stderr, got: %s", errBuf.String())
+	}
+}
+
+func TestPrepareSystemUnitDir_NoExistingUnit(t *testing.T) {
+	dir := t.TempDir()
+	c, outBuf, errBuf := makeTestCmd(t)
+
+	if !prepareSystemUnitDir(c, dir, filepath.Join(dir, "eos.service")) {
+		t.Error("expected true when no unit file exists yet")
+	}
+	if outBuf.Len() > 0 || errBuf.Len() > 0 {
+		t.Errorf("expected no output, got stdout=%q stderr=%q", outBuf.String(), errBuf.String())
+	}
+}
+
+func TestPrepareSystemUnitDir_ExistingUnitSameUser(t *testing.T) {
+	dir := t.TempDir()
+	effectiveUser, err := userutil.EffectiveUser()
+	if err != nil {
+		t.Fatalf("resolving effective user: %v", err)
+	}
+	unitPath := filepath.Join(dir, "eos.service")
+	if err := os.WriteFile(unitPath, []byte("[Service]\nUser="+effectiveUser.Username+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, outBuf, _ := makeTestCmd(t)
+
+	if !prepareSystemUnitDir(c, dir, unitPath) {
+		t.Error("expected true when the unit already belongs to the current user")
+	}
+	if !strings.Contains(outBuf.String(), "already exists for user") {
+		t.Errorf("expected 'already exists for user' message, got: %s", outBuf.String())
+	}
+}
+
+func TestPrepareSystemUnitDir_ExistingUnitDifferentUser(t *testing.T) {
+	dir := t.TempDir()
+	unitPath := filepath.Join(dir, "eos.service")
+	if err := os.WriteFile(unitPath, []byte("[Service]\nUser=some-other-eos-test-user\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, outBuf, _ := makeTestCmd(t)
+
+	if !prepareSystemUnitDir(c, dir, unitPath) {
+		t.Error("expected true even when the unit belongs to a different user (warns, doesn't block)")
+	}
+	if !strings.Contains(outBuf.String(), "transfer daemon ownership") {
+		t.Errorf("expected ownership-transfer warning, got: %s", outBuf.String())
 	}
 }
 

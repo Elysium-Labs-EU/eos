@@ -10,7 +10,6 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
-	"github.com/Elysium-Labs-EU/eos/internal/process"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
@@ -63,21 +62,14 @@ func renderOpenRCScript(installDir, user string) (string, error) {
 // per-user service manager equivalent to `systemctl --user`, so this always
 // installs a system-wide script and requires root.
 func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
-	runtime, err := detectRuntime()
-	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
-		return helpers.ErrCommandFailed
-	}
-	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
-	if runtime != "openrc" {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
-		return helpers.ErrCommandFailed
+	if err := ensureRuntime(cmd, verbose, detectRuntime, "openrc"); err != nil {
+		return err
 	}
 
 	fullTargetName := filepath.Join(initDir, initFile)
 	helpers.Debugf(cmd, verbose, "target init script: %s", fullTargetName)
 
-	if err = checkWritable(cmd, initDir); err != nil {
+	if err := checkWritable(cmd, initDir); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return helpers.ErrCommandFailed
@@ -96,9 +88,7 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 		return helpers.ErrCommandFailed
 	}
 
-	confirmed := flagYes || helpers.PromptConfirm(cmd, "create OpenRC init script? (y/n):")
-	if !confirmed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "init script creation canceled")
+	if !confirmOrDecline(cmd, flagYes, "create OpenRC init script? (y/n):", "init script creation canceled") {
 		return nil
 	}
 
@@ -118,26 +108,12 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 	helpers.Debugf(cmd, verbose, "rc-update output: %s", strings.TrimSpace(string(out)))
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
 
-	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon now? (y/n):")
-	if !confirmed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by OpenRC on next start")
+	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by OpenRC on next start") {
 		return nil
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-	if daemonConfig == nil {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
-	} else {
-		killed, killErr := process.StopStandaloneDaemon(daemonConfig.PIDFile, daemonConfig.SocketPath)
-		if killErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
-			return helpers.ErrCommandFailed
-		}
-		if !killed {
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
-		} else {
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
-		}
+	if stopErr := stopStandaloneForRestart(cmd, daemonConfig); stopErr != nil {
+		return stopErr
 	}
 
 	helpers.Debugf(cmd, verbose, "running: rc-service %s start", unit)
@@ -153,20 +129,11 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string
 
 // openrcUnstartupCmd is the OpenRC counterpart to unstartupCmd.
 func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
-	runtime, err := detectRuntime()
-	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
-		return helpers.ErrCommandFailed
-	}
-	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
-	if runtime != "openrc" {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
-		return helpers.ErrCommandFailed
+	if err := ensureRuntime(cmd, verbose, detectRuntime, "openrc"); err != nil {
+		return err
 	}
 
-	confirmed := flagYes || helpers.PromptConfirm(cmd, "remove OpenRC init script and disable eos on boot? (y/n):")
-	if !confirmed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
+	if !confirmOrDecline(cmd, flagYes, "remove OpenRC init script and disable eos on boot? (y/n):", "canceled") {
 		return nil
 	}
 
@@ -194,8 +161,7 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
 
-	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
-	if !confirmed {
+	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
 		return nil
 	}
 
