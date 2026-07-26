@@ -313,7 +313,7 @@ func TestPrintStatusTable_GetCatalogError(t *testing.T) {
 	}
 }
 
-func writeTestService(t *testing.T, dir, name string) {
+func writeStatusTestService(t *testing.T, dir, name string) {
 	t.Helper()
 	cfg := &types.ServiceConfig{Name: name, Command: "./start.sh"}
 	yamlData, err := yaml.Marshal(cfg)
@@ -330,7 +330,7 @@ func writeTestService(t *testing.T, dir, name string) {
 
 func TestPrintStatusTable_GetServiceInstanceError(t *testing.T) {
 	dir := t.TempDir()
-	writeTestService(t, dir, "svc")
+	writeStatusTestService(t, dir, "svc")
 
 	mgr := &mockMgr{
 		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
@@ -354,7 +354,7 @@ func TestPrintStatusTable_GetServiceInstanceError(t *testing.T) {
 
 func TestPrintStatusTable_GetProcessHistoryError(t *testing.T) {
 	dir := t.TempDir()
-	writeTestService(t, dir, "svc")
+	writeStatusTestService(t, dir, "svc")
 
 	mgr := &mockMgr{
 		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
