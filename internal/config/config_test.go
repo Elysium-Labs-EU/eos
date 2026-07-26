@@ -353,6 +353,101 @@ func TestEosConfig_Validate_BackoffMaxLessThanBase(t *testing.T) {
 	}
 }
 
+func TestEosConfig_Validate_Valid(t *testing.T) {
+	cfg := DefaultEosConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected default config to be valid, got: %v", err)
+	}
+}
+
+func TestEosConfig_Validate_MemoryThresholds(t *testing.T) {
+	cases := map[string]struct {
+		mutate  func(*EosConfig)
+		wantErr string
+	}{
+		"warning zero": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.WarningThreshold = 0 },
+			wantErr: "warningThreshold",
+		},
+		"warning at ceiling": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.WarningThreshold = 1 },
+			wantErr: "warningThreshold",
+		},
+		"soft restart zero": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.SoftRestartThreshold = 0 },
+			wantErr: "softRestartThreshold",
+		},
+		"soft restart at ceiling": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.SoftRestartThreshold = 1 },
+			wantErr: "softRestartThreshold",
+		},
+		"force restart zero": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.ForceRestartThreshold = 0 },
+			wantErr: "forceRestartThreshold",
+		},
+		"force restart at ceiling": {
+			mutate:  func(c *EosConfig) { c.Health.Memory.ForceRestartThreshold = 1 },
+			wantErr: "forceRestartThreshold",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultEosConfig()
+			tc.mutate(&cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to mention %q, got: %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestEosConfig_Validate_CheckIntervalNotPositive(t *testing.T) {
+	cfg := DefaultEosConfig()
+	cfg.Health.CheckIntervalMs = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error when checkIntervalMs is not positive, got nil")
+	}
+}
+
+func TestEosConfig_Validate_BackoffBaseNotPositive(t *testing.T) {
+	cfg := DefaultEosConfig()
+	cfg.Health.Backoff.BaseMs = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error when backoff.baseMs is not positive, got nil")
+	}
+}
+
+func TestEosConfig_Validate_SinkEmptyName(t *testing.T) {
+	cfg := DefaultEosConfig()
+	cfg.Sinks = map[string]types.LogSink{
+		"": {Type: "file"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for sink with empty name, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty name") {
+		t.Errorf("expected error to mention empty name, got: %v", err)
+	}
+}
+
+func TestEosConfig_Validate_TelemetryEnabledWithoutEndpoint(t *testing.T) {
+	cfg := DefaultEosConfig()
+	cfg.Telemetry.Enable = true
+	cfg.Telemetry.Endpoint = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error when telemetry is enabled without an endpoint, got nil")
+	}
+	if !strings.Contains(err.Error(), "telemetry") {
+		t.Errorf("expected error to mention telemetry, got: %v", err)
+	}
+}
+
 func TestLoadEosConfig_Sinks(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `sinks:

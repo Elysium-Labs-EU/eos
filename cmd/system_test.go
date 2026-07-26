@@ -1750,10 +1750,13 @@ func TestExtractServiceInstancesFromErrors(t *testing.T) {
 
 // mockMgr is a test-only manager.ServiceManager that delegates to optional func fields.
 type mockMgr struct {
-	getAllInstances func() ([]types.ServiceInstance, error)
-	stopSvc         func(string, time.Duration, time.Duration) (manager.StopServiceResult, error)
-	forceStop       func(string) (manager.StopServiceResult, error)
-	removeInstance  func(string) (bool, error)
+	getAllInstances      func() ([]types.ServiceInstance, error)
+	stopSvc              func(string, time.Duration, time.Duration) (manager.StopServiceResult, error)
+	forceStop            func(string) (manager.StopServiceResult, error)
+	removeInstance       func(string) (bool, error)
+	getAllCatalogEntries func() ([]types.ServiceCatalogEntry, error)
+	getServiceInstance   func(string) (*types.ServiceInstance, error)
+	getMostRecentProcess func(string) (*types.ProcessHistory, error)
 }
 
 func (m *mockMgr) GetAllServiceInstances() ([]types.ServiceInstance, error) {
@@ -1780,18 +1783,29 @@ func (m *mockMgr) RemoveServiceInstance(name string) (bool, error) {
 	}
 	return true, nil
 }
-func (m *mockMgr) GetServiceInstance(string) (*types.ServiceInstance, error) {
+func (m *mockMgr) GetServiceInstance(name string) (*types.ServiceInstance, error) {
+	if m.getServiceInstance != nil {
+		return m.getServiceInstance(name)
+	}
 	return &types.ServiceInstance{}, nil
 }
-func (m *mockMgr) AddServiceCatalogEntry(*types.ServiceCatalogEntry) error           { return nil }
-func (m *mockMgr) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) { return nil, nil }
+func (m *mockMgr) AddServiceCatalogEntry(*types.ServiceCatalogEntry) error { return nil }
+func (m *mockMgr) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
+	if m.getAllCatalogEntries != nil {
+		return m.getAllCatalogEntries()
+	}
+	return nil, nil
+}
 func (m *mockMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
 	return types.ServiceCatalogEntry{}, nil
 }
 func (m *mockMgr) IsServiceRegistered(string) (bool, error)               { return false, nil }
 func (m *mockMgr) RemoveServiceCatalogEntry(string) (bool, error)         { return false, nil }
 func (m *mockMgr) UpdateServiceCatalogEntry(string, string, string) error { return nil }
-func (m *mockMgr) GetMostRecentProcessHistoryEntry(string) (*types.ProcessHistory, error) {
+func (m *mockMgr) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
+	if m.getMostRecentProcess != nil {
+		return m.getMostRecentProcess(name)
+	}
 	return &types.ProcessHistory{}, nil
 }
 func (m *mockMgr) NewServiceLogFiles(string) (string, string, error) { return "", "", nil }
