@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -426,3 +427,181 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 // TODO: no test coverage for handleIncomingCommands, handleConnection, or
 // sendErrorResponse (all in daemon.go) — they need a real net.Listener/net.Conn
 // and aren't exercised elsewhere.
+
+// fakeServiceManager is a manager.ServiceManager test double: it embeds the
+// nil interface (any unoverridden method panics if called) and only
+// implements RestartService/StopService, the only methods handleRestartService
+// and handleStopService invoke.
+type fakeServiceManager struct {
+	manager.ServiceManager
+	restartFunc func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
+	stopFunc    func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
+}
+
+func (f *fakeServiceManager) RestartService(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
+	return f.restartFunc(name, gracePeriod, tickerPeriod)
+}
+
+func (f *fakeServiceManager) StopService(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
+	return f.stopFunc(name, gracePeriod, tickerPeriod)
+}
+
+func TestHandleRestartService(t *testing.T) {
+	t.Run("invalid JSON args", func(t *testing.T) {
+		resp := handleRestartService(&fakeServiceManager{}, json.RawMessage(`{invalid`))
+		if resp.Success {
+			t.Fatal("expected failure for invalid JSON")
+		}
+		if !strings.Contains(resp.Error, "invalid MethodRestartService args") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("invalid grace period", func(t *testing.T) {
+		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "not-a-duration", TickerPeriod: "1s"})
+		resp := handleRestartService(&fakeServiceManager{}, raw)
+		if resp.Success {
+			t.Fatal("expected failure for invalid grace period")
+		}
+		if !strings.Contains(resp.Error, "invalid grace period") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("invalid ticker period", func(t *testing.T) {
+		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "not-a-duration"})
+		resp := handleRestartService(&fakeServiceManager{}, raw)
+		if resp.Success {
+			t.Fatal("expected failure for invalid ticker period")
+		}
+		if !strings.Contains(resp.Error, "invalid ticker period") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("restart failed")
+		mgr := &fakeServiceManager{
+			restartFunc: func(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
+				return 0, wantErr
+			},
+		}
+		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "1s"})
+		resp := handleRestartService(mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.RestartService errors")
+		}
+		if resp.Error != wantErr.Error() {
+			t.Errorf("expected error %q, got %q", wantErr.Error(), resp.Error)
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{
+			restartFunc: func(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
+				if name != "svc" {
+					t.Errorf("expected name svc, got %s", name)
+				}
+				if gracePeriod != 2*time.Second {
+					t.Errorf("expected grace period 2s, got %s", gracePeriod)
+				}
+				if tickerPeriod != 500*time.Millisecond {
+					t.Errorf("expected ticker period 500ms, got %s", tickerPeriod)
+				}
+				return 4242, nil
+			},
+		}
+		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "2s", TickerPeriod: "500ms"})
+		resp := handleRestartService(mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]int
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got["pid"] != 4242 {
+			t.Errorf("expected pid 4242, got %d", got["pid"])
+		}
+	})
+}
+
+func TestHandleStopService(t *testing.T) {
+	t.Run("invalid JSON args", func(t *testing.T) {
+		resp := handleStopService(&fakeServiceManager{}, json.RawMessage(`{invalid`))
+		if resp.Success {
+			t.Fatal("expected failure for invalid JSON")
+		}
+		if !strings.Contains(resp.Error, "invalid MethodStopService args") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("invalid grace period", func(t *testing.T) {
+		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "not-a-duration", TickerPeriod: "1s"})
+		resp := handleStopService(&fakeServiceManager{}, raw)
+		if resp.Success {
+			t.Fatal("expected failure for invalid grace period")
+		}
+		if !strings.Contains(resp.Error, "invalid grace period") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("invalid ticker period", func(t *testing.T) {
+		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "not-a-duration"})
+		resp := handleStopService(&fakeServiceManager{}, raw)
+		if resp.Success {
+			t.Fatal("expected failure for invalid ticker period")
+		}
+		if !strings.Contains(resp.Error, "invalid ticker period") {
+			t.Errorf("unexpected error message: %s", resp.Error)
+		}
+	})
+
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("stop failed")
+		mgr := &fakeServiceManager{
+			stopFunc: func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
+				return manager.StopServiceResult{}, wantErr
+			},
+		}
+		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "1s"})
+		resp := handleStopService(mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.StopService errors")
+		}
+		if resp.Error != wantErr.Error() {
+			t.Errorf("expected error %q, got %q", wantErr.Error(), resp.Error)
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{
+			stopFunc: func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
+				if name != "svc" {
+					t.Errorf("expected name svc, got %s", name)
+				}
+				if gracePeriod != 2*time.Second {
+					t.Errorf("expected grace period 2s, got %s", gracePeriod)
+				}
+				if tickerPeriod != 500*time.Millisecond {
+					t.Errorf("expected ticker period 500ms, got %s", tickerPeriod)
+				}
+				return manager.StopServiceResult{Stopped: map[int]bool{4242: true}}, nil
+			},
+		}
+		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "2s", TickerPeriod: "500ms"})
+		resp := handleStopService(mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got manager.StopServiceResult
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if !got.Stopped[4242] {
+			t.Errorf("expected pid 4242 marked stopped, got %+v", got.Stopped)
+		}
+	})
+}
