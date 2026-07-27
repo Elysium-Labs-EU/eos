@@ -213,6 +213,51 @@ func TestNewSystemConfigHelper(t *testing.T) {
 	}
 }
 
+func TestNewSystemConfigHelper_CreateBaseDirError(t *testing.T) {
+	// A path whose parent is a regular file makes os.MkdirAll fail inside
+	// CreateBaseDir, without needing root privileges to reach that branch.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte(""), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("EOS_BASE_DIR", filepath.Join(notADir, "eos"))
+
+	_, _, _, _, err := newSystemConfig()
+	if err == nil {
+		t.Fatal("expected error when base dir cannot be created, got nil")
+	}
+}
+
+func TestNewSystemConfigHelper_LoadEosConfigError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.EosConfigFileName), []byte("health: [not: valid"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("EOS_BASE_DIR", dir)
+
+	_, _, _, _, err := newSystemConfig()
+	if err == nil {
+		t.Fatal("expected error for invalid eos config, got nil")
+	}
+	if !strings.Contains(err.Error(), "loading eos config") {
+		t.Errorf("expected 'loading eos config' in error, got: %v", err)
+	}
+}
+
+func TestNewSystemConfigHelper_TelemetryEnabledWithoutEndpoint(t *testing.T) {
+	t.Setenv("EOS_BASE_DIR", t.TempDir())
+	t.Setenv("EOS_OTEL_ENABLE", "true")
+	t.Setenv("EOS_OTEL_ENDPOINT", "")
+
+	_, _, _, _, err := newSystemConfig()
+	if err == nil {
+		t.Fatal("expected error when telemetry is enabled without an endpoint, got nil")
+	}
+	if !strings.Contains(err.Error(), "telemetry") {
+		t.Errorf("expected 'telemetry' in error, got: %v", err)
+	}
+}
+
 // func TestNewRootCmd(t *testing.T) {}
 // func TestGetManager(t *testing.T) {}
 // func TestExecute(t *testing.T) {}

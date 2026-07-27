@@ -113,6 +113,134 @@ func daemonIdentity() string {
 	return fmt.Sprintf("for user %s (base dir: %s)", identity.Username(), baseDir)
 }
 
+// statusServiceEntry is one row's worth of resolved display data for the
+// status table; buildStatusServiceEntry populates it from the manager and
+// on-disk config for a single registered service.
+type statusServiceEntry struct {
+	Name         string
+	Status       types.ServiceStatus
+	MemoryMb     string
+	CPU          string
+	Started      string
+	Uptime       string
+	Error        string
+	NextRestart  string
+	PGID         int
+	RestartCount int
+	Stale        bool
+}
+
+// buildStatusServiceEntry resolves a single registered service's display row.
+// ok is false when the service's own data couldn't be resolved (error already
+// printed to cmd); the caller should skip that service rather than render it.
+func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, regService types.ServiceCatalogEntry, checkInterval time.Duration, now time.Time) (statusServiceEntry, bool) {
+	regServiceName := regService.Name
+	configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
+	config, err := manager.LoadServiceConfig(configPath)
+	if err != nil {
+		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("loading service config: %v", err))
+		return statusServiceEntry{}, false
+	}
+	if config.Name != regServiceName {
+		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
+		cmd.PrintErrf("  %s %s %s\n",
+			ui.TextMuted.Render("run:"),
+			ui.TextCommand.Render("eos update <service-name> <new-path>"),
+			ui.TextMuted.Render("→ update the service"),
+		)
+	}
+
+	serviceInstance, err := mgr.GetServiceInstance(regServiceName)
+	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
+		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
+		return statusServiceEntry{}, false
+	}
+
+	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
+	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
+		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
+		return statusServiceEntry{}, false
+	}
+
+	entry := statusServiceEntry{
+		Name:     regServiceName,
+		Status:   helpers.DetermineServiceStatus(mostRecentProcess),
+		Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
+		MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
+		CPU:      helpers.DetermineProcessCPUHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
+	}
+	if mostRecentProcess != nil {
+		entry.PGID = mostRecentProcess.PGID
+		entry.Error = helpers.DetermineError(mostRecentProcess.Error)
+		entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
+		entry.CPU = helpers.DetermineProcessCPUHuman(mostRecentProcess.CPUPercent, entry.Status)
+		entry.Stale = helpers.IsProcessHistoryStale(mostRecentProcess, checkInterval, now)
+	}
+	if serviceInstance != nil && serviceInstance.StartedAt != nil {
+		entry.Started = humanize.Time(*serviceInstance.StartedAt)
+		entry.RestartCount = serviceInstance.RestartCount
+	}
+	switch {
+	case config.CronRestart == "":
+		entry.NextRestart = "-"
+	case serviceInstance != nil && serviceInstance.NextRestartAt != nil:
+		entry.NextRestart = humanize.Time(*serviceInstance.NextRestartAt)
+	default:
+		entry.NextRestart = "pending"
+	}
+	return entry, true
+}
+
+// buildStatusRows renders resolved service entries into table cells.
+// staleRows[i] tracks whether data row i has a stale process_history row, so
+// the table's StyleFunc (which only sees row/col indices) can dim it. A stale
+// row is one whose monitor stopped refreshing updated_at; this is independent
+// of the status column's daemon-liveness reading.
+func buildStatusRows(activeServices []statusServiceEntry) (rows [][]string, staleRows []bool) {
+	if len(activeServices) == 0 {
+		return [][]string{{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-"}}, []bool{false}
+	}
+
+	for i := range activeServices {
+		svc := &activeServices[i]
+		status := helpers.PrintStatus(svc.Status)
+		if svc.Stale {
+			status += " " + ui.TextMuted.Render("(stale)")
+		}
+		rows = append(rows, []string{
+			svc.Name,
+			status,
+			fmt.Sprintf("%d", svc.PGID),
+			svc.MemoryMb,
+			svc.CPU,
+			svc.Uptime,
+			fmt.Sprintf("%d", svc.RestartCount),
+			svc.Started,
+			svc.NextRestart,
+			svc.Error,
+		})
+		staleRows = append(staleRows, svc.Stale)
+	}
+	return rows, staleRows
+}
+
+// statusTableStyleFunc dims stale rows, styles the header, and alternates
+// even/odd row backgrounds otherwise.
+func statusTableStyleFunc(staleRows []bool) func(row, col int) lipgloss.Style {
+	return func(row, col int) lipgloss.Style {
+		if row == table.HeaderRow {
+			return ui.TableHeaderStyle
+		}
+		if row >= 0 && row < len(staleRows) && staleRows[row] {
+			return ui.TableStaleRowStyle
+		}
+		if row%2 == 0 {
+			return ui.TableEvenRowStyle
+		}
+		return ui.TableOddRowStyle
+	}
+}
+
 func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInterval time.Duration) {
 	registeredServices, err := mgr.GetAllServiceCatalogEntries()
 	if err != nil {
@@ -120,138 +248,28 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInter
 		return
 	}
 
-	numberOfRegisteredServices := len(registeredServices)
-
-	if numberOfRegisteredServices == 0 {
+	if len(registeredServices) == 0 {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no services are registered "+daemonIdentity())
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos add <path>") + ui.TextMuted.Render(" to register a service") + "\n")
 		return
 	}
 
-	type StatusServiceEntry struct {
-		Name         string
-		Status       types.ServiceStatus
-		MemoryMb     string
-		CPU          string
-		Started      string
-		Uptime       string
-		Error        string
-		NextRestart  string
-		PGID         int
-		RestartCount int
-		Stale        bool
-	}
-	var activeServices []StatusServiceEntry
+	var activeServices []statusServiceEntry
 	now := time.Now()
-
 	for _, regService := range registeredServices {
-		configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
-		config, err := manager.LoadServiceConfig(configPath)
-		regServiceName := regService.Name
-
-		if err != nil {
-			cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("loading service config: %v", err))
+		entry, ok := buildStatusServiceEntry(cmd, mgr, regService, checkInterval, now)
+		if !ok {
 			continue
-		}
-		if config.Name != regServiceName {
-			cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
-			cmd.PrintErrf("  %s %s %s\n",
-				ui.TextMuted.Render("run:"),
-				ui.TextCommand.Render("eos update <service-name> <new-path>"),
-				ui.TextMuted.Render("→ update the service"),
-			)
-		}
-
-		serviceInstance, err := mgr.GetServiceInstance(regServiceName)
-
-		if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-			cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
-			continue
-		}
-
-		mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
-		if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-			cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
-			continue
-		}
-
-		entry := StatusServiceEntry{
-			Name:     regServiceName,
-			Status:   helpers.DetermineServiceStatus(mostRecentProcess),
-			Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
-			MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
-			CPU:      helpers.DetermineProcessCPUHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
-		}
-		if mostRecentProcess != nil {
-			entry.PGID = mostRecentProcess.PGID
-			entry.Error = helpers.DetermineError(mostRecentProcess.Error)
-			entry.MemoryMb = helpers.DetermineProcessMemoryInMbHuman(mostRecentProcess.RssMemoryKb, entry.Status)
-			entry.CPU = helpers.DetermineProcessCPUHuman(mostRecentProcess.CPUPercent, entry.Status)
-			entry.Stale = helpers.IsProcessHistoryStale(mostRecentProcess, checkInterval, now)
-		}
-		if serviceInstance != nil && serviceInstance.StartedAt != nil {
-			entry.Started = humanize.Time(*serviceInstance.StartedAt)
-			entry.RestartCount = serviceInstance.RestartCount
-		}
-		switch {
-		case config.CronRestart == "":
-			entry.NextRestart = "-"
-		case serviceInstance != nil && serviceInstance.NextRestartAt != nil:
-			entry.NextRestart = humanize.Time(*serviceInstance.NextRestartAt)
-		default:
-			entry.NextRestart = "pending"
 		}
 		activeServices = append(activeServices, entry)
 	}
 
-	rows := [][]string{}
-	// staleRows[i] tracks whether data row i has a stale process_history row,
-	// so the StyleFunc (which only sees row/col indices) can dim it. A stale
-	// row is one whose monitor stopped refreshing updated_at; this is
-	// independent of the status column's daemon-liveness reading.
-	staleRows := []bool{}
-
-	if len(activeServices) == 0 {
-		rows = append(rows, []string{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-"})
-		staleRows = append(staleRows, false)
-	} else {
-		for i := range activeServices {
-			svc := &activeServices[i]
-			status := helpers.PrintStatus(svc.Status)
-			if svc.Stale {
-				status += " " + ui.TextMuted.Render("(stale)")
-			}
-			rows = append(rows, []string{
-				svc.Name,
-				status,
-				fmt.Sprintf("%d", svc.PGID),
-				svc.MemoryMb,
-				svc.CPU,
-				svc.Uptime,
-				fmt.Sprintf("%d", svc.RestartCount),
-				svc.Started,
-				svc.NextRestart,
-				svc.Error,
-			})
-			staleRows = append(staleRows, svc.Stale)
-		}
-	}
+	rows, staleRows := buildStatusRows(activeServices)
 
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(ui.TableBorderColor)).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return ui.TableHeaderStyle
-			}
-			if row >= 0 && row < len(staleRows) && staleRows[row] {
-				return ui.TableStaleRowStyle
-			}
-			if row%2 == 0 {
-				return ui.TableEvenRowStyle
-			}
-			return ui.TableOddRowStyle
-		}).
+		StyleFunc(statusTableStyleFunc(staleRows)).
 		Headers("name", "status", "pgid", "memory", "cpu", "uptime", "restarts", "started", "next restart", "error").
 		Rows(rows...)
 

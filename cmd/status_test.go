@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -291,6 +292,262 @@ func TestStatusHelpText(t *testing.T) {
 	}
 	if !strings.Contains(output, "eos status") {
 		t.Errorf("Expected status help to show usage, got: %s", output)
+	}
+}
+
+func TestPrintStatusTable_GetCatalogError(t *testing.T) {
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return nil, fmt.Errorf("catalog unavailable")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	printStatusTable(cmd, mgr, time.Second)
+
+	if !strings.Contains(errBuf.String(), "getting registered services") {
+		t.Errorf("expected catalog error message, got: %s", errBuf.String())
+	}
+}
+
+func writeStatusTestService(t *testing.T, dir, name string) {
+	t.Helper()
+	cfg := &types.ServiceConfig{Name: name, Command: "./start.sh"}
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal service config: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("write service.yaml: %v", err)
+	}
+}
+
+func TestPrintStatusTable_GetServiceInstanceError(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir, "svc")
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, fmt.Errorf("instance lookup failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	printStatusTable(cmd, mgr, time.Second)
+
+	if !strings.Contains(errBuf.String(), "getting service instance") {
+		t.Errorf("expected service instance error message, got: %s", errBuf.String())
+	}
+}
+
+func TestPrintStatusTable_GetProcessHistoryError(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir, "svc")
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, manager.ErrServiceNotRunning
+		},
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return nil, fmt.Errorf("process history lookup failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	printStatusTable(cmd, mgr, time.Second)
+
+	if !strings.Contains(errBuf.String(), "getting process history") {
+		t.Errorf("expected process history error message, got: %s", errBuf.String())
+	}
+}
+
+func TestPrintStatusTable_CronRestartPending(t *testing.T) {
+	cmd, outBuf, _, tempDir := setupCmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithCronRestart("* * * * *"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err := os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v", err)
+	}
+
+	cmd.SetArgs([]string{"status"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status should not return an error, got: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, "pending") {
+		t.Errorf("expected 'pending' next-restart for a cron-restart service with no scheduled instance, got: %s", output)
+	}
+}
+
+func TestPrintStatusTable_StaleRow(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
+	if err = os.WriteFile(fullPathScript, []byte("#!/bin/bash\nexec sleep 3600"), 0755); err != nil {
+		t.Fatalf("Failed to write the start script file, got: %v", err)
+	}
+
+	var setupBuf bytes.Buffer
+	cmd.SetOut(&setupBuf)
+	cmd.SetErr(&setupBuf)
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"run", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run should not return an error, got: %v", err)
+	}
+
+	// updated_at is only populated by an explicit update, always stamped with
+	// the current time; sleep afterward so it reads as stale against a
+	// deliberately tiny checkInterval, without needing to wait out a real
+	// health-check interval.
+	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(testFile.Name)
+	if err != nil {
+		t.Fatalf("failed to get process history entry: %v", err)
+	}
+	runningState := types.ProcessStateRunning
+	if err := db.UpdateProcessHistoryEntry(t.Context(), mostRecent.PGID, database.ProcessHistoryUpdate{State: &runningState}); err != nil {
+		t.Fatalf("failed to mark process as running: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	printStatusTable(cmd, mgr, time.Millisecond)
+
+	output := outBuf.String()
+	if !strings.Contains(output, "(stale)") {
+		t.Errorf("expected stale-row marker in output, got: %s", output)
+	}
+}
+
+func TestPrintStatusTable_NextRestartScheduledAndOddRow(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	var setupBuf bytes.Buffer
+	cmd.SetOut(&setupBuf)
+	cmd.SetErr(&setupBuf)
+
+	// "svc-a" sorts before "svc-b" (GetAllServiceCatalogEntries orders by
+	// name), so having two registered services exercises both the even- and
+	// odd-row table styles.
+	svcA := testutil.NewTestServiceConfigFile(t, testutil.WithName("svc-a"), testutil.WithoutRuntime())
+	svcADir := filepath.Join(tempDir, "svc-a")
+	yamlA, err := yaml.Marshal(svcA)
+	if err != nil {
+		t.Fatalf("marshal svc-a config: %v", err)
+	}
+	if err = os.MkdirAll(svcADir, 0755); err != nil {
+		t.Fatalf("mkdir svc-a: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(svcADir, "service.yaml"), yamlA, 0644); err != nil {
+		t.Fatalf("write svc-a service.yaml: %v", err)
+	}
+	cmd.SetArgs([]string{"add", filepath.Join(svcADir, "service.yaml")})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add svc-a should not return an error, got: %v", err)
+	}
+
+	svcB := testutil.NewTestServiceConfigFile(t, testutil.WithName("svc-b"), testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime(), testutil.WithCronRestart("0 0 * * *"))
+	svcBDir := filepath.Join(tempDir, "svc-b")
+	yamlB, err := yaml.Marshal(svcB)
+	if err != nil {
+		t.Fatalf("marshal svc-b config: %v", err)
+	}
+	if err = os.MkdirAll(svcBDir, 0755); err != nil {
+		t.Fatalf("mkdir svc-b: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(svcBDir, "service.yaml"), yamlB, 0644); err != nil {
+		t.Fatalf("write svc-b service.yaml: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(svcBDir, "start-script.sh"), []byte("#!/bin/bash\nexec sleep 3600"), 0755); err != nil {
+		t.Fatalf("write svc-b start script: %v", err)
+	}
+	cmd.SetArgs([]string{"add", filepath.Join(svcBDir, "service.yaml")})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add svc-b should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"run", "svc-b"})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run svc-b should not return an error, got: %v", err)
+	}
+
+	nextRestart := time.Now().Add(time.Hour)
+	if err = db.UpdateServiceInstance(t.Context(), "svc-b", database.ServiceInstanceUpdate{NextRestartAt: &nextRestart}); err != nil {
+		t.Fatalf("failed to schedule next restart: %v", err)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	printStatusTable(cmd, mgr, time.Second)
+
+	output := outBuf.String()
+	if !strings.Contains(output, "svc-a") || !strings.Contains(output, "svc-b") {
+		t.Fatalf("expected both services in status table, got: %s", output)
+	}
+	if strings.Contains(output, "pending") {
+		t.Errorf("expected a humanized next-restart time, not 'pending', got: %s", output)
 	}
 }
 

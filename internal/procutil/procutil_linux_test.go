@@ -27,6 +27,7 @@ func TestParseCPUFields_Malformed(t *testing.T) {
 		"too few fields":    "S 1 4242",
 		"non-numeric pgrp":  "S 1 x 4242 0 -1 0 0 0 0 0 100 25 0",
 		"non-numeric utime": "S 1 4242 4242 0 -1 0 0 0 0 0 bad 25 0",
+		"non-numeric stime": "S 1 4242 4242 0 -1 0 0 0 0 0 100 bad 0",
 	}
 	for name, line := range cases {
 		t.Run(name, func(t *testing.T) {

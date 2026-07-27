@@ -925,6 +925,55 @@ func TestUpdateProcessHistoryEntriesAsUnknown(t *testing.T) {
 	}
 }
 
+func TestParseEnvFile_NoEnvFileConfigured(t *testing.T) {
+	config := &types.ServiceConfig{Name: "svc"}
+	vars, err := ParseEnvFile(config, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vars != nil {
+		t.Errorf("expected nil vars when EnvFile is unset, got %v", vars)
+	}
+}
+
+func TestParseEnvFile_PathEscapesServiceDir(t *testing.T) {
+	config := &types.ServiceConfig{Name: "svc", EnvFile: "../outside.env"}
+	if _, err := ParseEnvFile(config, t.TempDir()); err == nil {
+		t.Fatal("expected error for env file path escaping service directory")
+	}
+}
+
+func TestParseEnvFile_MissingFile(t *testing.T) {
+	config := &types.ServiceConfig{Name: "svc", EnvFile: "missing.env"}
+	if _, err := ParseEnvFile(config, t.TempDir()); err == nil {
+		t.Fatal("expected error reading a nonexistent env file")
+	}
+}
+
+func TestParseEnvFile_ParsesCommentsBlanksAndOverrides(t *testing.T) {
+	dir := t.TempDir()
+	contents := "# comment\n\n  \nFOO=bar\nno-equals-sign\nFOO=baz\nBAR=qux\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(contents), 0644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	config := &types.ServiceConfig{Name: "svc", EnvFile: ".env"}
+	vars, err := ParseEnvFile(config, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"FOO=baz", "BAR=qux"}
+	if len(vars) != len(want) {
+		t.Fatalf("vars = %v, want %v", vars, want)
+	}
+	for i, w := range want {
+		if vars[i] != w {
+			t.Errorf("vars[%d] = %q, want %q", i, vars[i], w)
+		}
+	}
+}
+
 func TestValidateRuntimePath_nonExistent(t *testing.T) {
 	rt := types.Runtime{Type: "bun", Path: "/nonexistent/path/99999"}
 	if err := ValidateRuntimePath(rt); err == nil {
@@ -979,6 +1028,82 @@ func TestValidateRuntimePath_unknownRuntime(t *testing.T) {
 	rt := types.Runtime{Type: "python", Path: t.TempDir()}
 	if err := ValidateRuntimePath(rt); err != nil {
 		t.Errorf("expected nil for unknown runtime, got: %v", err)
+	}
+}
+
+func TestValidateRuntimePath_relativePathJoinsHomeDir(t *testing.T) {
+	// A relative runtime path is resolved against the user's home directory;
+	// exercise that branch with a path that won't exist there, without writing
+	// anything under the real home directory.
+	rt := types.Runtime{Type: "bun", Path: "eos-test-runtime-path-does-not-exist-99999"}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error for a relative path that doesn't exist under $HOME")
+	}
+}
+
+func TestValidateRuntimePath_bun_binaryIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "bun"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rt := types.Runtime{Type: "bun", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when bun binary path is a directory")
+	}
+}
+
+func TestValidateRuntimePath_bun_notExecutable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bun"), []byte("#!/bin/sh"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rt := types.Runtime{Type: "bun", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when bun binary is not executable")
+	}
+}
+
+func TestValidateRuntimePath_deno_binaryIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "deno"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rt := types.Runtime{Type: "deno", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when deno binary path is a directory")
+	}
+}
+
+func TestValidateRuntimePath_deno_notExecutable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "deno"), []byte("#!/bin/sh"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rt := types.Runtime{Type: "deno", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when deno binary is not executable")
+	}
+}
+
+func TestValidateRuntimePath_node_binaryIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "node"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rt := types.Runtime{Type: "node", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when node binary path is a directory")
+	}
+}
+
+func TestValidateRuntimePath_node_notExecutable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node"), []byte("#!/bin/sh"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rt := types.Runtime{Type: "node", Path: dir}
+	if err := ValidateRuntimePath(rt); err == nil {
+		t.Fatal("expected error when node binary is not executable")
 	}
 }
 
