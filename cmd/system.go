@@ -1738,6 +1738,16 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 	if err != nil {
 		return nil, err
 	}
+	if includePre {
+		// --pre wants the newest release regardless of stable/prerelease
+		// status; do not route through pickLatestRelease, whose
+		// stable-preferring logic would discard a newer prerelease
+		// whenever any stable release exists (Elysium-Labs-EU/eos#114).
+		if best := highestByTag(releases, true); best != nil {
+			return best, nil
+		}
+		return nil, fmt.Errorf("no releases found")
+	}
 	return pickLatestRelease(releases)
 }
 

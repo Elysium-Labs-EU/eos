@@ -1310,6 +1310,44 @@ func TestFetchLatestRelease_preOutOfOrder(t *testing.T) {
 	}
 }
 
+// TestFetchLatestRelease_prePrefersPrereleaseOverLowerStable guards against
+// Elysium-Labs-EU/eos#114: with --pre, a newer prerelease must win even when a
+// lower-versioned stable release exists. The stable-preferring pickLatestRelease
+// logic must not run on the --pre path.
+func TestFetchLatestRelease_prePrefersPrereleaseOverLowerStable(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v0.0.11"},
+			{TagName: "v0.0.12-rc.9", Prerelease: true},
+			{TagName: "v0.0.12-rc.7", Prerelease: true},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v0.0.12-rc.9" {
+		t.Errorf("got tag %q, want v0.0.12-rc.9 (highest prerelease despite stable v0.0.11 present)", rel.TagName)
+	}
+}
+
+// TestPickLatestRelease_prefersStableOverPrerelease pins the non---pre picker:
+// with a stable release present it must return the stable one, leaving the
+// all-prerelease 404 fallback (Elysium-Labs-EU/argus#74) as the only path that
+// selects a prerelease.
+func TestPickLatestRelease_prefersStableOverPrerelease(t *testing.T) {
+	rel, err := pickLatestRelease([]Release{
+		{TagName: "v0.0.11"},
+		{TagName: "v0.0.12-rc.9", Prerelease: true},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v0.0.11" {
+		t.Errorf("got tag %q, want v0.0.11 (stable preferred on the non-pre path)", rel.TagName)
+	}
+}
+
 // TestFetchLatestRelease_allPrereleaseFallback guards against
 // Elysium-Labs-EU/argus#74: when every release is a prerelease,
 // /releases/latest 404s and the plain (non---pre) path must fall back to the
