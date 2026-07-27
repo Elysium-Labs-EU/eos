@@ -867,20 +867,66 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 	return fmt.Errorf("user bus still unavailable after enabling linger — a fresh login may be required")
 }
 
-// ensureSystemdRuntime verifies the host is running systemd, printing and
-// returning ErrCommandFailed otherwise. Shared by the systemd startup paths.
-func ensureSystemdRuntime(cmd *cobra.Command, verbose bool, detectRuntime func() (string, error)) error {
+// ensureRuntime verifies the host is running the given init system (want),
+// printing and returning ErrCommandFailed otherwise. Shared by the systemd
+// and OpenRC startup/unstartup paths.
+func ensureRuntime(cmd *cobra.Command, verbose bool, detectRuntime func() (string, error), want string) error {
 	runtime, err := detectRuntime()
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
-	if runtime != "systemd" {
+	if runtime != want {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
 		return helpers.ErrCommandFailed
 	}
 	return nil
+}
+
+// confirmOrDecline prompts unless flagYes is set. When declined it prints
+// declineMsg (unless empty) and reports the decline so callers can return
+// early.
+func confirmOrDecline(cmd *cobra.Command, flagYes bool, prompt, declineMsg string) bool {
+	if flagYes || helpers.PromptConfirm(cmd, prompt) {
+		return true
+	}
+	if declineMsg != "" {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), declineMsg)
+	}
+	return false
+}
+
+// resolveSystemdUnitFile resolves the invoking user and renders the systemd
+// unit file content for them, printing and wrapping errors from either step.
+func resolveSystemdUnitFile(cmd *cobra.Command, verbose bool, installDir string, userUnit bool) (*user.User, string, error) {
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+	if effectiveUserErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		return nil, "", helpers.ErrCommandFailed
+	}
+	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
+
+	unitFile, err := renderUnitFile(installDir, effectiveUser.Username, userUnit)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering unit file: %v", err))
+		return nil, "", helpers.ErrCommandFailed
+	}
+	return effectiveUser, unitFile, nil
+}
+
+// prepareUserBusIfNeeded resolves the invoking user and prepares their
+// systemd user bus, but only when userUnit is set — a no-op for system units.
+func prepareUserBusIfNeeded(ctx context.Context, cmd *cobra.Command, verbose, userUnit bool, run runCmdFn) error {
+	if !userUnit {
+		return nil
+	}
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+	if effectiveUserErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		return helpers.ErrCommandFailed
+	}
+	return prepareUserBus(ctx, cmd, verbose, effectiveUser, run)
 }
 
 // ensureSystemdUnitDir prepares the directory that will hold the unit file:
@@ -958,7 +1004,7 @@ func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.Standalon
 }
 
 func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
-	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
+	if err := ensureRuntime(cmd, verbose, detectRuntime, "systemd"); err != nil {
 		return err
 	}
 
@@ -969,23 +1015,14 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		return err
 	}
 
-	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
-	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
-		return helpers.ErrCommandFailed
-	}
-	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
-
-	unitFile, err := renderUnitFile(installDir, effectiveUser.Username, userUnit)
+	effectiveUser, unitFile, err := resolveSystemdUnitFile(cmd, verbose, installDir, userUnit)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering unit file: %v", err))
-		return helpers.ErrCommandFailed
+		return err
 	}
 
 	unitKind := unitScope(userUnit) + " file"
 
-	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", unitKind)) {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" creation canceled")
+	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("create %s? (y/n):", unitKind), unitKind+" creation canceled") {
 		return nil
 	}
 
@@ -1013,8 +1050,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
 
-	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by systemd on next start")
+	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by systemd on next start") {
 		return nil
 	}
 
@@ -1069,26 +1105,18 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, verbos
 }
 
 func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
-	if err := ensureSystemdRuntime(cmd, verbose, detectRuntime); err != nil {
+	if err := ensureRuntime(cmd, verbose, detectRuntime, "systemd"); err != nil {
 		return err
 	}
 
 	unitKind := unitScope(userUnit)
 
-	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind)) {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
+	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind), "canceled") {
 		return nil
 	}
 
-	if userUnit {
-		effectiveUser, effectiveUserErr := userutil.EffectiveUser()
-		if effectiveUserErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
-			return helpers.ErrCommandFailed
-		}
-		if err := prepareUserBus(ctx, cmd, verbose, effectiveUser, run); err != nil {
-			return err
-		}
+	if err := prepareUserBusIfNeeded(ctx, cmd, verbose, userUnit, run); err != nil {
+		return err
 	}
 
 	unit := unitName(daemonConfig.SystemdTargetFileName)
@@ -1101,7 +1129,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):") {
+	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
 		return nil
 	}
 
@@ -1267,6 +1295,61 @@ func resolveLaunchdUID(cmd *cobra.Command, userAgent bool, effectiveUser *user.U
 	return int(effectiveUID), nil
 }
 
+// resolveUnstartupLaunchdUID resolves the invoking user (only when userAgent
+// is set) and returns the uid used to build the launchctl target domain.
+func resolveUnstartupLaunchdUID(cmd *cobra.Command, userAgent bool) (int, error) {
+	if !userAgent {
+		return os.Getuid(), nil
+	}
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+	if effectiveUserErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		return 0, helpers.ErrCommandFailed
+	}
+	return resolveLaunchdUID(cmd, userAgent, effectiveUser)
+}
+
+// resolveLaunchdPlistFile resolves the invoking user and renders the launchd
+// plist file content for them, printing and wrapping errors from either step.
+func resolveLaunchdPlistFile(cmd *cobra.Command, verbose bool, installDir, label string, userAgent bool) (*user.User, string, error) {
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+	if effectiveUserErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		return nil, "", helpers.ErrCommandFailed
+	}
+	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
+
+	plistFile, err := renderPlistFile(installDir, effectiveUser.Username, label, userAgent)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering plist file: %v", err))
+		return nil, "", helpers.ErrCommandFailed
+	}
+	return effectiveUser, plistFile, nil
+}
+
+// launchdBootout stops and unloads the launchd job, treating "not loaded"
+// (exit code 3 — "No such process") as already-stopped rather than fatal:
+// unlike "systemctl stop" (idempotent, exits 0 on an already-stopped unit),
+// "launchctl bootout" exits 3 when the job isn't currently loaded — verified
+// empirically. Without this, "eos system unstartup" would hard-fail and never
+// remove the plist whenever the job happened to already be stopped.
+func launchdBootout(ctx context.Context, cmd *cobra.Command, verbose bool, scopeKind, target string, run runCmdFn) error {
+	helpers.Debugf(cmd, verbose, "running: launchctl bootout %s", target)
+	out, err := run(ctx, "launchctl", "bootout", target)
+	if err == nil {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), scopeKind+" stopped and unloaded")
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+		helpers.Debugf(cmd, verbose, "launchctl bootout: job was not loaded")
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(scopeKind+" was not loaded"))
+		return nil
+	}
+	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", scopeKind, string(out)))
+	return helpers.ErrCommandFailed
+}
+
 // bootstrapLaunchdJob bootstraps and enables the plist job. bootout is
 // attempted first (best-effort) so re-running is idempotent.
 func bootstrapLaunchdJob(ctx context.Context, cmd *cobra.Command, verbose bool, domain, target, fullTargetName string, run runCmdFn) error {
@@ -1298,24 +1381,15 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 		return err
 	}
 
-	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
-	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
-		return helpers.ErrCommandFailed
-	}
-	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
-
 	label := launchdLabel(plistFileName)
-	plistFile, err := renderPlistFile(installDir, effectiveUser.Username, label, userAgent)
+	effectiveUser, plistFile, err := resolveLaunchdPlistFile(cmd, verbose, installDir, label, userAgent)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering plist file: %v", err))
-		return helpers.ErrCommandFailed
+		return err
 	}
 
 	plistKind := launchdScope(userAgent) + " file"
 
-	if !flagYes && !helpers.PromptConfirm(cmd, fmt.Sprintf("create %s? (y/n):", plistKind)) {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), plistKind+" creation canceled")
+	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("create %s? (y/n):", plistKind), plistKind+" creation canceled") {
 		return nil
 	}
 
@@ -1342,8 +1416,7 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
 	}
 
-	if !flagYes && !helpers.PromptConfirm(cmd, "restart daemon now? (y/n):") {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon will be managed by launchd on next start")
+	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by launchd on next start") {
 		return nil
 	}
 
@@ -1369,59 +1442,29 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose, flagYes bool, run runCmdFn, identity userutil.Identity) error {
 	scopeKind := launchdScope(userAgent)
 
-	confirmed := flagYes || helpers.PromptConfirm(cmd, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind))
-	if !confirmed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "canceled")
+	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind), "canceled") {
 		return nil
 	}
 
-	uid := os.Getuid()
-	if userAgent {
-		effectiveUser, effectiveUserErr := userutil.EffectiveUser()
-		if effectiveUserErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
-			return helpers.ErrCommandFailed
-		}
-		effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
-		if credErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
-			return helpers.ErrCommandFailed
-		}
-		uid = int(effectiveUID)
+	uid, err := resolveUnstartupLaunchdUID(cmd, userAgent)
+	if err != nil {
+		return err
 	}
 	domain := launchdDomain(userAgent, uid)
 	label := launchdLabel(daemonConfig.LaunchdPlistFileName)
 	target := domain + "/" + label
 
-	helpers.Debugf(cmd, verbose, "running: launchctl bootout %s", target)
-	out, err := run(ctx, "launchctl", "bootout", target)
-	if err != nil {
-		// Unlike "systemctl stop" (idempotent, exits 0 on an already-stopped unit),
-		// "launchctl bootout" exits 3 ("No such process") when the job isn't currently
-		// loaded — verified empirically. Treat that as already-stopped rather than a
-		// fatal error, or "eos system unstartup" would hard-fail and never remove the
-		// plist whenever the job happened to already be stopped.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
-			helpers.Debugf(cmd, verbose, "launchctl bootout: job was not loaded")
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(scopeKind+" was not loaded"))
-		} else {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", scopeKind, string(out)))
-			return helpers.ErrCommandFailed
-		}
-	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), scopeKind+" stopped and unloaded")
+	if err := launchdBootout(ctx, cmd, verbose, scopeKind, target, run); err != nil {
+		return err
 	}
 
-	err = os.Remove(filepath.Join(daemonConfig.LaunchdTargetDir, daemonConfig.LaunchdPlistFileName))
-	if err != nil {
+	if err := os.Remove(filepath.Join(daemonConfig.LaunchdTargetDir, daemonConfig.LaunchdPlistFileName)); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing plist file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	confirmed = flagYes || helpers.PromptConfirm(cmd, "restart daemon standalone? (y/n):")
-	if !confirmed {
+	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
 		return nil
 	}
 
