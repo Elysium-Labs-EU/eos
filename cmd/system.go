@@ -1637,7 +1637,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 	if killErr != nil {
 		// killed=true but the exit-wait timed out: SIGTERM was delivered but we
 		// couldn't confirm the old process actually exited. Bailing out here
-		// would reproduce issue #73's original symptom (binary updated, no
+		// would reproduce the original symptom (binary updated, no
 		// daemon running, nothing attempted to fix it) — so still try Start()
 		// rather than giving up outright.
 		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("old daemon did not confirm exit (%v) — attempting to start the new daemon anyway", killErr))
@@ -1722,7 +1722,7 @@ var errReleaseNotFound = errors.New("release not found")
 // list (see pickLatestRelease) only when /releases/latest 404s because every
 // release is a prerelease. The --pre path always walks the full list since
 // GitHub does not expose a "latest including prereleases" endpoint and the
-// list is not guaranteed to be sorted (Elysium-Labs-EU/argus#74).
+// list is not guaranteed to be sorted.
 func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) {
 	if !includePre {
 		release, err := fetchLatestStableRelease(ctx)
@@ -1742,7 +1742,7 @@ func fetchLatestRelease(ctx context.Context, includePre bool) (*Release, error) 
 		// --pre wants the newest release regardless of stable/prerelease
 		// status; do not route through pickLatestRelease, whose
 		// stable-preferring logic would discard a newer prerelease
-		// whenever any stable release exists (Elysium-Labs-EU/eos#114).
+		// whenever any stable release exists.
 		if best := highestByTag(releases, true); best != nil {
 			return best, nil
 		}
@@ -1813,7 +1813,7 @@ func fetchAllReleases(ctx context.Context) ([]Release, error) {
 
 // pickLatestRelease returns the highest stable release by semver, falling
 // back to the highest prerelease only when no stable release exists in the
-// list (Elysium-Labs-EU/argus#74).
+// list.
 func pickLatestRelease(releases []Release) (*Release, error) {
 	if best := highestByTag(releases, false); best != nil {
 		return best, nil
