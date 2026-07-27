@@ -883,6 +883,8 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return handleStopService(mgr, request.Args)
 	case types.MethodForceStopService:
 		return handleForceStopService(mgr, request.Args)
+	case types.MethodReloadService:
+		return handleReloadService(mgr, request.Args)
 	case types.MethodAddServiceCatalogEntry:
 		return handleAddServiceCatalogEntry(mgr, request.Args)
 	case types.MethodGetAllServiceCatalogEntries:
@@ -1075,6 +1077,54 @@ func handleForceStopService(mgr manager.ServiceManager, rawArgs json.RawMessage)
 		Success: true,
 		Data:    data,
 	}
+}
+
+// handleReloadService drives a zero-downtime cutover. Reload is not part of the
+// ServiceManager interface — its readiness gate needs the monitor package, which
+// imports manager — so it runs only against the concrete LocalManager the daemon
+// owns, wiring monitor.ProbeReady in as the gate. A non-local manager (there is
+// none in the live daemon) is rejected rather than silently unhandled.
+func handleReloadService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	lm, ok := mgr.(*manager.LocalManager)
+	if !ok {
+		return errorResponse("reload is only supported by the standalone daemon")
+	}
+
+	var args types.ReloadServiceArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse("invalid MethodReloadService args")
+	}
+	gracePeriod, err := time.ParseDuration(args.GracePeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid grace period: %s", args.GracePeriod))
+	}
+	tickerPeriod, err := time.ParseDuration(args.TickerPeriod)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
+	}
+	readinessTimeout, err := time.ParseDuration(args.ReadinessTimeout)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid readiness timeout: %s", args.ReadinessTimeout))
+	}
+	probeInterval, err := time.ParseDuration(args.ProbeInterval)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("invalid probe interval: %s", args.ProbeInterval))
+	}
+
+	result, err := lm.ReloadService(args.Name, monitor.ProbeReady, manager.ReloadConfig{
+		GracePeriod:      gracePeriod,
+		TickerPeriod:     tickerPeriod,
+		ReadinessTimeout: readinessTimeout,
+		ProbeInterval:    probeInterval,
+	})
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(types.ReloadServiceResponse{OldPGID: result.OldPGID, NewPGID: result.NewPGID})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+	return types.DaemonResponse{Success: true, Data: data}
 }
 
 func handleAddServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {

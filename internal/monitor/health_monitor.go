@@ -48,6 +48,11 @@ type monitorManager interface {
 	// GetServiceLastErrorLine returns the most recent non-empty line captured
 	// from the service's own stderr, or ok=false if none is available.
 	GetServiceLastErrorLine(serviceName string) (line string, ok bool)
+	// IsReloadInProgress reports whether a zero-downtime reload currently owns
+	// the named service's lifecycle. The monitor suspends its own action for a
+	// service while this is true, so a reload's crash-on-start incoming instance
+	// can't be marked Failed and restarted out from under the cutover.
+	IsReloadInProgress(name string) bool
 }
 
 var _ monitorManager = (*manager.LocalManager)(nil)
@@ -162,6 +167,17 @@ func (hm *HealthMonitor) checkService(ctx context.Context, service *types.Servic
 			hm.logger.Error("recovered from panic during health check", "service", serviceName, "panic", r)
 		}
 	}()
+
+	// A reload owns the whole launch→probe→drain window under the per-service
+	// lock and drives the incoming instance's state itself. Skip the service
+	// entirely while that runs: acting here would either mark the crash-on-start
+	// incoming instance Failed and restart it (killing the surviving old
+	// instance the reload's abort protects) or block in RestartService on the
+	// reload-held lock, stalling this serial loop for every other service.
+	if hm.mgr.IsReloadInProgress(serviceName) {
+		hm.logger.Debug("health tick: reload in progress, skipping", "service", serviceName)
+		return
+	}
 
 	instance, err := hm.mgr.GetServiceInstance(serviceName)
 	if err != nil || instance == nil {
@@ -349,6 +365,14 @@ func (hm *HealthMonitor) scheduleNextCronRestart(ctx context.Context, serviceNam
 // still succeed against a hung app via the kernel's accept backlog, so this is not
 // a substitute for an application-level health check.
 func (hm *HealthMonitor) isPortReachable(ctx context.Context, port int) bool {
+	return portReachable(ctx, port)
+}
+
+// portReachable is the liveness-agnostic core of isPortReachable, shared with
+// ProbeReady so a reload cutover gates on the exact same TCP reachability test
+// the running health monitor applies each tick, with no HealthMonitor instance
+// to hand.
+func portReachable(ctx context.Context, port int) bool {
 	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
 	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -356,6 +380,29 @@ func (hm *HealthMonitor) isPortReachable(ctx context.Context, port int) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// ProbeReady reports whether a freshly launched instance is ready to take over:
+// the process group is still the one that was started (alive, start time
+// matching, so a recycled PGID can't read as ready) and, when the service
+// declares a port, that port accepts a connection. It is the same
+// liveness-plus-port check checkStartProcess and checkRunningProcess apply, so a
+// reload cutover holds the outgoing instance until the incoming one passes the
+// gate the health monitor would itself use. port 0 means no port to probe, so
+// liveness alone decides.
+//
+// Under SO_REUSEPORT both instances share the port during the overlap, so a
+// reachable port only proves some instance is listening, not specifically the
+// new one; the caller pairs this with the incoming process staying alive and a
+// probe interval that gives it time to bind before the old instance is drained.
+func ProbeReady(ctx context.Context, pgid int, startedAtTicks int64, port int) bool {
+	if !procutil.IsAliveMatching(pgid, startedAtTicks) {
+		return false
+	}
+	if port == 0 {
+		return true
+	}
+	return portReachable(ctx, port)
 }
 
 // handleLivenessFailure marks a running-state process as failed because it is no longer alive.

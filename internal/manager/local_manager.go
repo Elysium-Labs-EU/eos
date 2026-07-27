@@ -47,8 +47,17 @@ type LocalManager struct {
 	// writer's rotate() rename the file out from under the other's fd.
 	// logWritersMu guards the map itself.
 	logWriters map[string]*sharedLogWriter
-	baseDir    string
-	pipeWg     sync.WaitGroup
+	// reloadInProgress holds the names of services currently mid-reload. The
+	// health monitor consults it every tick (IsReloadInProgress) and suspends
+	// its own action for a service while its reload owns the per-service lock:
+	// a crash-on-start incoming instance would otherwise make the monitor mark
+	// the service Failed and queue a RestartService that either bounces the
+	// surviving old instance the instant reload releases the lock, or blocks on
+	// that lock and stalls every other service's serial health check. reloadMu
+	// guards the map.
+	reloadInProgress map[string]bool
+	baseDir          string
+	pipeWg           sync.WaitGroup
 	// serviceWg tracks the async cmd.Wait() reaper goroutine launched for
 	// every started service (see captureIdentity). WaitServices blocks until
 	// every launched service has actually exited: without this, a caller that
@@ -60,6 +69,8 @@ type LocalManager struct {
 	serviceWg      sync.WaitGroup
 	serviceLocksMu sync.Mutex
 	logWritersMu   sync.Mutex
+	// reloadMu guards reloadInProgress.
+	reloadMu sync.Mutex
 	// shutdownGracePeriod is set only on the LocalManager backing the real
 	// standalone daemon (see WithShutdownGracePeriod). When positive, every
 	// launched service's cmd.Cancel/cmd.WaitDelay are configured so that
@@ -172,6 +183,39 @@ func (m *LocalManager) lockService(name string) func() {
 	return mu.Unlock
 }
 
+// beginReload marks name as mid-reload so the health monitor suspends its own
+// action for it. It is called under the per-service lock and before the
+// incoming instance's Starting row is registered, so no monitor tick ever sees
+// that row without the suspension already in force. Paired with endReload.
+func (m *LocalManager) beginReload(name string) {
+	m.reloadMu.Lock()
+	m.reloadInProgress[name] = true
+	m.reloadMu.Unlock()
+}
+
+// endReload clears name's reload suspension once ReloadService has finished
+// (success or abort). The monitor resumes supervising the service on its next
+// tick: after success the incoming instance sits in Starting for the monitor to
+// drive to Running; after an abort its history row is already gone, leaving the
+// surviving old instance as the most-recent entry.
+func (m *LocalManager) endReload(name string) {
+	m.reloadMu.Lock()
+	delete(m.reloadInProgress, name)
+	m.reloadMu.Unlock()
+}
+
+// IsReloadInProgress reports whether a zero-downtime reload currently owns
+// name's lifecycle. The health monitor calls it each tick and skips the service
+// entirely while true: reload holds the per-service lock for its whole
+// launch→probe→drain window and drives the incoming instance's state itself, so
+// a monitor that also acted would either bounce the surviving old instance or
+// block on the reload-held lock and stall every other service's check.
+func (m *LocalManager) IsReloadInProgress(name string) bool {
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+	return m.reloadInProgress[name]
+}
+
 type LocalManagerOption func(*LocalManager)
 
 func WithExecutor(e Executor) LocalManagerOption {
@@ -216,7 +260,7 @@ func WithShutdownGracePeriod(d time.Duration) LocalManagerOption {
 }
 
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
-	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex), logWriters: make(map[string]*sharedLogWriter)}
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex), logWriters: make(map[string]*sharedLogWriter), reloadInProgress: make(map[string]bool)}
 	for _, opt := range opts {
 		opt(m)
 	}
