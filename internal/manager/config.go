@@ -140,6 +140,9 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if err := ValidateCronRestart(config.CronRestart); err != nil {
 		errs = append(errs, fmt.Errorf("cron_restart: %w", err))
 	}
+	if depErrs := ValidateDependencies(config.Name, config.DependsOn, config.MaxWait); len(depErrs) > 0 {
+		errs = append(errs, depErrs...)
+	}
 	for i := range config.LogSinks {
 		ref := &config.LogSinks[i]
 		if ref.Inline == nil {
@@ -171,6 +174,33 @@ func ValidateCronRestart(cronExpr string) error {
 		return err
 	}
 	return nil
+}
+
+// ValidateDependencies checks a service's depends_on / max_wait pair. A service
+// naming itself, or the same dependency twice, is a config mistake rather than a
+// runtime condition, so it fails at validation instead of hanging until max_wait.
+func ValidateDependencies(serviceName string, dependsOn []string, maxWait string) []error {
+	var errs []error
+	if _, err := ParseMaxWait(maxWait); err != nil {
+		errs = append(errs, fmt.Errorf("max_wait: %w", err))
+	}
+	seen := make(map[string]bool, len(dependsOn))
+	for _, dep := range dependsOn {
+		if strings.TrimSpace(dep) == "" {
+			errs = append(errs, fmt.Errorf("depends_on: empty dependency name"))
+			continue
+		}
+		if dep == serviceName {
+			errs = append(errs, fmt.Errorf("depends_on: service %q cannot depend on itself", serviceName))
+			continue
+		}
+		if seen[dep] {
+			errs = append(errs, fmt.Errorf("depends_on: duplicate dependency %q", dep))
+			continue
+		}
+		seen[dep] = true
+	}
+	return errs
 }
 
 var selfDetachCommands = map[string]bool{"setsid": true, "nohup": true, "disown": true}

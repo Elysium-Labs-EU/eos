@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
@@ -89,6 +91,26 @@ func registerServiceIfNeeded(mgr manager.ServiceManager, serviceYamlFile string,
 		return ServiceFileRequestResult{}, fmt.Errorf("registering service: %w", err)
 	}
 	return ServiceFileRequestResult{Name: serviceName, AlreadyExists: false}, nil
+}
+
+// gateDependencies blocks the caller until every service in the target's
+// depends_on reports healthy, or returns a loud error once its max_wait ceiling
+// is hit. A service with no depends_on returns immediately, taking the exact
+// same path as before ordering existed.
+func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.ServiceManager, entry types.ServiceCatalogEntry) error {
+	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
+	if err != nil {
+		return fmt.Errorf("loading service config: %w", err)
+	}
+	if len(cfg.DependsOn) == 0 {
+		return nil
+	}
+	maxWait, err := manager.ParseMaxWait(cfg.MaxWait)
+	if err != nil {
+		return err
+	}
+	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
+	return manager.WaitForDependencies(ctx, mgr, entry.Name, cfg.DependsOn, maxWait)
 }
 
 var ErrServiceNonExistent = errors.New("service non existent")
@@ -267,6 +289,11 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			// only a genuinely down supervisor (e.g. a stopped systemd unit) warns
 			// that the service will start but never leave 'starting'.
 			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
+
+			if depErr := gateDependencies(cmd.Context(), cmd, mgr, registeredService); depErr != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), depErr.Error())
+				return helpers.ErrCommandFailed
+			}
 
 			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
 			if err != nil {
