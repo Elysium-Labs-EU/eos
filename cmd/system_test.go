@@ -197,7 +197,7 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 // script/tool invoking `eos system startup --yes` non-interactively has no
 // stdin to answer a confirmation prompt with, so flagYes must skip both
 // PromptConfirm calls entirely rather than fall through to a read that
-// would hang or silently decline (see eos#29).
+// would hang or silently decline.
 func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
 	tempDir := t.TempDir()
 	c, _, _ := makeTestCmd(t)
@@ -264,7 +264,7 @@ func TestStartupCmdUserUnitFullPath(t *testing.T) {
 func TestRenderUnitFile_CapsCrashLoop(t *testing.T) {
 	// A version-ahead / rollback state database makes eos fail on every start.
 	// The generated unit must bound the restart burst so systemd eventually
-	// enters "failed" instead of looping forever. See issue #11.
+	// enters "failed" instead of looping forever.
 	for _, userUnit := range []bool{false, true} {
 		name := "system"
 		if userUnit {
@@ -1239,8 +1239,8 @@ func TestFetchLatestRelease_includePre(t *testing.T) {
 }
 
 // TestFetchLatestRelease_includePre_outOfOrderList guards the same
-// list-ordering hazard install.sh's fetch_latest_version guards against
-// (issue #43): a freshly published release can be present but not first in
+// list-ordering hazard install.sh's fetch_latest_version guards against:
+// a freshly published release can be present but not first in
 // the list, so fetchLatestRelease must pick the highest semver tag rather
 // than trusting releases[0].
 func TestFetchLatestRelease_includePre_outOfOrderList(t *testing.T) {
@@ -1290,7 +1290,7 @@ func TestFetchLatestRelease_badJSON(t *testing.T) {
 	}
 }
 
-// TestFetchLatestRelease_preOutOfOrder guards against Elysium-Labs-EU/argus#74:
+// TestFetchLatestRelease_preOutOfOrder guards against unsorted list order:
 // GitHub's /releases list is not guaranteed to be sorted, so --pre must not
 // just return releases[0].
 func TestFetchLatestRelease_preOutOfOrder(t *testing.T) {
@@ -1310,8 +1310,45 @@ func TestFetchLatestRelease_preOutOfOrder(t *testing.T) {
 	}
 }
 
-// TestFetchLatestRelease_allPrereleaseFallback guards against
-// Elysium-Labs-EU/argus#74: when every release is a prerelease,
+// TestFetchLatestRelease_prePrefersPrereleaseOverLowerStable guards the --pre
+// path: a newer prerelease must win even when a lower-versioned stable release
+// exists. The stable-preferring pickLatestRelease logic must not run on the
+// --pre path.
+func TestFetchLatestRelease_prePrefersPrereleaseOverLowerStable(t *testing.T) {
+	useHTTPTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v0.0.11"},
+			{TagName: "v0.0.12-rc.9", Prerelease: true},
+			{TagName: "v0.0.12-rc.7", Prerelease: true},
+		})
+	})
+	rel, err := fetchLatestRelease(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v0.0.12-rc.9" {
+		t.Errorf("got tag %q, want v0.0.12-rc.9 (highest prerelease despite stable v0.0.11 present)", rel.TagName)
+	}
+}
+
+// TestPickLatestRelease_prefersStableOverPrerelease pins the non---pre picker:
+// with a stable release present it must return the stable one, leaving the
+// all-prerelease 404 fallback as the only path that selects a prerelease.
+func TestPickLatestRelease_prefersStableOverPrerelease(t *testing.T) {
+	rel, err := pickLatestRelease([]Release{
+		{TagName: "v0.0.11"},
+		{TagName: "v0.0.12-rc.9", Prerelease: true},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel.TagName != "v0.0.11" {
+		t.Errorf("got tag %q, want v0.0.11 (stable preferred on the non-pre path)", rel.TagName)
+	}
+}
+
+// TestFetchLatestRelease_allPrereleaseFallback guards the fallback:
+// when every release is a prerelease,
 // /releases/latest 404s and the plain (non---pre) path must fall back to the
 // full list instead of hard-erroring.
 func TestFetchLatestRelease_allPrereleaseFallback(t *testing.T) {
@@ -2134,7 +2171,7 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 	t.Run("stop timeout still attempts start and recovers", func(t *testing.T) {
 		// killed=true, err!=nil is what StopStandaloneDaemon's exit-wait now
 		// returns on timeout (SIGTERM delivered, exit unconfirmed). Bailing out
-		// here without ever calling Start() would reproduce issue #73's
+		// here without ever calling Start() would reproduce the
 		// original symptom, so Start() must still be attempted — and if the old
 		// process had in fact exited by then, the restart should succeed.
 		cmd, outBuf, _, _ := setupCmd(t)
