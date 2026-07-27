@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -134,10 +134,34 @@ nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.or
 	@command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: make setup"; exit 1; }
 	nilaway ./...
 
+GO_CRAP_GATE_PATHS := scripts/go-crap-gate.sh scripts/go-crap-gate_test.sh
+
 crap: test-coverage-check ## Run go-crap change-risk analysis (hard gate on changed functions only, requires: go install github.com/padiazg/go-crap@latest)
 	@echo "Running go-crap change-risk analysis..."
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
+	@base="$${GO_CRAP_BASE:-origin/main}"; \
+	if ! git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  git fetch --quiet origin "$${base#origin/}" 2>/dev/null || true; \
+	fi; \
+	changed=""; \
+	if git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  diff_base="$$(git merge-base "$$base" HEAD 2>/dev/null || echo "$$base")"; \
+	  changed="$$(git diff --name-only "$$diff_base" HEAD -- $(GO_CRAP_GATE_PATHS))$$(git status --porcelain -- $(GO_CRAP_GATE_PATHS))"; \
+	else \
+	  changed="unknown-base"; \
+	fi; \
+	if [ -n "$$changed" ]; then \
+	  echo "go-crap-gate.sh or its test changed vs $$base (or base unresolvable) -- running crap-gate-test..."; \
+	  $(MAKE) crap-gate-test; \
+	else \
+	  echo "go-crap-gate.sh/_test.sh unchanged vs $$base -- skipping crap-gate-test (run 'make crap-gate-test' to force it)."; \
+	fi
 	bash scripts/go-crap-gate.sh .
+
+crap-gate-test: ## Real end-to-end test of scripts/go-crap-gate.sh's OS-integration exemption + threshold logic (synthetic reverted commits, requires go-crap)
+	@echo "Running go-crap-gate.sh end-to-end self-test..."
+	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
+	bash scripts/go-crap-gate_test.sh
 
 crap-report: ## Full whole-repo go-crap debt report (informational, no gate)
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }

@@ -7,12 +7,12 @@
 # untouched functions -- even in a file you edited elsewhere -- does not block.
 #
 #   GO_CRAP_BASE       base ref (default: origin/main); CI sets it to PR target
-#   GO_CRAP_THRESHOLD  CRAP threshold (default: 30, go-crap's own default)
+#   GO_CRAP_THRESHOLD  CRAP threshold (default: 20; go-crap's own default is 30)
 #
 # Pure bash + python3 (no gawk), so it runs the same on macOS and Linux CI.
 set -euo pipefail
 
-THRESHOLD="${GO_CRAP_THRESHOLD:-30}"
+THRESHOLD="${GO_CRAP_THRESHOLD:-20}"
 BASE="${GO_CRAP_BASE:-origin/main}"
 
 command -v go-crap >/dev/null 2>&1 || {
@@ -105,6 +105,36 @@ def _is_cobra_builder(e):
     body = "\n".join(src[e["line"]-1 : (end-1 if end else len(src))])
     return "cobra.Command{" in body
 
+# True OS-integration: the function's whole point is exercising real
+# syscalls/kernel state/process lifecycle, so mocking it away to hit coverage
+# would defeat the test's purpose. Allowlisted by (file, function, line) so a
+# rename or move forces a deliberate update here instead of silently keeping
+# the exemption (or silently losing it).
+#
+# Keys use go-crap's dotted "Receiver.FuncName" form (e.g. "*daemon.wait"),
+# not bare FuncName: go-crap's internal/merge/merge.go (Merge, ~line 127-129)
+# builds `name = stat.Receiver + "." + stat.FuncName` before storing it as the
+# entry's FuncName, and internal/report/json.go serializes that same field as
+# the JSON "function" key (Receiver is emitted separately too, but "function"
+# -- what this script actually reads -- is always the combined dotted form).
+OS_INTEGRATION_EXEMPT = {
+    ("internal/process/daemon.go", "*daemon.wait", 445),
+    ("internal/procutil/procutil_linux.go", "procCPUTicksForPGID", 85),
+    ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
+    ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 669),
+    ("internal/ownership/ownership.go", "Align", 48),
+    ("cmd/system.go", "installUpdatedBinary", 1585),
+    ("internal/process/daemon.go", "StartStandaloneDaemon", 54),
+    ("internal/process/daemon.go", "newStandaloneDaemon", 283),
+    ("internal/manager/local_manager.go", "*LocalManager.pipeToLogFile", 424),
+    ("internal/manager/local_manager.go", "*LocalManager.pipeToErrorLogFile", 457),
+    ("cmd/daemon.go", "systemdDaemonController.Stop", 188),
+    ("internal/manager/sink_process.go", "*sinkProcess.runOnce", 122),
+}
+
+def _is_os_integration_exempt(e):
+    return (e["file"], e["function"], e["line"]) in OS_INTEGRATION_EXEMPT
+
 touched_funcs = {}
 for f, lines in changed_lines.items():
     for L in lines:
@@ -113,7 +143,9 @@ for f, lines in changed_lines.items():
             touched_funcs[(e["file"], e["function"], e["line"])] = e
 
 bad = [e for e in touched_funcs.values()
-       if e["crap"] > threshold and not _is_cobra_builder(e)]
+       if e["crap"] > threshold
+       and not _is_cobra_builder(e)
+       and not _is_os_integration_exempt(e)]
 if bad:
     print(f"go-crap gate FAILED: {len(bad)} changed function(s) exceed CRAP {threshold:g}:")
     for e in sorted(bad, key=lambda x: -x["crap"]):
