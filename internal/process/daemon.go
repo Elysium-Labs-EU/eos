@@ -257,7 +257,8 @@ func (d *daemon) recover() error {
 }
 
 func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig) {
-	go handleIncomingCommands(d.listener, d.mgr, d.logger)
+	//nolint:gosec // G115: os.Getuid() is never negative on the POSIX platforms eos targets (linux, darwin)
+	go handleIncomingCommands(d.listener, d.mgr, d.logger, uint32(os.Getuid()))
 
 	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig, d.otelHandles)
 	go healthMonitor.Start(d.ctx)
@@ -375,6 +376,15 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	listener, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
 		errorMessage := fmt.Errorf("failed to create socket: %w", err)
+		logger.Info(errorMessage.Error())
+		return nil, errorMessage
+	}
+	// bind(2) creates the socket file with a mode derived from umask, which
+	// can leave it group- or world-accessible. The peer uid check in
+	// handleConnection is the real gate, but pinning the mode to owner-only
+	// keeps ls -l honest about who can even attempt to connect.
+	if chmodErr := os.Chmod(socketPath, 0600); chmodErr != nil {
+		errorMessage := fmt.Errorf("failed to set socket permissions: %w", chmodErr)
 		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}
@@ -844,7 +854,7 @@ func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, 
 	return true, nil
 }
 
-func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *slog.Logger) {
+func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -856,16 +866,37 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 			return
 		}
 
-		go handleConnection(conn, mgr, logger)
+		go handleConnection(conn, mgr, logger, allowedUID)
 	}
 }
 
-func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger) {
+// isAuthorizedPeer reports whether gotUID, the peer credential read off the
+// connecting socket, matches allowedUID, the daemon's own uid. The base
+// dir's 0750 mode alone still admits every member of the daemon owner's
+// group, so this check — not file permissions — is what keeps another local
+// user off the control socket.
+func isAuthorizedPeer(gotUID, allowedUID uint32) bool {
+	return gotUID == allowedUID
+}
+
+func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error("closing daemon socket", "error", err)
 		}
 	}()
+
+	gotUID, err := peerUID(conn)
+	if err != nil {
+		logger.Error("reading socket peer credentials", "error", err)
+		sendErrorResponse(conn, "peer credential check failed", logger)
+		return
+	}
+	if !isAuthorizedPeer(gotUID, allowedUID) {
+		logger.Warn("rejecting connection from unauthorized peer", "peer_uid", gotUID)
+		sendErrorResponse(conn, "unauthorized", logger)
+		return
+	}
 
 	var request types.DaemonRequest
 	decoder := json.NewDecoder(conn)

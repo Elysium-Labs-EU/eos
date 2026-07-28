@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -424,18 +426,15 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 	}
 }
 
-// TODO: no test coverage for handleIncomingCommands, handleConnection, or
-// sendErrorResponse (all in daemon.go) — they need a real net.Listener/net.Conn
-// and aren't exercised elsewhere.
-
 // fakeServiceManager is a manager.ServiceManager test double: it embeds the
 // nil interface (any unoverridden method panics if called) and only
-// implements RestartService/StopService, the only methods handleRestartService
-// and handleStopService invoke.
+// implements RestartService/StopService/GetVersion, the methods
+// handleRestartService, handleStopService, and handleGetVersion invoke.
 type fakeServiceManager struct {
 	manager.ServiceManager
-	restartFunc func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
-	stopFunc    func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
+	restartFunc    func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
+	stopFunc       func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
+	getVersionFunc func() (types.GetVersionResponse, error)
 }
 
 func (f *fakeServiceManager) RestartService(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
@@ -444,6 +443,10 @@ func (f *fakeServiceManager) RestartService(name string, gracePeriod, tickerPeri
 
 func (f *fakeServiceManager) StopService(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
 	return f.stopFunc(name, gracePeriod, tickerPeriod)
+}
+
+func (f *fakeServiceManager) GetVersion() (types.GetVersionResponse, error) {
+	return f.getVersionFunc()
 }
 
 func TestHandleRestartService(t *testing.T) {
@@ -604,4 +607,153 @@ func TestHandleStopService(t *testing.T) {
 			t.Errorf("expected pid 4242 marked stopped, got %+v", got.Stopped)
 		}
 	})
+}
+
+func TestIsAuthorizedPeer(t *testing.T) {
+	tests := []struct {
+		name       string
+		gotUID     uint32
+		allowedUID uint32
+		want       bool
+	}{
+		{"matching uid authorized", 1000, 1000, true},
+		{"mismatched uid rejected", 1000, 1001, false},
+		{"root allowed uid zero", 0, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAuthorizedPeer(tt.gotUID, tt.allowedUID); got != tt.want {
+				t.Errorf("isAuthorizedPeer(%d, %d) = %v, want %v", tt.gotUID, tt.allowedUID, got, tt.want)
+			}
+		})
+	}
+}
+
+// newUnixSocketPair binds a real Unix domain socket in t.TempDir(), dials it,
+// and hands back both ends already connected — a real *net.UnixConn pair, so
+// tests exercise the actual SO_PEERCRED/LOCAL_PEERCRED syscall path in
+// peerUID rather than a mocked one.
+func newUnixSocketPair(t *testing.T) (serverConn, clientConn net.Conn) {
+	t.Helper()
+
+	sockPath := filepath.Join(shortTempDir(t), "t.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listening on unix socket: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	acceptCh := make(chan net.Conn, 1)
+	acceptErrCh := make(chan error, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			acceptErrCh <- acceptErr
+			return
+		}
+		acceptCh <- conn
+	}()
+
+	clientConn, err = net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("dialing unix socket: %v", err)
+	}
+	t.Cleanup(func() { _ = clientConn.Close() })
+
+	select {
+	case serverConn = <-acceptCh:
+	case acceptErr := <-acceptErrCh:
+		t.Fatalf("accepting connection: %v", acceptErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the server side of the socket pair to accept")
+	}
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	return serverConn, clientConn
+}
+
+// TestHandleConnection_SameUIDAccepted proves the daemon's own CLI commands
+// keep working: a connection from this same process (necessarily the same
+// uid) passes the peer-credential check and gets dispatched to the manager
+// as before. This exercises the real peerUID syscall, not a mock.
+func TestHandleConnection_SameUIDAccepted(t *testing.T) {
+	t.Setenv("EOS_BASE_DIR", t.TempDir())
+
+	serverConn, clientConn := newUnixSocketPair(t)
+	logger := discardLogger()
+	mgr := &fakeServiceManager{
+		getVersionFunc: func() (types.GetVersionResponse, error) {
+			return types.GetVersionResponse{Version: "test-version"}, nil
+		},
+	}
+
+	if err := json.NewEncoder(clientConn).Encode(types.DaemonRequest{Method: types.MethodGetVersion}); err != nil {
+		t.Fatalf("client encode: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		handleConnection(serverConn, mgr, logger, uint32(os.Getuid()))
+		close(done)
+	}()
+
+	var resp types.DaemonResponse
+	if err := json.NewDecoder(clientConn).Decode(&resp); err != nil {
+		t.Fatalf("client decode: %v", err)
+	}
+	<-done
+
+	if !resp.Success {
+		t.Fatalf("expected success for a same-uid connection, got error: %s", resp.Error)
+	}
+	var version types.GetVersionResponse
+	if err := json.Unmarshal(resp.Data, &version); err != nil {
+		t.Fatalf("unmarshaling response data: %v", err)
+	}
+	if version.Version != "test-version" {
+		t.Errorf("expected version %q, got %q", "test-version", version.Version)
+	}
+}
+
+// TestHandleConnection_MismatchedUIDRejected proves a peer whose uid doesn't
+// match the daemon's own uid is rejected before its request is even decoded.
+// A real second-uid caller isn't available in CI, so this connects as the
+// real process uid (a genuine SO_PEERCRED/LOCAL_PEERCRED read, not a mock)
+// but tells handleConnection to only accept a different uid — the same
+// boundary check production wires up via os.Getuid(). fakeServiceManager's
+// getVersionFunc is left nil, so a panic would surface if the request were
+// ever dispatched.
+func TestHandleConnection_MismatchedUIDRejected(t *testing.T) {
+	t.Setenv("EOS_BASE_DIR", t.TempDir())
+
+	serverConn, clientConn := newUnixSocketPair(t)
+	logger, logBuf := capturingLogger()
+	mgr := &fakeServiceManager{}
+	wrongUID := uint32(os.Getuid()) + 1
+
+	if err := json.NewEncoder(clientConn).Encode(types.DaemonRequest{Method: types.MethodGetVersion}); err != nil {
+		t.Fatalf("client encode: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		handleConnection(serverConn, mgr, logger, wrongUID)
+		close(done)
+	}()
+
+	var resp types.DaemonResponse
+	if err := json.NewDecoder(clientConn).Decode(&resp); err != nil {
+		t.Fatalf("client decode: %v", err)
+	}
+	<-done
+
+	if resp.Success {
+		t.Fatal("expected the connection to be rejected, got success")
+	}
+	if resp.Error != "unauthorized" {
+		t.Errorf("expected error %q, got %q", "unauthorized", resp.Error)
+	}
+	if !strings.Contains(logBuf.String(), "rejecting connection from unauthorized peer") {
+		t.Errorf("expected a rejection log entry, got: %s", logBuf.String())
+	}
 }
