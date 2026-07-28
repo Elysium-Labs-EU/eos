@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -66,6 +66,8 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 	go install go.uber.org/nilaway/cmd/nilaway@latest
 	@echo "Installing go-crap (change-risk analysis)..."
 	go install github.com/padiazg/go-crap@latest
+	@echo "Installing gitleaks (secret scanning)..."
+	go install github.com/zricethezav/gitleaks/v8@latest
 	@echo "Installing benchstat (benchmark comparison)..."
 	go install golang.org/x/perf/cmd/benchstat@latest
 	@echo "Installing git hooks..."
@@ -187,7 +189,11 @@ sg-test: ## Run ast-grep rule tests
 sg-rules: ## List all ast-grep rules
 	@find rules -name '*.yml' ! -path '*__tests__*' | sort
 
-ci: test lint sg nilcheck test-coverage-check crap ## Run all CI checks locally
+secrets: ## Scan working tree and history for leaked secrets (requires: go install github.com/zricethezav/gitleaks/v8@latest)
+	@command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks not found. Run: make setup"; exit 1; }
+	gitleaks detect --source . --no-banner --redact
+
+ci: test lint sg nilcheck test-coverage-check crap secrets ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
