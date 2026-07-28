@@ -2294,25 +2294,26 @@ func TestVerifyChecksumsSignatureRejectsForgedSignature(t *testing.T) {
 	}
 }
 
-func TestVerifyReleaseSignatureMissingAssetWarnsAndContinues(t *testing.T) {
+func TestVerifyReleaseSignatureMissingAssetRefusesToInstall(t *testing.T) {
 	useHTTPTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "sha256sums.txt") {
 			t.Errorf("unexpected request to %s", r.URL.Path)
 		}
 	})
 
-	cmd, outBuf, _ := makeTestCmd(t)
+	cmd, _, _ := makeTestCmd(t)
 	result := UpdateResult{
 		LatestVersion:  "v1.0.0",
 		ChecksumsAsset: &Asset{Name: "sha256sums.txt", BrowserDownloadURL: "https://github.com/fake/sha256sums.txt"},
 		// SignatureAsset intentionally nil.
 	}
 
-	if err := verifyReleaseSignature(t.Context(), cmd, result); err != nil {
-		t.Fatalf("verifyReleaseSignature: %v", err)
+	err := verifyReleaseSignature(t.Context(), cmd, result)
+	if err == nil {
+		t.Fatal("expected an error when requireReleaseSignature is true and no signature asset is present")
 	}
-	if !strings.Contains(outBuf.String(), "has no signature") {
-		t.Errorf("output = %q, want a no-signature warning", outBuf.String())
+	if !strings.Contains(err.Error(), "has no sha256sums.txt.sig") {
+		t.Errorf("error = %v, want a no-signature-asset message", err)
 	}
 }
 

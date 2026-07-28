@@ -58,13 +58,12 @@ BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
 `
 
 // requireReleaseSignature gates whether a release with no sha256sums.txt.sig
-// asset is refused outright rather than merely warned about. Keep this false
-// until the RELEASE_SIGNING_KEY secret is provisioned in GitHub Actions and
-// the first signed release has shipped — flipping it before then would make
-// every existing release refuse to install. Once a signed release exists,
-// flip to true so an unsigned or signature-stripped release can no longer be
-// installed silently.
-const requireReleaseSignature = false
+// asset is refused outright rather than merely warned about. Enforced now
+// that RELEASE_SIGNING_KEY is provisioned in GitHub Actions and signed
+// releases are published — an unsigned or signature-stripped release can no
+// longer be installed silently. Keep install.sh's REQUIRE_RELEASE_SIGNATURE
+// in sync with this value.
+const requireReleaseSignature = true
 
 // parseReleaseSigningPublicKey decodes the embedded release signing public
 // key. Pure — no I/O.
@@ -132,13 +131,13 @@ func fetchChecksumsFile(ctx context.Context, checksumsAsset *Asset) ([]byte, err
 // sha256sums.txt.sig and verifies the signature, writing a status line to
 // cmd either way.
 //
-// A release with no signature asset is only a hard error once
-// requireReleaseSignature is true (see its doc comment for the rollout
-// plan); until then it's a warning, since sha256 checksum verification
-// (downloadAndVerifyBinary) already runs independently of this. A signature
-// asset that fails to verify is always a hard error — that's a stronger
-// integrity signal than "no signature was ever published", so it's never
-// soft-failed.
+// A release with no signature asset is a hard error while
+// requireReleaseSignature is true (see its doc comment); the warning path
+// below is retained for the rollout window before a signing key existed,
+// since sha256 checksum verification (downloadAndVerifyBinary) already runs
+// independently of this. A signature asset that fails to verify is always a
+// hard error — that's a stronger integrity signal than "no signature was
+// ever published", so it's never soft-failed.
 func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result UpdateResult) error {
 	checksumsData, err := fetchChecksumsFile(ctx, result.ChecksumsAsset)
 	if err != nil {
