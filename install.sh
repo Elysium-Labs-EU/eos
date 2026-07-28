@@ -26,6 +26,23 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEByucQHF5ASSSrPSu6Gb5fvAuWdMw
 BNAGlV57YMjkCdpcq8HHRXYXHXqy3cvfIzHYE2UHfftsk83lrSXPkxMyZg==
 -----END PUBLIC KEY-----'
 
+# REQUIRE_RELEASE_SIGNATURE gates whether a release with no sha256sums.txt.sig
+# asset is refused outright. Keep in sync with requireReleaseSignature in
+# cmd/system.go — must flip together.
+readonly REQUIRE_RELEASE_SIGNATURE=true
+
+# decide_missing_signature_action returns "refuse" when a release with no
+# sha256sums.txt.sig must not be installed, or "warn" when it should proceed
+# with a warning (checksum-only integrity). Pure — reads only
+# REQUIRE_RELEASE_SIGNATURE, no I/O.
+decide_missing_signature_action() {
+    if [ "$REQUIRE_RELEASE_SIGNATURE" = "true" ]; then
+        printf 'refuse\n'
+    else
+        printf 'warn\n'
+    fi
+}
+
 AUTO_YES=false
 
 info() {
@@ -699,10 +716,11 @@ main() {
                 rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig" "$tmp_pubkey"
                 exit 1
             fi
+        elif [ "$(decide_missing_signature_action)" = "refuse" ]; then
+            error "Release has no sha256sums.txt.sig — refusing to install (release may be tampered, or signing was disabled for this release)"
+            rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
+            exit 1
         else
-            # Soft-fail: releases published before signing was introduced have
-            # no sha256sums.txt.sig. Keep in sync with requireReleaseSignature
-            # in cmd/system.go — once that flips to true, this should too.
             warn "Release has no sha256sums.txt.sig — checksum-only integrity (release predates signing)"
         fi
 

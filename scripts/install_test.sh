@@ -62,6 +62,13 @@ assert_eq "$result" "https://github.com/Elysium-Labs-EU/eos/releases/download/v1
 result=$(build_download_url "$REPO" "v1.2.3" "sha256sums.txt")
 assert_eq "$result" "https://github.com/Elysium-Labs-EU/eos/releases/download/v1.2.3/sha256sums.txt" "build_download_url builds checksums URL"
 
+# A release with no sha256sums.txt.sig must be refused, not just warned
+# about, now that signature verification is mandatory. Keep in sync with
+# cmd/system.go's requireReleaseSignature test coverage.
+assert_eq "$REQUIRE_RELEASE_SIGNATURE" "true" "REQUIRE_RELEASE_SIGNATURE is enforced"
+result=$(decide_missing_signature_action)
+assert_eq "$result" "refuse" "decide_missing_signature_action refuses install when a release has no sha256sums.txt.sig"
+
 if [ "$failures" -ne 0 ]; then
     echo ""
     echo "$failures assertion(s) failed"
