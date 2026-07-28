@@ -146,6 +146,78 @@ func TestAlign_RootMatchesDirOwner(t *testing.T) {
 	}
 }
 
+// TestValidateTrusted_MissingPathPasses verifies a path that doesn't exist yet
+// is not itself a trust boundary — the caller creates it with a safe
+// owner/mode, so ValidateTrusted has nothing to check yet.
+func TestValidateTrusted_MissingPathPasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := ValidateTrusted(path, uint32(os.Getuid()), os.Getuid() == 0); err != nil {
+		t.Errorf("expected a missing path to pass, got: %v", err)
+	}
+}
+
+// TestValidateTrusted_OwnedBySelfPasses verifies the common case: a directory
+// already owned by the target uid, with a safe mode, is trusted.
+func TestValidateTrusted_OwnedBySelfPasses(t *testing.T) {
+	path := t.TempDir() // t.TempDir() defaults to 0700, owned by the current process.
+	if err := ValidateTrusted(path, uint32(os.Getuid()), false); err != nil {
+		t.Errorf("expected a self-owned dir to pass, got: %v", err)
+	}
+}
+
+// TestValidateTrusted_WorldWritableRejected verifies a group- or
+// world-writable directory is refused even when owned by the target uid —
+// other unprivileged users could have staged files in it.
+func TestValidateTrusted_WorldWritableRejected(t *testing.T) {
+	path := t.TempDir()
+	if err := os.Chmod(path, 0o777); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := ValidateTrusted(path, uint32(os.Getuid()), false); err == nil {
+		t.Error("expected a world-writable dir to be rejected")
+	}
+}
+
+// TestValidateTrusted_WrongOwnerRejected verifies a directory owned by
+// neither the target uid nor (when running as root) root itself is refused —
+// it may have been staged by an untrusted party.
+func TestValidateTrusted_WrongOwnerRejected(t *testing.T) {
+	path := t.TempDir()
+	wrongUID := uint32(os.Getuid()) + 1
+	if err := ValidateTrusted(path, wrongUID, false); err == nil {
+		t.Error("expected a dir owned by a different uid to be rejected")
+	}
+}
+
+// TestValidateTrusted_RootOwnedAcceptedWhenRunningAsRoot verifies that when
+// running as root, a directory still owned by root itself (not yet chowned to
+// the target identity) is accepted — root is trusted to reassign ownership
+// next, e.g. via config.CreateBaseDir's chown step.
+func TestValidateTrusted_RootOwnedAcceptedWhenRunningAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root to exercise the root-owned exception")
+	}
+	path := t.TempDir() // created by this (root) process, so root-owned.
+	const targetUID = 12345
+	if err := ValidateTrusted(path, targetUID, true); err != nil {
+		t.Errorf("expected a root-owned dir to pass when runningAsRoot, got: %v", err)
+	}
+}
+
+// TestValidateTrusted_RootOwnedRejectedWhenNotRunningAsRoot verifies the
+// root-owned exception only applies when runningAsRoot is true — otherwise a
+// root-owned dir is just another wrong owner.
+func TestValidateTrusted_RootOwnedRejectedWhenNotRunningAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("this dir is only actually root-owned when the test itself runs as root")
+	}
+	path := t.TempDir()
+	const targetUID = 12345
+	if err := ValidateTrusted(path, targetUID, false); err == nil {
+		t.Error("expected a root-owned dir to be rejected when not runningAsRoot")
+	}
+}
+
 // TestAlign_MissingPathTolerated verifies Align tolerates a path in the list
 // that doesn't exist yet (mirroring ChownTolerant), rather than failing the
 // whole alignment because one sidecar/rotated-log hasn't been created.
