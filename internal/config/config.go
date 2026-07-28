@@ -160,9 +160,9 @@ func UserSystemdDir() (string, error) {
 // though the process isn't running as root, and honoring it there would
 // redirect data to the invoking user's home instead of the target user's.
 //
-// An EOS_BASE_DIR override is validated before being trusted (issue #122): a
-// process with the env var set could otherwise be pointed at a directory it
-// doesn't actually own, or that other unprivileged users can write to. See
+// An EOS_BASE_DIR override is validated before being trusted: a process with
+// the env var set could otherwise be pointed at a directory it doesn't
+// actually own, or that other unprivileged users can write to. See
 // ownership.ValidateTrusted.
 func GetBaseDir(id userutil.Identity) (string, error) {
 	override := os.Getenv("EOS_BASE_DIR")
@@ -177,9 +177,8 @@ func GetBaseDir(id userutil.Identity) (string, error) {
 
 // CreateBaseDir takes an already-resolved Identity rather than deriving one itself;
 // see GetBaseDir. The root-refusal guard fires regardless of EOS_BASE_DIR: setting
-// that override alone must not be a way to skip it (issue #122) — a root
-// process without a SUDO_USER is not a legitimate sudo invocation no matter
-// what base dir it names.
+// that override alone must not be a way to skip it — a root process without a
+// SUDO_USER is not a legitimate sudo invocation no matter what base dir it names.
 func CreateBaseDir(id userutil.Identity) (string, error) {
 	if os.Getuid() == 0 && os.Getenv("SUDO_USER") == "" {
 		return "", fmt.Errorf("do not run eos as root: invoke as the target user directly")
