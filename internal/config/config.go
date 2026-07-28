@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/ownership"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"gopkg.in/yaml.v3"
@@ -158,17 +159,28 @@ func UserSystemdDir() (string, error) {
 // that broke this function before: `sudo -u <non-root-user>` also sets SUDO_USER even
 // though the process isn't running as root, and honoring it there would
 // redirect data to the invoking user's home instead of the target user's.
+//
+// An EOS_BASE_DIR override is validated before being trusted: a process with
+// the env var set could otherwise be pointed at a directory it doesn't
+// actually own, or that other unprivileged users can write to. See
+// ownership.ValidateTrusted.
 func GetBaseDir(id userutil.Identity) (string, error) {
-	if override := os.Getenv("EOS_BASE_DIR"); override != "" {
-		return override, nil
+	override := os.Getenv("EOS_BASE_DIR")
+	if override == "" {
+		return filepath.Join(id.HomeDir(), fmt.Sprintf(".%s", Name)), nil
 	}
-	return filepath.Join(id.HomeDir(), fmt.Sprintf(".%s", Name)), nil
+	if err := ownership.ValidateTrusted(override, id.UID(), os.Getuid() == 0); err != nil {
+		return "", fmt.Errorf("EOS_BASE_DIR override rejected: %w", err)
+	}
+	return override, nil
 }
 
 // CreateBaseDir takes an already-resolved Identity rather than deriving one itself;
-// see GetBaseDir.
+// see GetBaseDir. The root-refusal guard fires regardless of EOS_BASE_DIR: setting
+// that override alone must not be a way to skip it — a root process without a
+// SUDO_USER is not a legitimate sudo invocation no matter what base dir it names.
 func CreateBaseDir(id userutil.Identity) (string, error) {
-	if os.Getuid() == 0 && os.Getenv("SUDO_USER") == "" && os.Getenv("EOS_BASE_DIR") == "" {
+	if os.Getuid() == 0 && os.Getenv("SUDO_USER") == "" {
 		return "", fmt.Errorf("do not run eos as root: invoke as the target user directly")
 	}
 

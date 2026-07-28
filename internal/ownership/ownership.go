@@ -33,6 +33,41 @@ func ChownTolerant(path string, uid, gid int) error {
 	return nil
 }
 
+// ValidateTrusted checks that path is safe for eos to treat as a trust
+// boundary (e.g. an EOS_BASE_DIR override): it must not be group- or
+// world-writable, and must be owned by uid. When runningAsRoot is true, a
+// path still owned by root itself is also accepted — root is trusted to
+// reassign ownership to uid next (see config.CreateBaseDir's chown step), so
+// refusing it here would only break that self-healing, not stop an attacker.
+// A directory owned by any other uid, or that is group/world-writable, may
+// have been staged by an untrusted party and is refused.
+//
+// A path that does not exist yet is not a trust boundary and passes: the
+// caller is responsible for creating it with a safe owner/mode.
+func ValidateTrusted(path string, uid uint32, runningAsRoot bool) error {
+	info, statErr := os.Stat(path)
+	if os.IsNotExist(statErr) {
+		return nil
+	}
+	if statErr != nil {
+		return fmt.Errorf("stat %s for trust validation: %w", path, statErr)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s is group- or world-writable (mode %o); refusing to trust it", path, info.Mode().Perm())
+	}
+	stat, isStatT := info.Sys().(*syscall.Stat_t)
+	if !isStatT {
+		return nil
+	}
+	if stat.Uid == uid {
+		return nil
+	}
+	if runningAsRoot && stat.Uid == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s is owned by uid %d, expected uid %d; refusing to trust it", path, stat.Uid, uid)
+}
+
 // Align chowns each of paths to match baseDir's owner. Under sudo (euid 0) the
 // daemon's own file creation (state.db, daemon.log, eos.pid, ...) happens as
 // root even though the base directory itself was already chowned to the
