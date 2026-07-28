@@ -366,6 +366,34 @@ func (dm *DaemonManager) RestartService(name string, gracePeriod time.Duration, 
 	return result["pid"], nil
 }
 
+// ReloadService asks the daemon to perform a zero-downtime cutover for name.
+// The whole launch→probe→drain sequence runs daemon-side, where the service
+// processes live and the readiness probe can reach them; this call just carries
+// the timing knobs over and returns the swapped process groups.
+func (dm *DaemonManager) ReloadService(name string, cfg ReloadConfig) (ReloadResult, error) {
+	args, err := json.Marshal(types.ReloadServiceArgs{
+		Name:             name,
+		GracePeriod:      cfg.GracePeriod.String(),
+		TickerPeriod:     cfg.TickerPeriod.String(),
+		ReadinessTimeout: cfg.ReadinessTimeout.String(),
+		ProbeInterval:    cfg.ProbeInterval.String(),
+	})
+	if err != nil {
+		return ReloadResult{}, fmt.Errorf("ReloadService: marshaling args: %w", err)
+	}
+	response, err := dm.sendRequest(types.MethodReloadService, args)
+	if err != nil {
+		return ReloadResult{}, fmt.Errorf("ReloadService: request errored: %w", err)
+	}
+
+	var result types.ReloadServiceResponse
+	if err := json.Unmarshal(response.Data, &result); err != nil {
+		return ReloadResult{}, fmt.Errorf("ReloadService: parse response data: %w", err)
+	}
+
+	return ReloadResult{OldPGID: result.OldPGID, NewPGID: result.NewPGID}, nil
+}
+
 func (dm *DaemonManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
 	args, err := json.Marshal(types.StopServiceArgs{
 		Name:         name,

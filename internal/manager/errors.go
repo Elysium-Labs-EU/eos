@@ -14,6 +14,10 @@ var (
 	// on case-insensitive filesystems (e.g. macOS APFS), which silently
 	// intermingles the two services' output. See GitHub issue #10.
 	ErrServiceNameCaseConflict = errors.New("service name conflicts with an existing service differing only in letter case")
+	// ErrReloadNotReady is returned when a reload's incoming instance never
+	// passes the readiness probe within the timeout. The outgoing instance is
+	// left serving, so the reload is a no-op cutover rather than an outage.
+	ErrReloadNotReady = errors.New("reload aborted: new instance not ready")
 )
 
 const (
@@ -23,6 +27,7 @@ const (
 	CodeProcessNotFound          = "process_not_found"
 	CodeAlreadyRunning           = "already_running"
 	CodeServiceNameCaseConflict  = "service_name_case_conflict"
+	CodeReloadNotReady           = "reload_not_ready"
 )
 
 var errCodeMap = map[string]error{
@@ -32,6 +37,7 @@ var errCodeMap = map[string]error{
 	CodeProcessNotFound:          ErrProcessNotFound,
 	CodeAlreadyRunning:           ErrAlreadyRunning,
 	CodeServiceNameCaseConflict:  ErrServiceNameCaseConflict,
+	CodeReloadNotReady:           ErrReloadNotReady,
 }
 
 // ErrorCode returns a machine-readable code for known sentinel errors, empty string otherwise.

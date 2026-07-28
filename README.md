@@ -68,8 +68,19 @@ eos status
 | `eos logs --error <name>` | View error logs |
 | `eos logs --follow <name>` | Tail logs in real time |
 | `eos stop <name>` | Stop a service |
+| `eos reload <name>` | Zero-downtime reload (see below) |
 
 `eos system` covers boot startup, updates, uninstall, and version; run `eos system --help` for the full list.
+
+## Zero-downtime Reload
+
+`eos reload <name>` swaps a running service for a fresh instance without dropping connections. eos starts the new instance alongside the old one, waits for it to pass the health check, then drains the old one. If the new instance never becomes healthy the old one keeps serving, so a broken deploy is a no-op instead of an outage. This is the difference from `eos run`, which restarts by stopping then starting and drops the listening socket in between.
+
+```bash
+eos reload my-service
+```
+
+The overlap only works because both instances listen on the same port at the same time, and that is the service's job, not eos's: the service **must** bind its port with `SO_REUSEPORT` and bind promptly on startup. eos never owns the listening socket or proxies traffic; it only sequences the cutover. A service that does not use `SO_REUSEPORT` cannot run two instances on one port, so its reload will abort and leave the old instance untouched. Reload runs through the daemon, so it is unavailable with `--no-daemon`.
 
 ## Service Configuration
 

@@ -14,6 +14,7 @@ const (
 	MethodRemoveServiceInstance  = "RemoveServiceInstance"
 
 	MethodForceStopService = "ForceStopService"
+	MethodReloadService    = "ReloadService"
 	MethodRestartService   = "RestartService"
 	MethodStartService     = "StartService"
 	MethodStopService      = "StopService"
@@ -39,6 +40,7 @@ var ValidMethods = map[MethodName]bool{
 	MethodGetAllServiceInstances: true,
 
 	MethodForceStopService: true,
+	MethodReloadService:    true,
 	MethodRestartService:   true,
 	MethodStartService:     true,
 	MethodStopService:      true,
@@ -106,6 +108,23 @@ type RestartServiceArgs struct {
 	Name         string `json:"name"`
 	GracePeriod  string `json:"grace_period"`
 	TickerPeriod string `json:"ticker_period"`
+}
+
+// ReloadServiceArgs carries the timing knobs for a zero-downtime reload. The
+// durations are strings so the wire format stays human-readable and matches the
+// stop/restart args; the daemon parses them back with time.ParseDuration.
+type ReloadServiceArgs struct {
+	Name             string `json:"name"`
+	GracePeriod      string `json:"grace_period"`
+	TickerPeriod     string `json:"ticker_period"`
+	ReadinessTimeout string `json:"readiness_timeout"`
+	ProbeInterval    string `json:"probe_interval"`
+}
+
+// ReloadServiceResponse reports the process groups the reload swapped between.
+type ReloadServiceResponse struct {
+	OldPGID int `json:"old_pgid"`
+	NewPGID int `json:"new_pgid"`
 }
 
 type StopServiceArgs struct {
