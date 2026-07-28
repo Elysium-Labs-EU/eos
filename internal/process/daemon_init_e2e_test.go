@@ -130,8 +130,8 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 
 // TestNewStandaloneDaemon_E2E_SocketIsOwnerOnly proves the control socket is
 // pinned to 0600 right after bind(2), rather than left at whatever mode the
-// process umask happened to produce — the fix for the socket half of issue
-// #121 (peer-uid checking in handleConnection is the other half).
+// process umask happened to produce — the socket half of the fix (peer-uid
+// checking in handleConnection is the other half).
 func TestNewStandaloneDaemon_E2E_SocketIsOwnerOnly(t *testing.T) {
 	sockDir := shortTempDir(t)
 	_, _, dbDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
