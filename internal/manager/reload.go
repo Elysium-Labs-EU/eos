@@ -80,33 +80,12 @@ func (m *LocalManager) ReloadService(name string, probe ReadinessProbe, cfg Relo
 		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceRestarts, name, err)
 	}()
 
-	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
+	target, err := m.prepareReloadTarget(name)
 	if err != nil {
 		return ReloadResult{}, err
 	}
 
-	instance, err := m.GetServiceInstance(name)
-	if err != nil {
-		return ReloadResult{}, fmt.Errorf("get service instance for %s: %w", name, err)
-	}
-	if instance == nil {
-		return ReloadResult{}, fmt.Errorf("no service instance for %s", name)
-	}
-
-	// The outgoing instance must already be serving: reload swaps a live
-	// instance, it does not start a cold one. Pin the exact PGID now so the
-	// drain below signals only it, never the incoming instance that shares the
-	// same service name in process history.
-	history, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
-	if err != nil {
-		return ReloadResult{}, fmt.Errorf("get process history for %s: %w", name, err)
-	}
-	oldPGID := livePGIDInHistory(history)
-	if oldPGID == 0 {
-		return ReloadResult{}, ErrServiceNotRunning
-	}
-
-	lio, err := m.prepareLaunchIO(service.Name, config)
+	lio, err := m.prepareLaunchIO(target.service.Name, target.config)
 	if err != nil {
 		return ReloadResult{}, err
 	}
@@ -114,66 +93,134 @@ func (m *LocalManager) ReloadService(name string, probe ReadinessProbe, cfg Relo
 	launchSuccess := false
 	defer func() {
 		if !launchSuccess {
-			if closeErr := lio.closeAll(m, service.Name); closeErr != nil {
+			if closeErr := lio.closeAll(m, target.service.Name); closeErr != nil {
 				err = errors.Join(err, closeErr)
 			}
 		}
 	}()
 
-	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
+	if binaryErr := m.validateRuntimeBinary(target.config); binaryErr != nil {
 		return ReloadResult{}, binaryErr
 	}
 
-	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", oldPGID)
-	newPGID, newStartedAtTicks, err := m.launchAndCapture(service, config, lio, resolvedSinks, &launchSuccess, "reload command")
+	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
+	newPGID, newStartedAtTicks, err := m.launchAndCapture(target.service, target.config, lio, target.resolvedSinks, &launchSuccess, "reload command")
 	if err != nil {
 		return ReloadResult{}, err
 	}
 
-	// Record the incoming instance as its own Starting row. It shares the
-	// service name, so it becomes the most-recent process-history entry the
-	// health monitor tracks; once the old instance is drained the monitor drives
-	// its Starting→Running transition on its own tick, exactly as for a start.
-	if _, histErr := m.db.RegisterProcessHistoryEntry(m.ctx, newPGID, newStartedAtTicks, service.Name, types.ProcessStateStarting); histErr != nil {
-		cleanPGID, wrapErr := killAndWrap(newPGID, histErr, "register reload process history entry")
-		return ReloadResult{NewPGID: cleanPGID}, wrapErr
+	if cleanPGID, regErr := m.registerIncomingInstance(target.service.Name, newPGID, newStartedAtTicks); regErr != nil {
+		return ReloadResult{NewPGID: cleanPGID}, regErr
 	}
 
 	// Probe the incoming instance before touching the outgoing one — the
 	// acceptance guarantee is that health probing starts before the old instance
 	// stops, so a new instance that never comes up leaves the old one serving.
-	if !m.awaitReady(probe, newPGID, newStartedAtTicks, config.Port, cfg) {
-		if killErr := syscall.Kill(-newPGID, syscall.SIGKILL); killErr != nil {
-			m.logger.Error("reload: killing unready new instance", "service", name, "pgid", newPGID, "error", killErr)
-		}
-		// Delete the aborted instance's history row rather than mark it Failed.
-		// It is the most-recent row for this service, so a Failed row here would
-		// make the health monitor's next tick see the service as failed and
-		// restart it — killing the old instance this abort just protected.
-		// Removing the row restores the still-running old instance as the
-		// most-recent entry, so the monitor keeps supervising it unchanged.
-		if _, delErr := m.db.RemoveProcessHistoryEntryViaPGID(m.ctx, newPGID); delErr != nil {
-			m.logger.Error("reload: removing aborted instance history row", "service", name, "pgid", newPGID, "error", delErr)
-		}
-		return ReloadResult{OldPGID: oldPGID, NewPGID: newPGID}, fmt.Errorf("%w: new instance for %s not ready within %s", ErrReloadNotReady, name, cfg.ReadinessTimeout)
+	if !m.awaitReady(probe, newPGID, newStartedAtTicks, target.config.Port, cfg) {
+		return m.abortUnreadyReload(name, newPGID, target.oldPGID, cfg.ReadinessTimeout)
 	}
 
-	m.logger.Debug("reload: new instance ready, draining old", "service", name, "new_pgid", newPGID, "old_pgid", oldPGID)
-	if drainErr := m.drainInstance(name, oldPGID, cfg.GracePeriod, cfg.TickerPeriod); drainErr != nil {
-		return ReloadResult{OldPGID: oldPGID, NewPGID: newPGID}, fmt.Errorf("draining old instance for %s: %w", name, drainErr)
+	m.logger.Debug("reload: new instance ready, draining old", "service", name, "new_pgid", newPGID, "old_pgid", target.oldPGID)
+	if drainErr := m.drainInstance(name, target.oldPGID, cfg.GracePeriod, cfg.TickerPeriod); drainErr != nil {
+		return ReloadResult{OldPGID: target.oldPGID, NewPGID: newPGID}, fmt.Errorf("draining old instance for %s: %w", name, drainErr)
 	}
 
-	// Reaffirm the instance row against the new generation, mirroring
-	// recordRestartedInstance: a reload is a restart-class transition, so bump
-	// the restart count and stamp the fresh start.
+	m.recordReloadCutover(name, target.instance.RestartCount)
+	return ReloadResult{OldPGID: target.oldPGID, NewPGID: newPGID}, nil
+}
+
+// reloadTarget is the resolved, validated input a cutover launches from: the
+// service and its config, the sinks to wire, the current instance row (for its
+// restart count), and the exact PGID of the live outgoing instance to drain.
+type reloadTarget struct {
+	service       types.ServiceCatalogEntry
+	config        *types.ServiceConfig
+	instance      *types.ServiceInstance
+	resolvedSinks []types.LogSink
+	oldPGID       int
+}
+
+// prepareReloadTarget resolves everything a reload needs before it launches the
+// incoming instance: it loads the service config, confirms an instance row
+// exists, and pins the live outgoing PGID. Reload swaps a running instance, so a
+// service with no live process group is ErrServiceNotRunning rather than a cold
+// start. Pinning the exact PGID here means the later drain signals only it,
+// never the incoming instance that shares the same service name in history.
+func (m *LocalManager) prepareReloadTarget(name string) (reloadTarget, error) {
+	service, config, resolvedSinks, err := m.loadServiceForLaunch(name)
+	if err != nil {
+		return reloadTarget{}, err
+	}
+
+	instance, err := m.GetServiceInstance(name)
+	if err != nil {
+		return reloadTarget{}, fmt.Errorf("get service instance for %s: %w", name, err)
+	}
+	if instance == nil {
+		return reloadTarget{}, fmt.Errorf("no service instance for %s", name)
+	}
+
+	history, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
+	if err != nil {
+		return reloadTarget{}, fmt.Errorf("get process history for %s: %w", name, err)
+	}
+	oldPGID := livePGIDInHistory(history)
+	if oldPGID == 0 {
+		return reloadTarget{}, ErrServiceNotRunning
+	}
+
+	return reloadTarget{
+		service:       service,
+		config:        config,
+		resolvedSinks: resolvedSinks,
+		instance:      instance,
+		oldPGID:       oldPGID,
+	}, nil
+}
+
+// registerIncomingInstance records the freshly launched incoming instance as its
+// own Starting row. It shares the service name, so it becomes the most-recent
+// process-history entry the health monitor tracks; once the old instance is
+// drained the monitor drives its Starting→Running transition on its own tick,
+// exactly as for a start. On a DB failure the new group is killed so a
+// launched-but-untracked process can't leak; the returned int is the cleaned-up
+// PGID to report (see killAndWrap), and newPGID on success.
+func (m *LocalManager) registerIncomingInstance(serviceName string, newPGID int, newStartedAtTicks int64) (int, error) {
+	if _, histErr := m.db.RegisterProcessHistoryEntry(m.ctx, newPGID, newStartedAtTicks, serviceName, types.ProcessStateStarting); histErr != nil {
+		return killAndWrap(newPGID, histErr, "register reload process history entry")
+	}
+	return newPGID, nil
+}
+
+// abortUnreadyReload tears down an incoming instance that never passed the
+// readiness gate: it force-kills the new group and DELETES its history row
+// rather than marking it Failed. That row is the most-recent one for the
+// service, so a Failed row would make the health monitor's next tick see the
+// service as failed and restart it — killing the old instance this abort just
+// protected. Removing the row restores the still-running old instance as the
+// most-recent entry, so the monitor keeps supervising it unchanged. Returns
+// ErrReloadNotReady so a broken deploy degrades to "no change".
+func (m *LocalManager) abortUnreadyReload(name string, newPGID, oldPGID int, readinessTimeout time.Duration) (ReloadResult, error) {
+	if killErr := syscall.Kill(-newPGID, syscall.SIGKILL); killErr != nil {
+		m.logger.Error("reload: killing unready new instance", "service", name, "pgid", newPGID, "error", killErr)
+	}
+	if _, delErr := m.db.RemoveProcessHistoryEntryViaPGID(m.ctx, newPGID); delErr != nil {
+		m.logger.Error("reload: removing aborted instance history row", "service", name, "pgid", newPGID, "error", delErr)
+	}
+	return ReloadResult{OldPGID: oldPGID, NewPGID: newPGID}, fmt.Errorf("%w: new instance for %s not ready within %s", ErrReloadNotReady, name, readinessTimeout)
+}
+
+// recordReloadCutover reaffirms the instance row against the new generation,
+// mirroring recordRestartedInstance: a reload is a restart-class transition, so
+// it bumps the restart count and stamps the fresh start. A DB failure here is
+// logged, not fatal — the cutover already happened.
+func (m *LocalManager) recordReloadCutover(name string, priorRestartCount int) {
 	if updErr := m.db.UpdateServiceInstance(m.ctx, name, database.ServiceInstanceUpdate{
 		StartedAt:    new(time.Now()),
-		RestartCount: new(instance.RestartCount + 1),
+		RestartCount: new(priorRestartCount + 1),
 	}); updErr != nil {
 		m.logger.Error("reload: recording cutover on service instance", "service", name, "error", updErr)
 	}
-
-	return ReloadResult{OldPGID: oldPGID, NewPGID: newPGID}, nil
 }
 
 // reloadReadyConsecutivePasses is how many back-to-back probe successes the new
@@ -248,32 +295,53 @@ func (m *LocalManager) drainInstance(name string, pgid int, gracePeriod, tickerP
 		return nil
 	}
 
+	drained, err := m.terminateInstance(name, pgid, entry.StartedAtTicks, gracePeriod, tickerPeriod)
+	if err != nil {
+		return err
+	}
+	if !drained {
+		// Manager shutting down; leave the row for startup reconciliation.
+		return nil
+	}
+
+	m.markInstanceStopped(pgid)
+	return nil
+}
+
+// terminateInstance SIGTERMs a single live process group and waits up to
+// gracePeriod for it to exit, force-killing it if it overstays so the cutover
+// can't stall on a service ignoring SIGTERM. It returns drained=false only when
+// the manager context is canceled mid-wait, so the caller leaves the history
+// row for startup reconciliation instead of marking it Stopped. A group already
+// gone by the time the signal lands counts as drained.
+func (m *LocalManager) terminateInstance(name string, pgid int, startedAtTicks int64, gracePeriod, tickerPeriod time.Duration) (drained bool, err error) {
 	requestStartTime := time.Now()
 	if killErr := syscall.Kill(-pgid, syscall.SIGTERM); killErr != nil {
-		if !procutil.IsAliveMatching(pgid, entry.StartedAtTicks) {
-			m.markInstanceStopped(pgid)
-			return nil
+		if !procutil.IsAliveMatching(pgid, startedAtTicks) {
+			return true, nil
 		}
-		return fmt.Errorf("signaling old instance pgid %d: %w", pgid, killErr)
+		return false, fmt.Errorf("signaling old instance pgid %d: %w", pgid, killErr)
 	}
 
 	pending := map[int]bool{pgid: true}
 	errored := map[int]string{}
 	_, canceled := m.waitForPendingStops(name, pending, errored, requestStartTime, gracePeriod, tickerPeriod)
 	if canceled {
-		// Manager shutting down; leave the row for startup reconciliation.
-		return nil
+		return false, nil
 	}
 	if len(errored) > 0 {
-		// Exceeded the grace period while still alive: force the exit so the
-		// cutover can't stall on a service ignoring SIGTERM.
-		if killErr := syscall.Kill(-pgid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
-			m.logger.Error("reload: force-killing old instance", "service", name, "pgid", pgid, "error", killErr)
-		}
+		m.forceKillInstance(name, pgid)
 	}
+	return true, nil
+}
 
-	m.markInstanceStopped(pgid)
-	return nil
+// forceKillInstance SIGKILLs a process group that outlived its grace period. An
+// ESRCH (no such process) means it exited in the race between the grace check
+// and the signal, which is a clean drain, not an error.
+func (m *LocalManager) forceKillInstance(name string, pgid int) {
+	if killErr := syscall.Kill(-pgid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		m.logger.Error("reload: force-killing old instance", "service", name, "pgid", pgid, "error", killErr)
+	}
 }
 
 // markInstanceStopped records a single drained instance's history row as
