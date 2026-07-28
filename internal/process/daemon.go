@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,13 +67,17 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbos
 	reconcileOrphans(reconcileCtx, d.db, d.logger)
 	reconcileSpan.End()
 
+	// Bring the health monitor up before recovering persisted services: the
+	// monitor is what advances a service to Running, the readiness signal a
+	// dependent's boot gate waits on. Recover after it, or a dependency could
+	// never be observed ready and every dependent would stall to max_wait.
+	d.serve(healthConfig, shutdownConfig)
+
 	if underSystemd {
-		err := d.recover()
-		if err != nil {
+		if err := d.recover(); err != nil {
 			return err
 		}
 	}
-	d.serve(healthConfig, shutdownConfig)
 
 	d.logger.Info("daemon started successfully")
 
@@ -80,7 +85,7 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbos
 	return nil
 }
 
-func bootPersistedServices(mgr *manager.LocalManager, logger *slog.Logger) error {
+func bootPersistedServices(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger) error {
 	allRegisteredServices, err := mgr.GetAllServiceCatalogEntries()
 	if err != nil {
 		errorMessage := fmt.Errorf("getting all service catalog entries: %w", err)
@@ -88,16 +93,51 @@ func bootPersistedServices(mgr *manager.LocalManager, logger *slog.Logger) error
 		return errorMessage
 	}
 
+	// Boot each service in its own goroutine so a dependent blocked on its
+	// depends_on can't hold up an independent service — or the very dependency
+	// it's waiting for — from starting. This keeps boot order-independent: any
+	// catalog order converges, and a cycle or unmet dependency fails loud after
+	// its own max_wait instead of wedging the whole boot on a fixed sequence.
+	var wg sync.WaitGroup
 	for _, service := range allRegisteredServices {
-		logger.Debug("booting persisted service", "service", service.Name)
-		_, err := mgr.StartService(service.Name)
-		if err != nil {
-			errorMessage := fmt.Errorf("starting service: %w", err)
-			logger.Info(errorMessage.Error())
-			continue
+		wg.Add(1)
+		go func(entry types.ServiceCatalogEntry) {
+			defer wg.Done()
+			bootService(ctx, mgr, logger, entry)
+		}(service)
+	}
+	wg.Wait()
+	return nil
+}
+
+// bootService gates one persisted service on its declared dependencies, then
+// starts it. Dependency-wait and start failures are logged and swallowed: one
+// service failing to come up must not abort the daemon or the other services'
+// boot, matching the pre-ordering "log and continue" behavior.
+func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger, entry types.ServiceCatalogEntry) {
+	logger.Debug("booting persisted service", "service", entry.Name)
+
+	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
+	if err != nil {
+		logger.Info(fmt.Errorf("boot: loading service config for %s: %w", entry.Name, err).Error())
+		return
+	}
+
+	if len(cfg.DependsOn) > 0 {
+		maxWait, waitErr := manager.ParseMaxWait(cfg.MaxWait)
+		if waitErr != nil {
+			logger.Info(fmt.Errorf("boot: %s: %w", entry.Name, waitErr).Error())
+			return
+		}
+		if depErr := manager.WaitForDependencies(ctx, mgr, entry.Name, cfg.DependsOn, maxWait); depErr != nil {
+			logger.Info(fmt.Errorf("boot: %w", depErr).Error())
+			return
 		}
 	}
-	return nil
+
+	if _, startErr := mgr.StartService(entry.Name); startErr != nil {
+		logger.Info(fmt.Errorf("starting service: %w", startErr).Error())
+	}
 }
 
 // reconcileOrphans runs once at daemon startup and checks every known PGID
@@ -213,7 +253,7 @@ func (d *daemon) shutdown(ctx context.Context) {
 }
 
 func (d *daemon) recover() error {
-	return bootPersistedServices(d.mgr, d.logger)
+	return bootPersistedServices(d.ctx, d.mgr, d.logger)
 }
 
 func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig) {

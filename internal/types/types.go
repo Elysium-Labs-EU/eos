@@ -75,11 +75,20 @@ func (r LogSinkRef) MarshalYAML() (any, error) {
 }
 
 type ServiceConfig struct {
-	Runtime       Runtime      `json:"runtime"                  yaml:"runtime"`
-	Name          string       `json:"name"                     yaml:"name"`
-	Command       string       `json:"command"                  yaml:"command"`
-	EnvFile       string       `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
-	CronRestart   string       `json:"cron_restart,omitempty"   yaml:"cron_restart,omitempty"`
+	Runtime     Runtime `json:"runtime"                  yaml:"runtime"`
+	Name        string  `json:"name"                     yaml:"name"`
+	Command     string  `json:"command"                  yaml:"command"`
+	EnvFile     string  `json:"env_file,omitempty"       yaml:"env_file,omitempty"`
+	CronRestart string  `json:"cron_restart,omitempty"   yaml:"cron_restart,omitempty"`
+	// MaxWait caps how long starting this service blocks on DependsOn becoming
+	// ready before failing loud. Empty uses DependencyDefaultMaxWait. It's the
+	// ceiling on retry-until-ready, not a fixed per-check timeout: a dependency
+	// that comes up slowly still releases the dependent the moment it's ready.
+	MaxWait string `json:"max_wait,omitempty" yaml:"max_wait,omitempty"`
+	// DependsOn names services that must report healthy (state Running, the
+	// health monitor's own readiness signal) before this service is started.
+	// Empty means start immediately, exactly as a service with no ordering.
+	DependsOn     []string     `json:"depends_on,omitempty"     yaml:"depends_on,omitempty"`
 	LogSinks      []LogSinkRef `json:"log_sinks,omitempty"      yaml:"log_sinks,omitempty"`
 	Port          int          `json:"port,omitempty"           yaml:"port,omitempty"`
 	MemoryLimitMb int          `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
