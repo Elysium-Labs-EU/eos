@@ -871,12 +871,23 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 }
 
 // isAuthorizedPeer reports whether gotUID, the peer credential read off the
-// connecting socket, matches allowedUID, the daemon's own uid. The base
-// dir's 0750 mode alone still admits every member of the daemon owner's
-// group, so this check — not file permissions — is what keeps another local
-// user off the control socket.
+// connecting socket, is allowed to issue commands to a daemon owned by
+// allowedUID. The base dir's 0750 mode alone still admits every member of
+// the daemon owner's group, so this check — not file permissions — is what
+// keeps another local user off the control socket.
+//
+// Root (uid 0) is always authorized regardless of allowedUID. eos's own
+// privilege-drop (cmd/daemon.go's SysProcAttr.Credential) means a daemon
+// started under sudo runs with allowedUID resolved down to the invoking
+// user, not 0 — so a later `sudo eos <command>` (a supported pattern, see
+// the SUDO_USER handling in internal/config/config.go) connects as raw root
+// and would otherwise never match. Root already has unconditional
+// filesystem/process access to everything the daemon owns regardless of
+// this check, so refusing it here would block legitimate use without
+// stopping any real attacker — the same reasoning as ownership.Align's
+// root no-op.
 func isAuthorizedPeer(gotUID, allowedUID uint32) bool {
-	return gotUID == allowedUID
+	return gotUID == allowedUID || gotUID == 0
 }
 
 func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {

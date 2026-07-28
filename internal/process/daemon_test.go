@@ -619,6 +619,7 @@ func TestIsAuthorizedPeer(t *testing.T) {
 		{"matching uid authorized", 1000, 1000, true},
 		{"mismatched uid rejected", 1000, 1001, false},
 		{"root allowed uid zero", 0, 0, true},
+		{"root authorized regardless of allowedUID", 0, 1000, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -715,15 +716,20 @@ func TestHandleConnection_SameUIDAccepted(t *testing.T) {
 	}
 }
 
-// TestHandleConnection_MismatchedUIDRejected proves a peer whose uid doesn't
-// match the daemon's own uid is rejected before its request is even decoded.
-// A real second-uid caller isn't available in CI, so this connects as the
-// real process uid (a genuine SO_PEERCRED/LOCAL_PEERCRED read, not a mock)
-// but tells handleConnection to only accept a different uid — the same
+// TestHandleConnection_MismatchedUIDRejected proves a non-root peer whose uid
+// doesn't match the daemon's own uid is rejected before its request is even
+// decoded — root gets its own carve-out (TestHandleConnection_RootUIDAccepted)
+// so this only holds when the real process uid isn't 0, hence the skip under
+// root. A real second-uid caller isn't available in CI, so this connects as
+// the real process uid (a genuine SO_PEERCRED/LOCAL_PEERCRED read, not a
+// mock) but tells handleConnection to only accept a different uid — the same
 // boundary check production wires up via os.Getuid(). fakeServiceManager's
 // getVersionFunc is left nil, so a panic would surface if the request were
 // ever dispatched.
 func TestHandleConnection_MismatchedUIDRejected(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root is always an authorized peer; see TestHandleConnection_RootUIDAccepted")
+	}
 	t.Setenv("EOS_BASE_DIR", t.TempDir())
 
 	serverConn, clientConn := newUnixSocketPair(t)
@@ -755,5 +761,48 @@ func TestHandleConnection_MismatchedUIDRejected(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "rejecting connection from unauthorized peer") {
 		t.Errorf("expected a rejection log entry, got: %s", logBuf.String())
+	}
+}
+
+// TestHandleConnection_RootUIDAccepted proves the case this round's fix
+// exists for: a peer connecting as raw root (uid 0) is authorized even
+// though it doesn't match the daemon's own (privilege-dropped) uid — the
+// real-world shape of `sudo eos <command>` against an already-running
+// daemon that was started under sudo and dropped to a lower uid (see
+// cmd/daemon.go's SysProcAttr.Credential). Requires root to actually
+// present uid 0 over SO_PEERCRED/LOCAL_PEERCRED, so it skips otherwise.
+func TestHandleConnection_RootUIDAccepted(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root to exercise a real uid-0 peer credential")
+	}
+	t.Setenv("EOS_BASE_DIR", t.TempDir())
+
+	serverConn, clientConn := newUnixSocketPair(t)
+	logger := discardLogger()
+	mgr := &fakeServiceManager{
+		getVersionFunc: func() (types.GetVersionResponse, error) {
+			return types.GetVersionResponse{Version: "test-version"}, nil
+		},
+	}
+	daemonUID := uint32(os.Getuid()) + 1 // simulates a daemon dropped to a non-root uid
+
+	if err := json.NewEncoder(clientConn).Encode(types.DaemonRequest{Method: types.MethodGetVersion}); err != nil {
+		t.Fatalf("client encode: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		handleConnection(serverConn, mgr, logger, daemonUID)
+		close(done)
+	}()
+
+	var resp types.DaemonResponse
+	if err := json.NewDecoder(clientConn).Decode(&resp); err != nil {
+		t.Fatalf("client decode: %v", err)
+	}
+	<-done
+
+	if !resp.Success {
+		t.Fatalf("expected root to be authorized against a non-root daemon uid, got error: %s", resp.Error)
 	}
 }
