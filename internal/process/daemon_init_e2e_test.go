@@ -128,6 +128,35 @@ func TestNewStandaloneDaemon_E2E_VerboseOff_NoDebugLifecycleLogs(t *testing.T) {
 	}
 }
 
+// TestNewStandaloneDaemon_E2E_SocketIsOwnerOnly proves the control socket is
+// pinned to 0600 right after bind(2), rather than left at whatever mode the
+// process umask happened to produce — the socket half of the fix (peer-uid
+// checking in handleConnection is the other half).
+func TestNewStandaloneDaemon_E2E_SocketIsOwnerOnly(t *testing.T) {
+	sockDir := shortTempDir(t)
+	_, _, dbDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	t.Setenv("EOS_BASE_DIR", dbDir)
+
+	standalone := daemonInitCfg(sockDir)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	d, err := newStandaloneDaemon(ctx, false /* logToFileAndConsole */, false /* verbose */, dbDir, standalone, config.ShutdownConfig{}, config.TelemetryConfig{})
+	if err != nil {
+		t.Fatalf("newStandaloneDaemon: %v", err)
+	}
+	defer d.shutdown(ctx)
+
+	info, err := os.Stat(standalone.SocketPath)
+	if err != nil {
+		t.Fatalf("stat %s: %v", standalone.SocketPath, err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf("expected socket mode 0600, got %#o", got)
+	}
+}
+
 // ownerUID returns the owning uid of path, or fails the test.
 func ownerUID(t *testing.T, path string) int {
 	t.Helper()
