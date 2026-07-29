@@ -137,13 +137,18 @@ type TelemetryConfig struct {
 }
 
 type SystemConfig struct {
-	Daemon       DaemonConfig             `json:"daemon" yaml:"daemon"`
-	Sinks        map[string]types.LogSink `json:"sinks" yaml:"sinks"`
-	Telemetry    TelemetryConfig          `json:"telemetry" yaml:"telemetry"`
-	Health       HealthConfig             `json:"health" yaml:"health"`
-	Shutdown     ShutdownConfig           `json:"shutdown" yaml:"shutdown"`
-	UnderSystemd bool                     `json:"under_systemd" yaml:"underSystemd"`
-	Verbose      bool                     `json:"verbose" yaml:"verbose"`
+	Daemon DaemonConfig             `json:"daemon" yaml:"daemon"`
+	Sinks  map[string]types.LogSink `json:"sinks" yaml:"sinks"`
+	// BaseDir is the resolved eos data directory (see GetBaseDir), the single
+	// derivation site for this fact. Commands that need it (e.g. the snapshot
+	// file location) read it here instead of re-resolving identity/overrides
+	// themselves.
+	BaseDir      string          `json:"base_dir" yaml:"base_dir"`
+	Telemetry    TelemetryConfig `json:"telemetry" yaml:"telemetry"`
+	Health       HealthConfig    `json:"health" yaml:"health"`
+	Shutdown     ShutdownConfig  `json:"shutdown" yaml:"shutdown"`
+	UnderSystemd bool            `json:"under_systemd" yaml:"underSystemd"`
+	Verbose      bool            `json:"verbose" yaml:"verbose"`
 }
 
 func UserSystemdDir() (string, error) {
