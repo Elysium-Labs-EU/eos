@@ -337,6 +337,107 @@ func TestDaemonManager_GetMostRecentProcessHistoryEntry(t *testing.T) {
 	}
 }
 
+func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
+	var gotArgs types.SetDependencyWaitStatusArgs
+	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
+		_ = json.Unmarshal(req.Args, &gotArgs)
+		return types.DaemonResponse{Success: true}
+	})
+	dm := newTestDM(t, socketPath)
+	if err := dm.SetDependencyWaitStatus("web", []string{"db", "cache"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotArgs.ServiceName != "web" {
+		t.Errorf("expected service name %q, got %q", "web", gotArgs.ServiceName)
+	}
+	if len(gotArgs.Pending) != 2 || gotArgs.Pending[0] != "db" || gotArgs.Pending[1] != "cache" {
+		t.Errorf("expected pending [db cache], got %v", gotArgs.Pending)
+	}
+}
+
+func TestDaemonManager_SetDependencyWaitStatus_requestError(t *testing.T) {
+	dm := newTestDM(t, "/nonexistent/socket.sock")
+	if err := dm.SetDependencyWaitStatus("web", []string{"db"}); err == nil {
+		t.Fatal("expected an error when the daemon is unreachable")
+	}
+}
+
+func TestDaemonManager_ClearDependencyWaitStatus(t *testing.T) {
+	var gotArgs types.ClearDependencyWaitStatusArgs
+	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
+		_ = json.Unmarshal(req.Args, &gotArgs)
+		return types.DaemonResponse{Success: true}
+	})
+	dm := newTestDM(t, socketPath)
+	if err := dm.ClearDependencyWaitStatus("web"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotArgs.ServiceName != "web" {
+		t.Errorf("expected service name %q, got %q", "web", gotArgs.ServiceName)
+	}
+}
+
+func TestDaemonManager_ClearDependencyWaitStatus_requestError(t *testing.T) {
+	dm := newTestDM(t, "/nonexistent/socket.sock")
+	if err := dm.ClearDependencyWaitStatus("web"); err == nil {
+		t.Fatal("expected an error when the daemon is unreachable")
+	}
+}
+
+func TestDaemonManager_GetDependencyWaitStatus_requestError(t *testing.T) {
+	dm := newTestDM(t, "/nonexistent/socket.sock")
+	if _, _, err := dm.GetDependencyWaitStatus("web"); err == nil {
+		t.Fatal("expected an error when the daemon is unreachable")
+	}
+}
+
+func TestDaemonManager_GetDependencyWaitStatus_malformedResponse(t *testing.T) {
+	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
+		return types.DaemonResponse{Success: true, Data: []byte(`{not valid json`)}
+	})
+	dm := newTestDM(t, socketPath)
+	if _, _, err := dm.GetDependencyWaitStatus("web"); err == nil {
+		t.Fatal("expected an error for a malformed response payload")
+	}
+}
+
+func TestDaemonManager_GetDependencyWaitStatus_waiting(t *testing.T) {
+	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
+		return okResponse(types.GetDependencyWaitStatusResponse{
+			Waiting: true,
+			Status: &types.DependencyWaitStatus{
+				ServiceName: "web",
+				Pending:     []string{"db"},
+			},
+		})
+	})
+	dm := newTestDM(t, socketPath)
+	status, waiting, err := dm.GetDependencyWaitStatus("web")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !waiting {
+		t.Fatal("expected waiting=true")
+	}
+	if status.ServiceName != "web" || len(status.Pending) != 1 || status.Pending[0] != "db" {
+		t.Errorf("unexpected status: %+v", status)
+	}
+}
+
+func TestDaemonManager_GetDependencyWaitStatus_notWaiting(t *testing.T) {
+	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
+		return okResponse(types.GetDependencyWaitStatusResponse{Waiting: false})
+	})
+	dm := newTestDM(t, socketPath)
+	status, waiting, err := dm.GetDependencyWaitStatus("web")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if waiting {
+		t.Errorf("expected waiting=false, got status %+v", status)
+	}
+}
+
 func TestDaemonManager_NewServiceLogFiles(t *testing.T) {
 	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
 		return okResponse(ServiceLogFilesResult{

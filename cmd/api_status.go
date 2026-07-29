@@ -13,15 +13,18 @@ import (
 )
 
 type apiStatusService struct {
-	StartedAt    *time.Time          `json:"started_at,omitempty"`
-	Error        *string             `json:"error,omitempty"`
-	Name         string              `json:"name"`
-	MemoryMb     string              `json:"memory_mb"`
-	CPU          string              `json:"cpu"`
-	Uptime       string              `json:"uptime"`
-	Status       types.ServiceStatus `json:"status"`
-	PGID         int                 `json:"pgid"`
-	RestartCount int                 `json:"restart_count"`
+	StartedAt *time.Time          `json:"started_at,omitempty"`
+	Error     *string             `json:"error,omitempty"`
+	Name      string              `json:"name"`
+	MemoryMb  string              `json:"memory_mb"`
+	CPU       string              `json:"cpu"`
+	Uptime    string              `json:"uptime"`
+	Status    types.ServiceStatus `json:"status"`
+	// WaitingFor lists the depends_on names this service is currently blocked
+	// on, set only when Status is "waiting". Empty/omitted otherwise.
+	WaitingFor   []string `json:"waiting_for,omitempty"`
+	PGID         int      `json:"pgid"`
+	RestartCount int      `json:"restart_count"`
 }
 
 type apiStatusResult struct {
@@ -47,6 +50,7 @@ Output schema (stdout, JSON):
         "restart_count": int              -- number of restarts
         "started_at":    string|omitted   -- RFC3339 start time
         "error":         string|omitted   -- last error if any
+        "waiting_for":   []string|omitted -- depends_on names still not ready (status "waiting" only)
       }
     ]
   }
@@ -105,6 +109,15 @@ Exit codes:
 				if serviceInstance != nil {
 					entry.StartedAt = serviceInstance.StartedAt
 					entry.RestartCount = serviceInstance.RestartCount
+				}
+
+				// Overrides whatever ProcessHistory-derived status was set
+				// above: a service blocked on depends_on has no process yet,
+				// so without this it's indistinguishable from one that was
+				// simply never started.
+				if pending := helpers.ResolveDependencyWaitStatus(mgr, reg.Name); len(pending) > 0 {
+					entry.Status = types.ServiceStatusWaitingForDeps
+					entry.WaitingFor = pending
 				}
 
 				services = append(services, entry)

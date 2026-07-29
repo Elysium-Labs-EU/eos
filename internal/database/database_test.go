@@ -767,3 +767,90 @@ func TestRemoveProcessHistoryEntryViaPGID_NotFound(t *testing.T) {
 		t.Error("expected false when removing nonexistent PGID")
 	}
 }
+
+func TestDependencyWaitStatus_SetGetClear(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
+		t.Fatalf("expected no wait recorded initially, waiting=%v err=%v", waiting, err)
+	}
+
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db", "cache"}); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	status, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web")
+	if err != nil {
+		t.Fatalf("GetDependencyWaitStatus: %v", err)
+	}
+	if !waiting {
+		t.Fatal("expected a recorded wait after Set")
+	}
+	if status.ServiceName != "web" {
+		t.Errorf("expected service name %q, got %q", "web", status.ServiceName)
+	}
+	if len(status.Pending) != 2 || status.Pending[0] != "db" || status.Pending[1] != "cache" {
+		t.Errorf("expected pending [db cache], got %v", status.Pending)
+	}
+	if status.Since.IsZero() {
+		t.Error("expected Since to be set")
+	}
+
+	if err := db.ClearDependencyWaitStatus(t.Context(), "web"); err != nil {
+		t.Fatalf("ClearDependencyWaitStatus: %v", err)
+	}
+	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
+		t.Fatalf("expected no wait after Clear, waiting=%v err=%v", waiting, err)
+	}
+}
+
+// TestDependencyWaitStatus_SetOverwrites proves a second Set on the same
+// service replaces the first rather than erroring on the primary key
+// collision — StartService serializes per-service (see LocalManager.serviceLocks),
+// so a second wait for the same name is always a fresh one, never concurrent.
+func TestDependencyWaitStatus_SetOverwrites(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}); err != nil {
+		t.Fatalf("first SetDependencyWaitStatus: %v", err)
+	}
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"cache", "proxy"}); err != nil {
+		t.Fatalf("second SetDependencyWaitStatus: %v", err)
+	}
+
+	status, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web")
+	if err != nil || !waiting {
+		t.Fatalf("expected the overwritten wait to be visible, waiting=%v err=%v", waiting, err)
+	}
+	if len(status.Pending) != 2 || status.Pending[0] != "cache" || status.Pending[1] != "proxy" {
+		t.Errorf("expected the second Set's pending [cache proxy], got %v", status.Pending)
+	}
+}
+
+func TestDependencyWaitStatus_ClearNonexistentIsNoop(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.ClearDependencyWaitStatus(t.Context(), "never-waited"); err != nil {
+		t.Fatalf("expected clearing a nonexistent wait to be a no-op, got: %v", err)
+	}
+}
+
+func TestClearAllDependencyWaits(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	for _, name := range []string{"a", "b", "c"} {
+		if err := db.SetDependencyWaitStatus(t.Context(), name, []string{"dep"}); err != nil {
+			t.Fatalf("SetDependencyWaitStatus(%s): %v", name, err)
+		}
+	}
+
+	if err := db.ClearAllDependencyWaits(t.Context()); err != nil {
+		t.Fatalf("ClearAllDependencyWaits: %v", err)
+	}
+
+	for _, name := range []string{"a", "b", "c"} {
+		if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), name); err != nil || waiting {
+			t.Errorf("expected %s to have no wait after ClearAllDependencyWaits, waiting=%v err=%v", name, waiting, err)
+		}
+	}
+}

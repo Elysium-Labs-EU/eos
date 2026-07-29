@@ -10,11 +10,37 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
+
+// dependencyWaitStatusReader is satisfied by any manager.ServiceManager whose
+// concrete type also tracks an in-flight depends_on wait (LocalManager,
+// DaemonManager, via manager.RecordDependencyWait). A manager that doesn't
+// (e.g. a test fake) is simply treated as "not waiting" — this is
+// status-display observability, not part of the dependency gate itself.
+type dependencyWaitStatusReader interface {
+	GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error)
+}
+
+// ResolveDependencyWaitStatus reports the dependency names name is currently
+// gated on, or nil if it isn't waiting on any right now. Status output uses
+// this to render a distinct "waiting" state instead of a service blocked on
+// depends_on looking identical to one that was simply never started.
+func ResolveDependencyWaitStatus(mgr manager.ServiceManager, name string) []string {
+	reader, ok := mgr.(dependencyWaitStatusReader)
+	if !ok {
+		return nil
+	}
+	wait, waiting, err := reader.GetDependencyWaitStatus(name)
+	if err != nil || !waiting {
+		return nil
+	}
+	return wait.Pending
+}
 
 func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {
 	if mostRecentProcess == nil {

@@ -3,9 +3,11 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -1374,5 +1376,157 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	}
 	if instance == nil {
 		t.Fatal("expected a tracked service instance after concurrent starts")
+	}
+}
+
+func TestDependencyWaitStatus(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	m := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if status, waiting, err := m.GetDependencyWaitStatus("web"); err != nil || waiting {
+		t.Fatalf("expected no wait recorded initially, got %+v waiting=%v (err %v)", status, waiting, err)
+	}
+
+	if err := m.SetDependencyWaitStatus("web", []string{"db", "cache"}); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	status, waiting, err := m.GetDependencyWaitStatus("web")
+	if err != nil {
+		t.Fatalf("GetDependencyWaitStatus: %v", err)
+	}
+	if !waiting {
+		t.Fatal("expected a recorded wait after Set")
+	}
+	if status.ServiceName != "web" {
+		t.Errorf("expected service name %q, got %q", "web", status.ServiceName)
+	}
+	if !slices.Equal(status.Pending, []string{"db", "cache"}) {
+		t.Errorf("expected pending [db cache], got %v", status.Pending)
+	}
+	if status.Since.IsZero() {
+		t.Error("expected Since to be set")
+	}
+
+	// A second service's wait must not be visible under the first's name, and
+	// mutating the returned slice must not corrupt the stored copy.
+	if _, _, err := m.GetDependencyWaitStatus("unrelated"); err != nil {
+		t.Fatalf("GetDependencyWaitStatus for unrelated service: %v", err)
+	}
+	status.Pending[0] = "corrupted"
+	if again, _, _ := m.GetDependencyWaitStatus("web"); again.Pending[0] != "db" {
+		t.Fatalf("mutating a returned status must not affect the stored copy, got %v", again.Pending)
+	}
+
+	if err := m.ClearDependencyWaitStatus("web"); err != nil {
+		t.Fatalf("ClearDependencyWaitStatus: %v", err)
+	}
+	if status, waiting, err := m.GetDependencyWaitStatus("web"); err != nil || waiting {
+		t.Fatalf("expected no wait after Clear, got %+v waiting=%v (err %v)", status, waiting, err)
+	}
+
+	// Clearing a service with no recorded wait must be a harmless no-op.
+	if err := m.ClearDependencyWaitStatus("never-waited"); err != nil {
+		t.Fatalf("ClearDependencyWaitStatus on unrecorded service: %v", err)
+	}
+}
+
+// TestDependencyWaitStatus_StaleIsSelfHealed proves a wait recorded past
+// DependencyWaitStaleAfter — modeling a process that recorded it (e.g. via
+// RecordDependencyWait) and was killed before its own defer could clear it —
+// reads as not-waiting and is opportunistically removed, instead of
+// misreporting an indefinite "waiting" forever.
+func TestDependencyWaitStatus_StaleIsSelfHealed(t *testing.T) {
+	db, rawConn, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	m := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := m.SetDependencyWaitStatus("web", []string{"db"}); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	backdated := time.Now().Add(-DependencyWaitStaleAfter - time.Minute)
+	if _, err := rawConn.ExecContext(t.Context(), `UPDATE dependency_waits SET since = ? WHERE service_name = ?`, backdated, "web"); err != nil {
+		t.Fatalf("backdating since: %v", err)
+	}
+
+	status, waiting, err := m.GetDependencyWaitStatus("web")
+	if err != nil {
+		t.Fatalf("GetDependencyWaitStatus: %v", err)
+	}
+	if waiting {
+		t.Fatalf("expected a stale wait to read as not-waiting, got %+v", status)
+	}
+
+	var count int
+	if err := rawConn.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM dependency_waits WHERE service_name = ?`, "web").Scan(&count); err != nil {
+		t.Fatalf("checking row was cleared: %v", err)
+	}
+	if count != 0 {
+		t.Error("expected the stale row to be opportunistically deleted, not just skipped")
+	}
+}
+
+func TestDependencyWaitStatusConcurrent(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	m := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			name := fmt.Sprintf("svc-%d", n)
+			_ = m.SetDependencyWaitStatus(name, []string{"dep"})
+			_, _, _ = m.GetDependencyWaitStatus(name)
+			_ = m.ClearDependencyWaitStatus(name)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// TestDependencyWaitStatusCrossProcess proves the fix for the review finding
+// that dependencyWaits was an in-memory map: two independent *database.DB
+// connections opened against the SAME state.db file, each wrapped in its own
+// LocalManager, model two separate CLI invocations in --no-daemon or
+// systemd-managed mode (newLocalManagerWithCleanup opens a fresh connection
+// per invocation). A wait set through one must be visible — and clearable —
+// through the other, not just within the process that set it.
+func TestDependencyWaitStatusCrossProcess(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+
+	dbA, _, err := database.NewTestDB(t.Context(), dbPath, database.MigrationsFS, database.MigrationsPath)
+	if err != nil {
+		t.Fatalf("opening first connection: %v", err)
+	}
+	t.Cleanup(func() { _ = dbA.CloseDBConnection() })
+	mgrA := NewLocalManager(dbA, filepath.Dir(dbPath), t.Context(), testutil.NewTestLogger(t))
+
+	dbB, _, err := database.NewTestDB(t.Context(), dbPath, database.MigrationsFS, database.MigrationsPath)
+	if err != nil {
+		t.Fatalf("opening second connection: %v", err)
+	}
+	t.Cleanup(func() { _ = dbB.CloseDBConnection() })
+	mgrB := NewLocalManager(dbB, filepath.Dir(dbPath), t.Context(), testutil.NewTestLogger(t))
+
+	if setErr := mgrA.SetDependencyWaitStatus("web", []string{"db", "cache"}); setErr != nil {
+		t.Fatalf("SetDependencyWaitStatus on mgrA: %v", setErr)
+	}
+
+	status, waiting, err := mgrB.GetDependencyWaitStatus("web")
+	if err != nil {
+		t.Fatalf("GetDependencyWaitStatus on mgrB: %v", err)
+	}
+	if !waiting {
+		t.Fatal("expected mgrB (a separate connection/process) to see the wait mgrA recorded")
+	}
+	if !slices.Equal(status.Pending, []string{"db", "cache"}) {
+		t.Errorf("expected pending [db cache], got %v", status.Pending)
+	}
+
+	if err := mgrB.ClearDependencyWaitStatus("web"); err != nil {
+		t.Fatalf("ClearDependencyWaitStatus on mgrB: %v", err)
+	}
+	if _, waiting, err := mgrA.GetDependencyWaitStatus("web"); err != nil || waiting {
+		t.Fatalf("expected mgrA to see the clear mgrB made, waiting=%v err=%v", waiting, err)
 	}
 }

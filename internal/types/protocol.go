@@ -28,6 +28,10 @@ const (
 
 	MethodGetMostRecentProcessHistoryEntry = "GetMostRecentProcessHistoryEntry"
 
+	MethodSetDependencyWaitStatus   = "SetDependencyWaitStatus"
+	MethodClearDependencyWaitStatus = "ClearDependencyWaitStatus"
+	MethodGetDependencyWaitStatus   = "GetDependencyWaitStatus"
+
 	MethodNewServiceLogFiles    = "NewServiceLogFiles"
 	MethodGetServiceLogFilePath = "GetServiceLogFilePath"
 
@@ -53,6 +57,10 @@ var ValidMethods = map[MethodName]bool{
 	MethodUpdateServiceCatalogEntry:   true,
 
 	MethodGetMostRecentProcessHistoryEntry: true,
+
+	MethodSetDependencyWaitStatus:   true,
+	MethodClearDependencyWaitStatus: true,
+	MethodGetDependencyWaitStatus:   true,
 
 	MethodNewServiceLogFiles:    true,
 	MethodGetServiceLogFilePath: true,
@@ -161,6 +169,31 @@ type UpdateServiceCatalogEntryArgs struct {
 
 type GetMostRecentProcessHistoryEntryArgs struct {
 	Name string `json:"name"`
+}
+
+// SetDependencyWaitStatusArgs records that ServiceName is currently blocked
+// waiting on Pending to become ready (see manager.RecordDependencyWait).
+type SetDependencyWaitStatusArgs struct {
+	ServiceName string   `json:"service_name"`
+	Pending     []string `json:"pending"`
+}
+
+// ClearDependencyWaitStatusArgs clears any recorded wait for ServiceName.
+type ClearDependencyWaitStatusArgs struct {
+	ServiceName string `json:"service_name"`
+}
+
+// GetDependencyWaitStatusArgs queries whether ServiceName currently has a
+// recorded depends_on wait.
+type GetDependencyWaitStatusArgs struct {
+	ServiceName string `json:"service_name"`
+}
+
+// GetDependencyWaitStatusResponse carries the recorded wait, or Waiting=false
+// when ServiceName has none.
+type GetDependencyWaitStatusResponse struct {
+	Status  *DependencyWaitStatus `json:"status,omitempty"`
+	Waiting bool                  `json:"waiting"`
 }
 
 type NewServiceLogFilesArgs struct {

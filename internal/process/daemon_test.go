@@ -175,9 +175,111 @@ func TestExecuteRequest_GetVersion(t *testing.T) {
 	}
 }
 
+// TestExecuteRequest_DependencyWaitStatus proves the full server-side round
+// trip for the 3 new methods against a real *manager.LocalManager: Set then
+// Get returns the recorded wait, Clear then Get returns not-waiting.
+func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	getArgs, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: "web"})
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	if !resp.Success {
+		t.Fatalf("initial Get: expected success, got error: %s", resp.Error)
+	}
+	var initial types.GetDependencyWaitStatusResponse
+	if err := json.Unmarshal(resp.Data, &initial); err != nil {
+		t.Fatalf("unmarshaling initial Get response: %v", err)
+	}
+	if initial.Waiting {
+		t.Fatalf("expected not waiting initially, got %+v", initial)
+	}
+
+	setArgs, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web", Pending: []string{"db", "cache"}})
+	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: setArgs})
+	if !resp.Success {
+		t.Fatalf("Set: expected success, got error: %s", resp.Error)
+	}
+
+	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	if !resp.Success {
+		t.Fatalf("Get after Set: expected success, got error: %s", resp.Error)
+	}
+	var afterSet types.GetDependencyWaitStatusResponse
+	if err := json.Unmarshal(resp.Data, &afterSet); err != nil {
+		t.Fatalf("unmarshaling post-Set Get response: %v", err)
+	}
+	if !afterSet.Waiting || afterSet.Status == nil {
+		t.Fatalf("expected waiting=true with a status after Set, got %+v", afterSet)
+	}
+	if afterSet.Status.ServiceName != "web" || len(afterSet.Status.Pending) != 2 {
+		t.Errorf("unexpected status after Set: %+v", afterSet.Status)
+	}
+
+	clearArgs, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: "web"})
+	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: clearArgs})
+	if !resp.Success {
+		t.Fatalf("Clear: expected success, got error: %s", resp.Error)
+	}
+
+	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	if !resp.Success {
+		t.Fatalf("Get after Clear: expected success, got error: %s", resp.Error)
+	}
+	var afterClear types.GetDependencyWaitStatusResponse
+	if err := json.Unmarshal(resp.Data, &afterClear); err != nil {
+		t.Fatalf("unmarshaling post-Clear Get response: %v", err)
+	}
+	if afterClear.Waiting {
+		t.Fatalf("expected not waiting after Clear, got %+v", afterClear)
+	}
+}
+
+// TestExecuteRequest_DependencyWaitStatus_unsupportedManager proves the 3
+// handlers degrade to a clean error (not a panic) against a manager.ServiceManager
+// that doesn't implement dependencyWaitStatusStore.
+func TestExecuteRequest_DependencyWaitStatus_unsupportedManager(t *testing.T) {
+	mgr := &fakeServiceManager{}
+
+	for _, method := range []types.MethodName{
+		types.MethodSetDependencyWaitStatus,
+		types.MethodClearDependencyWaitStatus,
+		types.MethodGetDependencyWaitStatus,
+	} {
+		t.Run(string(method), func(t *testing.T) {
+			resp := executeRequest(mgr, types.DaemonRequest{Method: method, Args: []byte(`{}`)})
+			if resp.Success {
+				t.Fatalf("expected failure for unsupported manager, got success")
+			}
+			if !strings.Contains(resp.Error, "not supported") {
+				t.Errorf("expected a 'not supported' error, got: %s", resp.Error)
+			}
+		})
+	}
+}
+
 func TestReconcileOrphans_Empty(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	reconcileOrphans(t.Context(), db, testutil.NewTestLogger(t))
+}
+
+// TestReconcileOrphans_ClearsDependencyWaits proves a fresh daemon boot wipes
+// any dependency_waits row left over from a previous daemon process — it
+// belonged to a goroutine that no longer exists, so trusting it (even within
+// manager.DependencyWaitStaleAfter) would misreport a service as gated on a
+// dependency that nothing is actually still waiting for.
+func TestReconcileOrphans_ClearsDependencyWaits(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"proxy"}); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	reconcileOrphans(t.Context(), db, testutil.NewTestLogger(t))
+
+	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
+		t.Errorf("expected reconcileOrphans to clear the stale wait, waiting=%v err=%v", waiting, err)
+	}
 }
 
 func TestReconcileOrphans_NoHistory(t *testing.T) {

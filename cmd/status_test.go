@@ -153,6 +153,64 @@ func TestStatusCommandWithRunningService(t *testing.T) {
 	}
 }
 
+// TestStatusCommandWithDependencyWait proves a service currently gated on
+// depends_on renders "waiting" (and names the still-pending dependency)
+// instead of "stopped" — the distinct state issue #136 asks for, since a
+// blocked service and one never started otherwise look identical.
+func TestStatusCommandWithDependencyWait(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v\n", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err := os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v", err)
+	}
+
+	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy"}); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	cmd.SetArgs([]string{"status"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status should not return an error, got: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, testFile.Name) {
+		t.Errorf("expected service name %q in status table, got: %s", testFile.Name, output)
+	}
+	if !strings.Contains(output, "waiting") {
+		t.Errorf("expected 'waiting' status for a service gated on depends_on, got: %s", output)
+	}
+	if strings.Contains(output, "stopped") {
+		t.Errorf("a waiting service must not also render as 'stopped', got: %s", output)
+	}
+	if !strings.Contains(output, "proxy") {
+		t.Errorf("expected the pending dependency name 'proxy' in output, got: %s", output)
+	}
+}
+
 func TestStatusCommandConfigLoadError(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupCmd(t)
 

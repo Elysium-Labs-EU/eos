@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,23 @@ type Database interface {
 	RegisterProcessHistoryEntry(ctx context.Context, pgid int, startedAtTicks int64, serviceName string, state types.ProcessState) (types.ProcessHistory, error)
 	RemoveProcessHistoryEntryViaPGID(ctx context.Context, pgid int) (bool, error)
 	UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates ProcessHistoryUpdate) error
+
+	// SetDependencyWaitStatus, ClearDependencyWaitStatus, and
+	// GetDependencyWaitStatus back manager.RecordDependencyWait: unlike
+	// process_history/service_instances they have no foreign-key-linked
+	// catalog entry to hang off, so they're a standalone table keyed on
+	// service_name, shared by every LocalManager instance pointed at the same
+	// state.db (the daemon's, or an ephemeral --no-daemon CLI invocation's) —
+	// the same mechanism that already makes ProcessHistory visible across
+	// process boundaries.
+	SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string) error
+	ClearDependencyWaitStatus(ctx context.Context, serviceName string) error
+	GetDependencyWaitStatus(ctx context.Context, serviceName string) (status types.DependencyWaitStatus, waiting bool, err error)
+	// ClearAllDependencyWaits drops every recorded wait. Called once at daemon
+	// startup (see reconcileOrphans): any wait recorded by a previous process
+	// is guaranteed stale after a restart, since the goroutine that was
+	// waiting on it no longer exists.
+	ClearAllDependencyWaits(ctx context.Context) error
 
 	RunMigrations(migrationsFS embed.FS, migrationsPath string) error
 	GetCurrentMigrationVersion(migrationsFS embed.FS, migrationsPath string) (uint, bool, error)
@@ -594,6 +612,69 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("process history entry %v not found", pgid)
+	}
+	return nil
+}
+
+// SetDependencyWaitStatus upserts serviceName's recorded wait: a service can
+// only ever be waiting on one depends_on gate at a time (StartService is
+// serialized per-service, see LocalManager.serviceLocks), so REPLACE on the
+// primary key is always the correct "start a fresh wait" semantics, never a
+// collision with some other in-flight wait for the same name.
+func (db *DB) SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string) error {
+	encoded, err := json.Marshal(pending)
+	if err != nil {
+		return fmt.Errorf("encoding pending dependencies: %w", err)
+	}
+	query := `
+	INSERT INTO dependency_waits (service_name, pending, since)
+	VALUES (?, ?, ?)
+	ON CONFLICT(service_name) DO UPDATE SET pending = excluded.pending, since = excluded.since
+	`
+	if _, err := db.conn.ExecContext(ctx, query, serviceName, string(encoded), time.Now()); err != nil {
+		return fmt.Errorf("could not set dependency wait status: %w", err)
+	}
+	return nil
+}
+
+// ClearDependencyWaitStatus removes serviceName's recorded wait. Clearing a
+// service with none recorded is a harmless no-op, matching
+// RemoveServiceInstance/RemoveProcessHistoryEntryViaPGID's own idempotent
+// delete semantics.
+func (db *DB) ClearDependencyWaitStatus(ctx context.Context, serviceName string) error {
+	if _, err := db.conn.ExecContext(ctx, `DELETE FROM dependency_waits WHERE service_name = ?`, serviceName); err != nil {
+		return fmt.Errorf("could not clear dependency wait status: %w", err)
+	}
+	return nil
+}
+
+// GetDependencyWaitStatus reports serviceName's current depends_on wait.
+// waiting is false (with a zero-value status) when it isn't waiting on one
+// right now — this is the common case, not an error condition, so unlike
+// GetMostRecentProcessHistoryEntryByName it's reported as a plain bool
+// rather than a sentinel "not found" error.
+func (db *DB) GetDependencyWaitStatus(ctx context.Context, serviceName string) (types.DependencyWaitStatus, bool, error) {
+	query := `SELECT service_name, pending, since FROM dependency_waits WHERE service_name = ?`
+	var status types.DependencyWaitStatus
+	var encoded string
+	err := db.conn.QueryRowContext(ctx, query, serviceName).Scan(&status.ServiceName, &encoded, &status.Since)
+	if errors.Is(err, sql.ErrNoRows) {
+		return types.DependencyWaitStatus{}, false, nil
+	}
+	if err != nil {
+		return types.DependencyWaitStatus{}, false, fmt.Errorf("could not get dependency wait status: %w", err)
+	}
+	if err := json.Unmarshal([]byte(encoded), &status.Pending); err != nil {
+		return types.DependencyWaitStatus{}, false, fmt.Errorf("decoding pending dependencies: %w", err)
+	}
+	return status, true, nil
+}
+
+// ClearAllDependencyWaits drops every recorded wait; see the Database
+// interface doc for why this only needs to run once, at daemon startup.
+func (db *DB) ClearAllDependencyWaits(ctx context.Context) error {
+	if _, err := db.conn.ExecContext(ctx, `DELETE FROM dependency_waits`); err != nil {
+		return fmt.Errorf("could not clear all dependency waits: %w", err)
 	}
 	return nil
 }

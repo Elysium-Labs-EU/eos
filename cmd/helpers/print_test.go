@@ -18,6 +18,7 @@ func TestPrintStatus(t *testing.T) {
 		{types.ServiceStatusFailed, "failed"},
 		{types.ServiceStatusUnknown, "unknown"},
 		{types.ServiceStatusStarting, "starting"},
+		{types.ServiceStatusWaitingForDeps, "waiting"},
 		{types.ServiceStatus("bogus"), "unknown"},
 	}
 	for _, tt := range tests {

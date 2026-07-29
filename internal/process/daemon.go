@@ -129,7 +129,8 @@ func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Lo
 			logger.Info(fmt.Errorf("boot: %s: %w", entry.Name, waitErr).Error())
 			return
 		}
-		if depErr := manager.WaitForDependencies(ctx, mgr, entry.Name, cfg.DependsOn, maxWait); depErr != nil {
+		depErr := manager.RecordDependencyWait(ctx, mgr, mgr, entry.Name, cfg.DependsOn, maxWait)
+		if depErr != nil {
 			logger.Info(fmt.Errorf("boot: %w", depErr).Error())
 			return
 		}
@@ -147,7 +148,18 @@ func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Lo
 // event), and a row recorded Running/Starting can point at a process that's
 // actually dead (e.g. after an out-of-band kill or crash) — both cases are
 // corrected here instead of trusting the single most-recent row's state.
+//
+// It also clears every recorded dependency_waits row: any wait still on disk
+// belonged to a goroutine (see manager.RecordDependencyWait) from the
+// previous daemon process, which no longer exists now that this one is just
+// starting — so every such row is guaranteed stale, rather than waiting out
+// manager.DependencyWaitStaleAfter for GetDependencyWaitStatus's own
+// self-heal to catch up.
 func reconcileOrphans(ctx context.Context, db *database.DB, logger *slog.Logger) {
+	if clearErr := db.ClearAllDependencyWaits(ctx); clearErr != nil {
+		logger.Error("reconcile orphans: clearing stale dependency waits", "error", clearErr)
+	}
+
 	entries, err := db.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		logger.Error("reconcile orphans: listing catalog", "error", err)
@@ -981,6 +993,12 @@ func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) typ
 		return handleUpdateServiceCatalogEntry(mgr, request.Args)
 	case types.MethodGetMostRecentProcessHistoryEntry:
 		return handleGetMostRecentProcessHistoryEntry(mgr, request.Args)
+	case types.MethodSetDependencyWaitStatus:
+		return handleSetDependencyWaitStatus(mgr, request.Args)
+	case types.MethodClearDependencyWaitStatus:
+		return handleClearDependencyWaitStatus(mgr, request.Args)
+	case types.MethodGetDependencyWaitStatus:
+		return handleGetDependencyWaitStatus(mgr, request.Args)
 	case types.MethodNewServiceLogFiles:
 		return handleNewServiceLogFiles(mgr, request.Args)
 	case types.MethodGetServiceLogFilePath:
@@ -1322,6 +1340,76 @@ func handleGetMostRecentProcessHistoryEntry(mgr manager.ServiceManager, rawArgs 
 		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
 	}
 
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// dependencyWaitStatusStore is the slice of a manager the 3 handlers below
+// need: recording, clearing, and reading a service's current depends_on wait.
+// Only *manager.LocalManager implements it (see local_manager.go) — every mgr
+// executeRequest dispatches on is a *manager.LocalManager in practice, since
+// only the real daemon serves these requests, but the assertion keeps this
+// observability surface out of the broad manager.ServiceManager interface
+// every implementer (and test fake) would otherwise have to carry.
+type dependencyWaitStatusStore interface {
+	SetDependencyWaitStatus(name string, pending []string) error
+	ClearDependencyWaitStatus(name string) error
+	GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error)
+}
+
+func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	store, ok := mgr.(dependencyWaitStatusStore)
+	if !ok {
+		return errorResponse("dependency wait status not supported by this manager")
+	}
+	var args types.SetDependencyWaitStatusArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodSetDependencyWaitStatus args: %v", err))
+	}
+	if err := store.SetDependencyWaitStatus(args.ServiceName, args.Pending); err != nil {
+		return sentinelErrorResponse(err)
+	}
+	return types.DaemonResponse{Success: true}
+}
+
+func handleClearDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	store, ok := mgr.(dependencyWaitStatusStore)
+	if !ok {
+		return errorResponse("dependency wait status not supported by this manager")
+	}
+	var args types.ClearDependencyWaitStatusArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodClearDependencyWaitStatus args: %v", err))
+	}
+	if err := store.ClearDependencyWaitStatus(args.ServiceName); err != nil {
+		return sentinelErrorResponse(err)
+	}
+	return types.DaemonResponse{Success: true}
+}
+
+func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	store, ok := mgr.(dependencyWaitStatusStore)
+	if !ok {
+		return errorResponse("dependency wait status not supported by this manager")
+	}
+	var args types.GetDependencyWaitStatusArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetDependencyWaitStatus args: %v", err))
+	}
+	status, waiting, err := store.GetDependencyWaitStatus(args.ServiceName)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	resp := types.GetDependencyWaitStatusResponse{Waiting: waiting}
+	if waiting {
+		resp.Status = &status
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
 	return types.DaemonResponse{
 		Success: true,
 		Data:    data,
