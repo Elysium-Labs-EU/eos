@@ -41,7 +41,13 @@ eos is a service supervisor.
 	}
 
 	getConfig := func() *config.SystemConfig {
+		// Reuses the same resolver production calls (config.GetBaseDir), so a
+		// test that sets EOS_BASE_DIR (see setupCmd) gets an isolated snapshot
+		// file location exactly as the real CLI would honor that override.
+		identity, _ := userutil.ResolveIdentity()
+		baseDir, _ := config.GetBaseDir(identity)
 		return &config.SystemConfig{
+			BaseDir: baseDir,
 			Shutdown: config.ShutdownConfig{
 				GracePeriod: 5 * time.Second,
 			},
@@ -64,6 +70,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
+	rootCmd.AddCommand(newSnapshotCmd(getManager, getConfig))
 	rootCmd.AddCommand(newStatusCmd(getManager, noopWarnDaemonDown, getConfig))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
@@ -165,6 +172,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
+	rootCmd.AddCommand(newSnapshotCmd(getManager, getConfig))
 	rootCmd.AddCommand(newStatusCmd(getManager, warnIfDaemonDown, getConfig))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
@@ -367,6 +375,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 		Daemon:       daemonConfig,
 		Shutdown:     shutdownConfig,
 		Telemetry:    telemetryConfig,
+		BaseDir:      baseDir,
 		UnderSystemd: config.IsUnderSystemd(),
 		Verbose:      overrideBoolConfigValue("EOS_VERBOSE", false),
 	}
