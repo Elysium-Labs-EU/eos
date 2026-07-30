@@ -50,7 +50,7 @@ type Database interface {
 	// state.db (the daemon's, or an ephemeral --no-daemon CLI invocation's) —
 	// the same mechanism that already makes ProcessHistory visible across
 	// process boundaries.
-	SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string) error
+	SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string, deadline time.Time) error
 	ClearDependencyWaitStatus(ctx context.Context, serviceName string) error
 	GetDependencyWaitStatus(ctx context.Context, serviceName string) (status types.DependencyWaitStatus, waiting bool, err error)
 	// ClearAllDependencyWaits drops every recorded wait. Called once at daemon
@@ -620,18 +620,20 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 // only ever be waiting on one depends_on gate at a time (StartService is
 // serialized per-service, see LocalManager.serviceLocks), so REPLACE on the
 // primary key is always the correct "start a fresh wait" semantics, never a
-// collision with some other in-flight wait for the same name.
-func (db *DB) SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string) error {
-	encoded, err := json.Marshal(pending)
-	if err != nil {
-		return fmt.Errorf("encoding pending dependencies: %w", err)
-	}
+// collision with some other in-flight wait for the same name. deadline is
+// stored as-is (not recomputed here) — see DependencyWaitRecorder's doc for
+// why it must stay fixed across every call for the same wait.
+func (db *DB) SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string, deadline time.Time) error {
+	// pending is a []string: json.Marshal of a plain string slice never
+	// errors (no cycles, channels, or funcs possible), so there's no failure
+	// mode here worth a branch.
+	encoded, _ := json.Marshal(pending)
 	query := `
-	INSERT INTO dependency_waits (service_name, pending, since)
-	VALUES (?, ?, ?)
-	ON CONFLICT(service_name) DO UPDATE SET pending = excluded.pending, since = excluded.since
+	INSERT INTO dependency_waits (service_name, pending, since, deadline)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(service_name) DO UPDATE SET pending = excluded.pending, since = excluded.since, deadline = excluded.deadline
 	`
-	if _, err := db.conn.ExecContext(ctx, query, serviceName, string(encoded), time.Now()); err != nil {
+	if _, err := db.conn.ExecContext(ctx, query, serviceName, string(encoded), time.Now(), deadline); err != nil {
 		return fmt.Errorf("could not set dependency wait status: %w", err)
 	}
 	return nil
@@ -654,10 +656,10 @@ func (db *DB) ClearDependencyWaitStatus(ctx context.Context, serviceName string)
 // GetMostRecentProcessHistoryEntryByName it's reported as a plain bool
 // rather than a sentinel "not found" error.
 func (db *DB) GetDependencyWaitStatus(ctx context.Context, serviceName string) (types.DependencyWaitStatus, bool, error) {
-	query := `SELECT service_name, pending, since FROM dependency_waits WHERE service_name = ?`
+	query := `SELECT service_name, pending, since, deadline FROM dependency_waits WHERE service_name = ?`
 	var status types.DependencyWaitStatus
 	var encoded string
-	err := db.conn.QueryRowContext(ctx, query, serviceName).Scan(&status.ServiceName, &encoded, &status.Since)
+	err := db.conn.QueryRowContext(ctx, query, serviceName).Scan(&status.ServiceName, &encoded, &status.Since, &status.Deadline)
 	if errors.Is(err, sql.ErrNoRows) {
 		return types.DependencyWaitStatus{}, false, nil
 	}

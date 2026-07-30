@@ -344,7 +344,8 @@ func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
 		return types.DaemonResponse{Success: true}
 	})
 	dm := newTestDM(t, socketPath)
-	if err := dm.SetDependencyWaitStatus("web", []string{"db", "cache"}); err != nil {
+	deadline := time.Now().Add(5 * time.Minute)
+	if err := dm.SetDependencyWaitStatus("web", []string{"db", "cache"}, deadline); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotArgs.ServiceName != "web" {
@@ -353,11 +354,14 @@ func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
 	if len(gotArgs.Pending) != 2 || gotArgs.Pending[0] != "db" || gotArgs.Pending[1] != "cache" {
 		t.Errorf("expected pending [db cache], got %v", gotArgs.Pending)
 	}
+	if !gotArgs.Deadline.Equal(deadline) {
+		t.Errorf("expected deadline %v to round-trip, got %v", deadline, gotArgs.Deadline)
+	}
 }
 
 func TestDaemonManager_SetDependencyWaitStatus_requestError(t *testing.T) {
 	dm := newTestDM(t, "/nonexistent/socket.sock")
-	if err := dm.SetDependencyWaitStatus("web", []string{"db"}); err == nil {
+	if err := dm.SetDependencyWaitStatus("web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
 		t.Fatal("expected an error when the daemon is unreachable")
 	}
 }
@@ -392,8 +396,15 @@ func TestDaemonManager_GetDependencyWaitStatus_requestError(t *testing.T) {
 }
 
 func TestDaemonManager_GetDependencyWaitStatus_malformedResponse(t *testing.T) {
+	// Data must be syntactically valid JSON (fakeServer's own Encode of the
+	// outer envelope would otherwise fail on invalid JSON inside a
+	// json.RawMessage field, so the client would never even see this payload
+	// — it'd fail earlier, at "request errored", not here). A JSON array is
+	// valid JSON but the wrong shape for GetDependencyWaitStatusResponse
+	// (an object), so it reaches and fails GetDependencyWaitStatus's own
+	// json.Unmarshal of response.Data specifically.
 	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
-		return types.DaemonResponse{Success: true, Data: []byte(`{not valid json`)}
+		return types.DaemonResponse{Success: true, Data: []byte(`[1,2,3]`)}
 	})
 	dm := newTestDM(t, socketPath)
 	if _, _, err := dm.GetDependencyWaitStatus("web"); err == nil {

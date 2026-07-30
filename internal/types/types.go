@@ -112,10 +112,19 @@ type ServiceConfig struct {
 // manager.RecordDependencyWait and database.Database.SetDependencyWaitStatus)
 // like ProcessHistory/ServiceInstance, so any process sharing that DB file —
 // not just the one that recorded it — can see it; a stale row surviving past
-// a hard-killed process is self-healed by manager.DependencyWaitStaleAfter and
-// wiped outright on daemon boot (see reconcileOrphans).
+// a hard-killed process is self-healed once past Deadline (see
+// manager.dependencyWaitIsStale) and wiped outright on daemon boot (see
+// reconcileOrphans).
 type DependencyWaitStatus struct {
-	Since       time.Time `json:"since"        yaml:"since"`
+	Since time.Time `json:"since"        yaml:"since"`
+	// Deadline is when THIS wait's own resolved max_wait would give up —
+	// computed once when the wait begins and carried unchanged through every
+	// subsequent Set as pending narrows (see manager.RecordDependencyWait).
+	// Staleness is judged against Deadline, not Since: Since alone would
+	// misjudge a wait that legitimately hasn't narrowed in a while (a single
+	// slow dependency) as orphaned, particularly once max_wait exceeds a
+	// fixed staleness window.
+	Deadline    time.Time `json:"deadline"     yaml:"deadline"`
 	ServiceName string    `json:"service_name" yaml:"service_name"`
 	Pending     []string  `json:"pending"       yaml:"pending"`
 }

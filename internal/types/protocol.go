@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type MethodName string
@@ -173,9 +174,12 @@ type GetMostRecentProcessHistoryEntryArgs struct {
 
 // SetDependencyWaitStatusArgs records that ServiceName is currently blocked
 // waiting on Pending to become ready (see manager.RecordDependencyWait).
+// Deadline is this wait's own resolved max_wait ceiling, used for staleness
+// detection rather than a fixed window (see manager.dependencyWaitIsStale).
 type SetDependencyWaitStatusArgs struct {
-	ServiceName string   `json:"service_name"`
-	Pending     []string `json:"pending"`
+	Deadline    time.Time `json:"deadline"`
+	ServiceName string    `json:"service_name"`
+	Pending     []string  `json:"pending"`
 }
 
 // ClearDependencyWaitStatusArgs clears any recorded wait for ServiceName.

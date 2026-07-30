@@ -177,14 +177,29 @@ func TestWaitForDependencies_OnPendingChangeDeduped(t *testing.T) {
 }
 
 func TestDependencyWaitIsStale(t *testing.T) {
+	if dependencyWaitIsStale(time.Now().Add(5 * time.Minute)) {
+		t.Error("a wait whose deadline is still in the future must not be stale")
+	}
 	if dependencyWaitIsStale(time.Now()) {
-		t.Error("a wait recorded just now must not be stale")
+		t.Error("a wait whose deadline just passed must not be stale yet — the grace period hasn't elapsed")
 	}
-	if dependencyWaitIsStale(time.Now().Add(-DependencyWaitStaleAfter / 2)) {
-		t.Error("a wait recorded well within the staleness ceiling must not be stale")
+	if dependencyWaitIsStale(time.Now().Add(-DependencyWaitStaleGrace / 2)) {
+		t.Error("a wait whose deadline passed well within the grace period must not be stale")
 	}
-	if !dependencyWaitIsStale(time.Now().Add(-DependencyWaitStaleAfter - time.Second)) {
-		t.Error("a wait recorded past the staleness ceiling must be stale")
+	if !dependencyWaitIsStale(time.Now().Add(-DependencyWaitStaleGrace - time.Second)) {
+		t.Error("a wait whose deadline passed beyond the grace period must be stale")
+	}
+}
+
+func TestResolveMaxWait(t *testing.T) {
+	if got := resolveMaxWait(0); got != DependencyDefaultMaxWait {
+		t.Errorf("expected 0 to resolve to the default %s, got %s", DependencyDefaultMaxWait, got)
+	}
+	if got := resolveMaxWait(-time.Second); got != DependencyDefaultMaxWait {
+		t.Errorf("expected a negative value to resolve to the default %s, got %s", DependencyDefaultMaxWait, got)
+	}
+	if got := resolveMaxWait(30 * time.Second); got != 30*time.Second {
+		t.Errorf("expected a positive value to pass through unchanged, got %s", got)
 	}
 }
 
@@ -207,17 +222,21 @@ func TestParseMaxWait(t *testing.T) {
 // every Set's pending snapshot) so RecordDependencyWait's Set-before/
 // Clear-after contract, and the live narrowing of pending, can be asserted.
 type recorderSpy struct {
-	setErr     error
-	clearErr   error
-	calls      []string
-	setPending []string
-	allSets    [][]string
+	setErr       error
+	clearErr     error
+	calls        []string
+	setPending   []string
+	setDeadline  time.Time
+	allSets      [][]string
+	allDeadlines []time.Time
 }
 
-func (r *recorderSpy) SetDependencyWaitStatus(_ string, pending []string) error {
+func (r *recorderSpy) SetDependencyWaitStatus(_ string, pending []string, deadline time.Time) error {
 	r.calls = append(r.calls, "set")
 	r.setPending = pending
+	r.setDeadline = deadline
 	r.allSets = append(r.allSets, append([]string(nil), pending...))
+	r.allDeadlines = append(r.allDeadlines, deadline)
 	return r.setErr
 }
 
@@ -269,6 +288,12 @@ func TestRecordDependencyWait_setsThenClearsOnSuccess(t *testing.T) {
 	if !slices.Equal(spy.setPending, []string{"db", "cache"}) {
 		t.Errorf("expected pending [db cache] passed to Set, got %v", spy.setPending)
 	}
+	if spy.setDeadline.IsZero() {
+		t.Error("expected a non-zero deadline passed to Set")
+	}
+	if wantAround := time.Now().Add(time.Second); spy.setDeadline.After(wantAround.Add(time.Second)) || spy.setDeadline.Before(wantAround.Add(-time.Second)) {
+		t.Errorf("expected deadline roughly maxWait (1s) from now, got %v (now %v)", spy.setDeadline, time.Now())
+	}
 }
 
 func TestRecordDependencyWait_clearsEvenOnError(t *testing.T) {
@@ -314,6 +339,16 @@ func TestRecordDependencyWait_narrowsPendingAsDependenciesBecomeReady(t *testing
 	}
 	if spy.calls[len(spy.calls)-1] != "clear" {
 		t.Errorf("expected the very last call to be clear, got %v", spy.calls)
+	}
+
+	// The deadline must be the SAME value on every Set call for this one
+	// wait, not recomputed fresh each time a dependency narrows — a
+	// recomputed deadline would keep pushing the staleness ceiling forward
+	// indefinitely and defeat the point of a fixed per-wait ceiling.
+	for i, d := range spy.allDeadlines {
+		if !d.Equal(spy.allDeadlines[0]) {
+			t.Errorf("expected every Set call to carry the same deadline, call %d got %v, first was %v", i, d, spy.allDeadlines[0])
+		}
 	}
 }
 

@@ -961,53 +961,53 @@ func logClientWriteError(logger *slog.Logger, msg string, err error) {
 // its method. Each case below is a thin one-line call into a handleX
 // function that owns the args-unmarshal / manager-call / response-marshal
 // sequence for that method; this function's only job is routing.
-func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
-	switch request.Method {
-	case types.MethodGetAllServiceInstances:
+// requestHandler is the shape every executeRequest dispatch target shares.
+// Handlers that need no args (GetVersion, GetAllServiceInstances,
+// GetAllServiceCatalogEntries) are wrapped below to ignore the unused
+// rawArgs parameter, so every entry in requestHandlers has one uniform type.
+type requestHandler func(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse
+
+// requestHandlers routes each MethodName to its handler as a lookup table
+// rather than a switch: a switch this wide (types.ValidMethods keeps
+// growing) drives up executeRequest's own cyclomatic complexity with every
+// method added, regardless of how simple the dispatch itself is — a map
+// lookup stays O(1) complexity no matter how many methods exist.
+var requestHandlers = map[types.MethodName]requestHandler{
+	types.MethodGetAllServiceInstances: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
 		return handleGetAllServiceInstances(mgr)
-	case types.MethodGetServiceInstance:
-		return handleGetServiceInstance(mgr, request.Args)
-	case types.MethodRemoveServiceInstance:
-		return handleRemoveServiceInstance(mgr, request.Args)
-	case types.MethodStartService:
-		return handleStartService(mgr, request.Args)
-	case types.MethodRestartService:
-		return handleRestartService(mgr, request.Args)
-	case types.MethodStopService:
-		return handleStopService(mgr, request.Args)
-	case types.MethodForceStopService:
-		return handleForceStopService(mgr, request.Args)
-	case types.MethodReloadService:
-		return handleReloadService(mgr, request.Args)
-	case types.MethodAddServiceCatalogEntry:
-		return handleAddServiceCatalogEntry(mgr, request.Args)
-	case types.MethodGetAllServiceCatalogEntries:
+	},
+	types.MethodGetServiceInstance:     handleGetServiceInstance,
+	types.MethodRemoveServiceInstance:  handleRemoveServiceInstance,
+	types.MethodStartService:           handleStartService,
+	types.MethodRestartService:         handleRestartService,
+	types.MethodStopService:            handleStopService,
+	types.MethodForceStopService:       handleForceStopService,
+	types.MethodReloadService:          handleReloadService,
+	types.MethodAddServiceCatalogEntry: handleAddServiceCatalogEntry,
+	types.MethodGetAllServiceCatalogEntries: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
 		return handleGetAllServiceCatalogEntries(mgr)
-	case types.MethodGetServiceCatalogEntry:
-		return handleGetServiceCatalogEntry(mgr, request.Args)
-	case types.MethodIsServiceRegistered:
-		return handleIsServiceRegistered(mgr, request.Args)
-	case types.MethodRemoveServiceCatalogEntry:
-		return handleRemoveServiceCatalogEntry(mgr, request.Args)
-	case types.MethodUpdateServiceCatalogEntry:
-		return handleUpdateServiceCatalogEntry(mgr, request.Args)
-	case types.MethodGetMostRecentProcessHistoryEntry:
-		return handleGetMostRecentProcessHistoryEntry(mgr, request.Args)
-	case types.MethodSetDependencyWaitStatus:
-		return handleSetDependencyWaitStatus(mgr, request.Args)
-	case types.MethodClearDependencyWaitStatus:
-		return handleClearDependencyWaitStatus(mgr, request.Args)
-	case types.MethodGetDependencyWaitStatus:
-		return handleGetDependencyWaitStatus(mgr, request.Args)
-	case types.MethodNewServiceLogFiles:
-		return handleNewServiceLogFiles(mgr, request.Args)
-	case types.MethodGetServiceLogFilePath:
-		return handleGetServiceLogFilePath(mgr, request.Args)
-	case types.MethodGetVersion:
+	},
+	types.MethodGetServiceCatalogEntry:           handleGetServiceCatalogEntry,
+	types.MethodIsServiceRegistered:              handleIsServiceRegistered,
+	types.MethodRemoveServiceCatalogEntry:        handleRemoveServiceCatalogEntry,
+	types.MethodUpdateServiceCatalogEntry:        handleUpdateServiceCatalogEntry,
+	types.MethodGetMostRecentProcessHistoryEntry: handleGetMostRecentProcessHistoryEntry,
+	types.MethodSetDependencyWaitStatus:          handleSetDependencyWaitStatus,
+	types.MethodClearDependencyWaitStatus:        handleClearDependencyWaitStatus,
+	types.MethodGetDependencyWaitStatus:          handleGetDependencyWaitStatus,
+	types.MethodNewServiceLogFiles:               handleNewServiceLogFiles,
+	types.MethodGetServiceLogFilePath:            handleGetServiceLogFilePath,
+	types.MethodGetVersion: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
 		return handleGetVersion(mgr)
-	default:
+	},
+}
+
+func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
+	handler, ok := requestHandlers[request.Method]
+	if !ok {
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
 	}
+	return handler(mgr, request.Args)
 }
 
 func handleGetVersion(mgr manager.ServiceManager) types.DaemonResponse {
@@ -1354,7 +1354,7 @@ func handleGetMostRecentProcessHistoryEntry(mgr manager.ServiceManager, rawArgs 
 // observability surface out of the broad manager.ServiceManager interface
 // every implementer (and test fake) would otherwise have to carry.
 type dependencyWaitStatusStore interface {
-	SetDependencyWaitStatus(name string, pending []string) error
+	SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error
 	ClearDependencyWaitStatus(name string) error
 	GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error)
 }
@@ -1368,7 +1368,7 @@ func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodSetDependencyWaitStatus args: %v", err))
 	}
-	if err := store.SetDependencyWaitStatus(args.ServiceName, args.Pending); err != nil {
+	if err := store.SetDependencyWaitStatus(args.ServiceName, args.Pending, args.Deadline); err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}
@@ -1406,10 +1406,8 @@ func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 	if waiting {
 		resp.Status = &status
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
-	}
+	// resp is bool/strings/time.Time only: nothing here can fail to marshal.
+	data, _ := json.Marshal(resp)
 	return types.DaemonResponse{
 		Success: true,
 		Data:    data,

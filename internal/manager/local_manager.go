@@ -224,8 +224,8 @@ func (m *LocalManager) IsReloadInProgress(name string) bool {
 // RecordDependencyWait around WaitForDependencies; it exists purely so
 // status-reading callers see this instead of name looking like a service
 // that was simply never started.
-func (m *LocalManager) SetDependencyWaitStatus(name string, pending []string) error {
-	if err := m.db.SetDependencyWaitStatus(m.ctx, name, pending); err != nil {
+func (m *LocalManager) SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error {
+	if err := m.db.SetDependencyWaitStatus(m.ctx, name, pending, deadline); err != nil {
 		return fmt.Errorf("set dependency wait status for %s: %w", name, err)
 	}
 	return nil
@@ -242,10 +242,14 @@ func (m *LocalManager) ClearDependencyWaitStatus(name string) error {
 
 // GetDependencyWaitStatus reports name's current depends_on wait. waiting is
 // false if it isn't waiting on one right now, in which case status is the
-// zero value. A wait recorded longer ago than DependencyWaitStaleAfter is
-// treated as orphaned — the process that recorded it was killed before its
-// own defer could clear it (see RecordDependencyWait) — and is opportunistically
-// cleared here rather than reported as an indefinite "waiting".
+// zero value. A wait whose own Deadline (this wait's resolved max_wait) has
+// passed by more than DependencyWaitStaleGrace is treated as orphaned — the
+// process that recorded it was killed before its own defer could clear it
+// (see RecordDependencyWait) — and is opportunistically cleared here rather
+// than reported as an indefinite "waiting". Judging staleness against
+// Deadline rather than a fixed window from Since means a wait with a long
+// max_wait (no upper bound is enforced) is never misreported as orphaned
+// while still legitimately in progress.
 func (m *LocalManager) GetDependencyWaitStatus(name string) (types.DependencyWaitStatus, bool, error) {
 	status, waiting, err := m.db.GetDependencyWaitStatus(m.ctx, name)
 	if err != nil {
@@ -254,7 +258,7 @@ func (m *LocalManager) GetDependencyWaitStatus(name string) (types.DependencyWai
 	if !waiting {
 		return types.DependencyWaitStatus{}, false, nil
 	}
-	if dependencyWaitIsStale(status.Since) {
+	if dependencyWaitIsStale(status.Deadline) {
 		if clearErr := m.db.ClearDependencyWaitStatus(m.ctx, name); clearErr != nil {
 			return types.DependencyWaitStatus{}, false, fmt.Errorf("clearing stale dependency wait status for %s: %w", name, clearErr)
 		}

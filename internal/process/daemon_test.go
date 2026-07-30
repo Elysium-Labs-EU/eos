@@ -148,12 +148,25 @@ func TestAllMethodsHandled(t *testing.T) {
 			req := types.DaemonRequest{Method: method, Args: nil}
 			resp := executeRequest(manager, req)
 
-			// Every method in ValidMethods must be a case in executeRequest's
-			// switch; falling through to the default returns this error string.
+			// Every method in ValidMethods must have an entry in requestHandlers;
+			// a missing entry falls through to this error string.
 			if !resp.Success && strings.Contains(resp.Error, "unknown method") {
-				t.Errorf("Method %s not handled in switch", method)
+				t.Errorf("Method %s not registered in requestHandlers", method)
 			}
 		})
+	}
+}
+
+// TestExecuteRequest_UnknownMethod proves the reverse of TestAllMethodsHandled:
+// a method with no entry in requestHandlers hits the "unknown method" branch
+// rather than panicking on a nil map lookup.
+func TestExecuteRequest_UnknownMethod(t *testing.T) {
+	resp := executeRequest(nil, types.DaemonRequest{Method: "NotARealMethod"})
+	if resp.Success {
+		t.Fatal("expected failure for an unregistered method")
+	}
+	if !strings.Contains(resp.Error, "unknown method") {
+		t.Errorf("expected an 'unknown method' error, got: %s", resp.Error)
 	}
 }
 
@@ -195,7 +208,7 @@ func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
 		t.Fatalf("expected not waiting initially, got %+v", initial)
 	}
 
-	setArgs, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web", Pending: []string{"db", "cache"}})
+	setArgs, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web", Pending: []string{"db", "cache"}, Deadline: time.Now().Add(5 * time.Minute)})
 	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: setArgs})
 	if !resp.Success {
 		t.Fatalf("Set: expected success, got error: %s", resp.Error)
@@ -258,6 +271,58 @@ func TestExecuteRequest_DependencyWaitStatus_unsupportedManager(t *testing.T) {
 	}
 }
 
+// fakeDependencyWaitStore implements dependencyWaitStatusStore over a
+// manager.ServiceManager stand-in, so the 3 dependency-wait handlers'
+// sentinelErrorResponse branches can be tested independently of what a real
+// *manager.LocalManager can be made to fail on.
+type fakeDependencyWaitStore struct {
+	manager.ServiceManager
+	setErr    error
+	clearErr  error
+	getErr    error
+	getStatus types.DependencyWaitStatus
+	getWait   bool
+}
+
+func (f *fakeDependencyWaitStore) SetDependencyWaitStatus(string, []string, time.Time) error {
+	return f.setErr
+}
+
+func (f *fakeDependencyWaitStore) ClearDependencyWaitStatus(string) error {
+	return f.clearErr
+}
+
+func (f *fakeDependencyWaitStore) GetDependencyWaitStatus(string) (types.DependencyWaitStatus, bool, error) {
+	return f.getStatus, f.getWait, f.getErr
+}
+
+func TestHandleSetDependencyWaitStatus_storeError(t *testing.T) {
+	mgr := &fakeDependencyWaitStore{setErr: errors.New("disk full")}
+	args, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web"})
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: args})
+	if resp.Success {
+		t.Fatal("expected failure when the store errors")
+	}
+}
+
+func TestHandleClearDependencyWaitStatus_storeError(t *testing.T) {
+	mgr := &fakeDependencyWaitStore{clearErr: errors.New("disk full")}
+	args, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: "web"})
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: args})
+	if resp.Success {
+		t.Fatal("expected failure when the store errors")
+	}
+}
+
+func TestHandleGetDependencyWaitStatus_storeError(t *testing.T) {
+	mgr := &fakeDependencyWaitStore{getErr: errors.New("disk full")}
+	args, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: "web"})
+	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: args})
+	if resp.Success {
+		t.Fatal("expected failure when the store errors")
+	}
+}
+
 func TestReconcileOrphans_Empty(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	reconcileOrphans(t.Context(), db, testutil.NewTestLogger(t))
@@ -265,13 +330,13 @@ func TestReconcileOrphans_Empty(t *testing.T) {
 
 // TestReconcileOrphans_ClearsDependencyWaits proves a fresh daemon boot wipes
 // any dependency_waits row left over from a previous daemon process — it
-// belonged to a goroutine that no longer exists, so trusting it (even within
-// manager.DependencyWaitStaleAfter) would misreport a service as gated on a
-// dependency that nothing is actually still waiting for.
+// belonged to a goroutine that no longer exists, so trusting it (even with a
+// still-future deadline) would misreport a service as gated on a dependency
+// that nothing is actually still waiting for.
 func TestReconcileOrphans_ClearsDependencyWaits(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
-	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"proxy"}); err != nil {
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
@@ -279,6 +344,23 @@ func TestReconcileOrphans_ClearsDependencyWaits(t *testing.T) {
 
 	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Errorf("expected reconcileOrphans to clear the stale wait, waiting=%v err=%v", waiting, err)
+	}
+}
+
+// TestReconcileOrphans_ClearAllDependencyWaitsErrorIsLogged proves a failure
+// clearing stale dependency waits is logged and swallowed, not a reason to
+// abort the rest of reconcileOrphans's orphan-checking work.
+func TestReconcileOrphans_ClearAllDependencyWaitsErrorIsLogged(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	if err := db.CloseDBConnection(); err != nil {
+		t.Fatalf("CloseDBConnection: %v", err)
+	}
+
+	logger, buf := capturingLogger()
+	reconcileOrphans(t.Context(), db, logger)
+
+	if !strings.Contains(buf.String(), "clearing stale dependency waits") {
+		t.Errorf("expected the clear failure to be logged, got: %s", buf.String())
 	}
 }
 

@@ -187,7 +187,7 @@ func TestStatusCommandWithDependencyWait(t *testing.T) {
 		t.Fatalf("add should not return an error, got: %v", err)
 	}
 
-	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy"}); err != nil {
+	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 

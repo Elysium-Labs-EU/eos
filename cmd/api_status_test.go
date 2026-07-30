@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -185,7 +186,7 @@ func TestAPIStatusWithDependencyWait(t *testing.T) {
 		t.Fatalf("failed to register: %v\n%s", err, errBuf.String())
 	}
 
-	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy", "cache"}); err != nil {
+	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy", "cache"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
