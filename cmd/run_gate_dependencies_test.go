@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -100,6 +101,80 @@ func TestGateDependencies_MaxWaitFailsLoud(t *testing.T) {
 	}
 
 	// Even on the failure path, the wait mark must be cleared, not left stuck.
+	if _, waiting, getErr := mgr.GetDependencyWaitStatus("web"); getErr != nil || waiting {
+		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
+	}
+}
+
+// TestGateDependencies_SelfDependencyFailsLoud documents that there is no cycle
+// detection: a service listing itself in depends_on can never satisfy its own
+// dependency, so the only guard is the finite max_wait. It must fail loud after
+// max_wait rather than hang forever, and clear its wait mark afterwards.
+func TestGateDependencies_SelfDependencyFailsLoud(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	entry := writeGateTestService(t, tempDir, &types.ServiceConfig{
+		Name: "loop", Command: "/bin/true", DependsOn: []string{"loop"}, MaxWait: "150ms",
+	})
+
+	// Run in a goroutine so a regression that reintroduces an unbounded wait
+	// surfaces as a test timeout here instead of hanging the whole suite.
+	done := make(chan error, 1)
+	go func() {
+		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, entry)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error once max_wait elapses with a self-dependency")
+		}
+		if !strings.Contains(err.Error(), "loop") {
+			t.Errorf("expected the unmet self-dependency named in the error, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("gateDependencies did not return within the bound — a self-dependency must fail loud, not hang")
+	}
+
+	// The wait mark must be cleared even on the failure path.
+	if _, waiting, getErr := mgr.GetDependencyWaitStatus("loop"); getErr != nil || waiting {
+		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
+	}
+}
+
+// TestGateDependencies_CycleFailsLoudNoHang documents the same for a 2-node
+// cycle (web depends_on api, api depends_on web). Gating web, whose dependency
+// api never starts, must fail loud at max_wait rather than deadlock.
+func TestGateDependencies_CycleFailsLoudNoHang(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	writeGateTestService(t, tempDir, &types.ServiceConfig{
+		Name: "api", Command: "/bin/true", DependsOn: []string{"web"}, MaxWait: "150ms",
+	})
+	web := writeGateTestService(t, tempDir, &types.ServiceConfig{
+		Name: "web", Command: "/bin/true", DependsOn: []string{"api"}, MaxWait: "150ms",
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, web)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error once max_wait elapses with an unmet cyclic dependency")
+		}
+		if !strings.Contains(err.Error(), "api") {
+			t.Errorf("expected the unmet dependency named in the error, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("gateDependencies did not return within the bound — a dependency cycle must fail loud, not hang")
+	}
+
+	// The wait mark must be cleared even on the failure path.
 	if _, waiting, getErr := mgr.GetDependencyWaitStatus("web"); getErr != nil || waiting {
 		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
 	}
