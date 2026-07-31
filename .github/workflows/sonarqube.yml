@@ -1,0 +1,48 @@
+name: SonarQube Cloud
+
+# Go isn't covered by Sonar's Automatic Analysis mode (it only understands a
+# handful of languages without a build step), so this runs a CI-based scan:
+# go test writes a coverage profile, then the scan action uploads source +
+# coverage to SonarQube Cloud. sonar-project.properties at the repo root
+# points the scanner at that profile via sonar.go.coverage.reportPaths.
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonarqube:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # full history required for SCM blame / new-code period
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with coverage
+        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+
+      # actions/checkout, actions/setup-go, and this action are pinned to a
+      # full commit SHA (tag kept as a trailing comment): Sonar's own
+      # githubactions:S7637 rule flags a tag-only ref (e.g. @v7) as a
+      # vulnerability, since a tag can be moved to point at different code.
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
