@@ -44,6 +44,21 @@
       "minLength": 1,
       "examples": ["0 3 * * *", "*/30 * * * *"]
     },
+    "depends_on": {
+      "type": "array",
+      "description": "Names of services that must report healthy (state Running) before this service is started. Empty or omitted starts the service immediately with no ordering.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "examples": [["db"], ["db", "cache"]]
+    },
+    "max_wait": {
+      "type": "string",
+      "description": "Ceiling on how long starting this service blocks on depends_on becoming ready before failing loud. A dependency that comes up slowly still releases the dependent the moment it is ready. Omitted or empty uses the daemon's default (60s). Go duration string.",
+      "minLength": 1,
+      "examples": ["60s", "2m", "500ms"]
+    },
     "log_max_files": {
       "type": "integer",
       "description": "How many rotated stdout/stderr log files to keep for this service (active file plus this many rotated siblings). Default: the daemon's own log rotation default (5).",
