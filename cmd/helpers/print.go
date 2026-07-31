@@ -18,6 +18,8 @@ func PrintStatus(status types.ServiceStatus) string {
 		return ui.LabelError.Render("failed")
 	case types.ServiceStatusStarting:
 		return ui.LabelInfo.Render("starting")
+	case types.ServiceStatusWaitingForDeps:
+		return ui.LabelInfo.Render("waiting")
 	case types.ServiceStatusUnknown:
 		return ui.TextMuted.Render("unknown")
 	default:

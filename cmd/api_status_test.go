@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
@@ -161,5 +162,56 @@ func TestAPIStatusMultipleServices(t *testing.T) {
 	}
 	if len(result.Services) != 3 {
 		t.Errorf("expected 3 services, got %d", len(result.Services))
+	}
+}
+
+// TestAPIStatusWithDependencyWait proves the JSON status output surfaces a
+// service currently gated on depends_on as status "waiting" with its still-
+// pending dependency names in waiting_for, instead of looking identical to a
+// service that was simply never started.
+func TestAPIStatusWithDependencyWait(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	yamlPath := writeServiceFiles(t, tempDir, testFile)
+
+	c := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	c.SetOut(&outBuf)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{"api", "add", yamlPath})
+	if err := c.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("failed to register: %v\n%s", err, errBuf.String())
+	}
+
+	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy", "cache"}, time.Now().Add(5*time.Minute)); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
+	c = newTestRootCmd(mgr)
+	c.SetOut(&outBuf)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{"api", "status"})
+	if err := c.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected no error, got: %v\n%s", err, errBuf.String())
+	}
+
+	var result apiStatusResult
+	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
+		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
+	}
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+	svc := result.Services[0]
+	if svc.Status != "waiting" {
+		t.Errorf("expected status %q, got %q", "waiting", svc.Status)
+	}
+	if len(svc.WaitingFor) != 2 || svc.WaitingFor[0] != "proxy" || svc.WaitingFor[1] != "cache" {
+		t.Errorf("expected waiting_for [proxy cache], got %v", svc.WaitingFor)
 	}
 }

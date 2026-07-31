@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -187,6 +188,14 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		entry.NextRestart = humanize.Time(*serviceInstance.NextRestartAt)
 	default:
 		entry.NextRestart = "pending"
+	}
+	// Overrides whatever ProcessHistory-derived status was computed above: a
+	// service blocked on depends_on has no process yet, so without this it
+	// renders identically to one that was simply never started (see issue
+	// #136's "eos status ... distinct state rather than looking like a hang").
+	if pending := helpers.ResolveDependencyWaitStatus(mgr, regServiceName); len(pending) > 0 {
+		entry.Status = types.ServiceStatusWaitingForDeps
+		entry.Error = "waiting for: " + strings.Join(pending, ", ")
 	}
 	return entry, true
 }

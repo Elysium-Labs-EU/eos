@@ -560,6 +560,48 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.P
 	return &result.ProcessEntry, nil
 }
 
+// SetDependencyWaitStatus tells the daemon that name is currently blocked
+// waiting on pending to become ready, so a concurrent `eos status`/`eos api
+// status` request against this same daemon can show it. Best-effort
+// observability: see manager.RecordDependencyWait, its only caller.
+func (dm *DaemonManager) SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error {
+	// SetDependencyWaitStatusArgs is strings/[]string/time.Time: nothing here
+	// can fail to marshal, so there's no error branch worth carrying.
+	args, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: name, Pending: pending, Deadline: deadline})
+	if _, err := dm.sendRequest(types.MethodSetDependencyWaitStatus, args); err != nil {
+		return fmt.Errorf("SetDependencyWaitStatus: request errored: %w", err)
+	}
+	return nil
+}
+
+// ClearDependencyWaitStatus tells the daemon to drop name's recorded wait.
+func (dm *DaemonManager) ClearDependencyWaitStatus(name string) error {
+	args, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: name})
+	if _, err := dm.sendRequest(types.MethodClearDependencyWaitStatus, args); err != nil {
+		return fmt.Errorf("ClearDependencyWaitStatus: request errored: %w", err)
+	}
+	return nil
+}
+
+// GetDependencyWaitStatus reports name's current depends_on wait as recorded
+// by the daemon. waiting is false if it isn't waiting on one right now.
+func (dm *DaemonManager) GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error) {
+	args, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: name})
+	response, err := dm.sendRequest(types.MethodGetDependencyWaitStatus, args)
+	if err != nil {
+		return types.DependencyWaitStatus{}, false, fmt.Errorf("GetDependencyWaitStatus: request errored: %w", err)
+	}
+
+	var result types.GetDependencyWaitStatusResponse
+	if err := json.Unmarshal(response.Data, &result); err != nil {
+		return types.DependencyWaitStatus{}, false, fmt.Errorf("GetDependencyWaitStatus: parse response data: %w", err)
+	}
+	if !result.Waiting || result.Status == nil {
+		return types.DependencyWaitStatus{}, false, nil
+	}
+	return *result.Status, true, nil
+}
+
 type ServiceLogFilesResult struct {
 	LogFilePath      string `json:"logFile"`
 	ErrorLogFilePath string `json:"errorLogFile"`

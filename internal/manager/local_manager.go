@@ -25,12 +25,19 @@ import (
 )
 
 type LocalManager struct {
-	db           database.Database
-	ctx          context.Context
-	executor     Executor
-	logger       *slog.Logger
-	sinkRegistry map[string]types.LogSink
-	telemetry    *otelx.Handles
+	db       database.Database
+	ctx      context.Context
+	executor Executor
+	// reloadInProgress holds the names of services currently mid-reload. The
+	// health monitor consults it every tick (IsReloadInProgress) and suspends
+	// its own action for a service while its reload owns the per-service lock:
+	// a crash-on-start incoming instance would otherwise make the monitor mark
+	// the service Failed and queue a RestartService that either bounces the
+	// surviving old instance the instant reload releases the lock, or blocks on
+	// that lock and stalls every other service's serial health check. reloadMu
+	// guards the map.
+	reloadInProgress map[string]bool
+	telemetry        *otelx.Handles
 	// serviceLocks holds one mutex per service name. It serializes the
 	// read-decide-act start/stop/restart sequence so concurrent `eos run`
 	// invocations for the same service can't each independently read state and
@@ -46,18 +53,10 @@ type LocalManager struct {
 	// of each opening their own handle onto the same path, which would let one
 	// writer's rotate() rename the file out from under the other's fd.
 	// logWritersMu guards the map itself.
-	logWriters map[string]*sharedLogWriter
-	// reloadInProgress holds the names of services currently mid-reload. The
-	// health monitor consults it every tick (IsReloadInProgress) and suspends
-	// its own action for a service while its reload owns the per-service lock:
-	// a crash-on-start incoming instance would otherwise make the monitor mark
-	// the service Failed and queue a RestartService that either bounces the
-	// surviving old instance the instant reload releases the lock, or blocks on
-	// that lock and stalls every other service's serial health check. reloadMu
-	// guards the map.
-	reloadInProgress map[string]bool
-	baseDir          string
-	pipeWg           sync.WaitGroup
+	logWriters   map[string]*sharedLogWriter
+	logger       *slog.Logger
+	sinkRegistry map[string]types.LogSink
+	baseDir      string
 	// serviceWg tracks the async cmd.Wait() reaper goroutine launched for
 	// every started service (see captureIdentity). WaitServices blocks until
 	// every launched service has actually exited: without this, a caller that
@@ -66,11 +65,8 @@ type LocalManager struct {
 	// watching m.ctx even gets scheduled to run cmd.Cancel — silently
 	// skipping the SIGTERM-then-wait sequence WithShutdownGracePeriod is
 	// meant to guarantee (see issue #93).
-	serviceWg      sync.WaitGroup
-	serviceLocksMu sync.Mutex
-	logWritersMu   sync.Mutex
-	// reloadMu guards reloadInProgress.
-	reloadMu sync.Mutex
+	serviceWg sync.WaitGroup
+	pipeWg    sync.WaitGroup
 	// shutdownGracePeriod is set only on the LocalManager backing the real
 	// standalone daemon (see WithShutdownGracePeriod). When positive, every
 	// launched service's cmd.Cancel/cmd.WaitDelay are configured so that
@@ -78,6 +74,10 @@ type LocalManager struct {
 	// long before force-killing it, instead of os/exec's default of an
 	// immediate SIGKILL on context cancellation (see issue #93).
 	shutdownGracePeriod time.Duration
+	serviceLocksMu      sync.Mutex
+	logWritersMu        sync.Mutex
+	// reloadMu guards reloadInProgress.
+	reloadMu sync.Mutex
 }
 
 // sharedLogWriter is a reference-counted RotatingFileWriter: refs tracks how
@@ -214,6 +214,57 @@ func (m *LocalManager) IsReloadInProgress(name string) bool {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 	return m.reloadInProgress[name]
+}
+
+// SetDependencyWaitStatus records that name is currently blocked waiting on
+// pending to become ready, persisting it to the shared state.db (not just
+// this process's memory) so a concurrent `eos status`/`eos api status` in a
+// different process — including a fresh, otherwise-stateless LocalManager in
+// --no-daemon or systemd-managed mode — can see it too. Called by
+// RecordDependencyWait around WaitForDependencies; it exists purely so
+// status-reading callers see this instead of name looking like a service
+// that was simply never started.
+func (m *LocalManager) SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error {
+	if err := m.db.SetDependencyWaitStatus(m.ctx, name, pending, deadline); err != nil {
+		return fmt.Errorf("set dependency wait status for %s: %w", name, err)
+	}
+	return nil
+}
+
+// ClearDependencyWaitStatus removes name's recorded wait, called once its
+// WaitForDependencies call returns (ready, timed out, or context canceled).
+func (m *LocalManager) ClearDependencyWaitStatus(name string) error {
+	if err := m.db.ClearDependencyWaitStatus(m.ctx, name); err != nil {
+		return fmt.Errorf("clear dependency wait status for %s: %w", name, err)
+	}
+	return nil
+}
+
+// GetDependencyWaitStatus reports name's current depends_on wait. waiting is
+// false if it isn't waiting on one right now, in which case status is the
+// zero value. A wait whose own Deadline (this wait's resolved max_wait) has
+// passed by more than DependencyWaitStaleGrace is treated as orphaned — the
+// process that recorded it was killed before its own defer could clear it
+// (see RecordDependencyWait) — and is opportunistically cleared here rather
+// than reported as an indefinite "waiting". Judging staleness against
+// Deadline rather than a fixed window from Since means a wait with a long
+// max_wait (no upper bound is enforced) is never misreported as orphaned
+// while still legitimately in progress.
+func (m *LocalManager) GetDependencyWaitStatus(name string) (types.DependencyWaitStatus, bool, error) {
+	status, waiting, err := m.db.GetDependencyWaitStatus(m.ctx, name)
+	if err != nil {
+		return types.DependencyWaitStatus{}, false, fmt.Errorf("get dependency wait status for %s: %w", name, err)
+	}
+	if !waiting {
+		return types.DependencyWaitStatus{}, false, nil
+	}
+	if dependencyWaitIsStale(status.Deadline) {
+		if clearErr := m.db.ClearDependencyWaitStatus(m.ctx, name); clearErr != nil {
+			return types.DependencyWaitStatus{}, false, fmt.Errorf("clearing stale dependency wait status for %s: %w", name, clearErr)
+		}
+		return types.DependencyWaitStatus{}, false, nil
+	}
+	return status, true, nil
 }
 
 type LocalManagerOption func(*LocalManager)

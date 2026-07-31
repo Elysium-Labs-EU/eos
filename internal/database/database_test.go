@@ -767,3 +767,140 @@ func TestRemoveProcessHistoryEntryViaPGID_NotFound(t *testing.T) {
 		t.Error("expected false when removing nonexistent PGID")
 	}
 }
+
+func TestDependencyWaitStatus_SetGetClear(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
+		t.Fatalf("expected no wait recorded initially, waiting=%v err=%v", waiting, err)
+	}
+
+	deadline := time.Now().Add(5 * time.Minute)
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db", "cache"}, deadline); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+
+	status, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web")
+	if err != nil {
+		t.Fatalf("GetDependencyWaitStatus: %v", err)
+	}
+	if !waiting {
+		t.Fatal("expected a recorded wait after Set")
+	}
+	if status.ServiceName != "web" {
+		t.Errorf("expected service name %q, got %q", "web", status.ServiceName)
+	}
+	if len(status.Pending) != 2 || status.Pending[0] != "db" || status.Pending[1] != "cache" {
+		t.Errorf("expected pending [db cache], got %v", status.Pending)
+	}
+	if status.Since.IsZero() {
+		t.Error("expected Since to be set")
+	}
+	if !status.Deadline.Equal(deadline) {
+		t.Errorf("expected Deadline %v to round-trip, got %v", deadline, status.Deadline)
+	}
+
+	if err := db.ClearDependencyWaitStatus(t.Context(), "web"); err != nil {
+		t.Fatalf("ClearDependencyWaitStatus: %v", err)
+	}
+	if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
+		t.Fatalf("expected no wait after Clear, waiting=%v err=%v", waiting, err)
+	}
+}
+
+// TestDependencyWaitStatus_SetOverwrites proves a second Set on the same
+// service replaces the first rather than erroring on the primary key
+// collision — StartService serializes per-service (see LocalManager.serviceLocks),
+// so a second wait for the same name is always a fresh one, never concurrent.
+func TestDependencyWaitStatus_SetOverwrites(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	deadline := time.Now().Add(5 * time.Minute)
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, deadline); err != nil {
+		t.Fatalf("first SetDependencyWaitStatus: %v", err)
+	}
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"cache", "proxy"}, deadline); err != nil {
+		t.Fatalf("second SetDependencyWaitStatus: %v", err)
+	}
+
+	status, waiting, err := db.GetDependencyWaitStatus(t.Context(), "web")
+	if err != nil || !waiting {
+		t.Fatalf("expected the overwritten wait to be visible, waiting=%v err=%v", waiting, err)
+	}
+	if len(status.Pending) != 2 || status.Pending[0] != "cache" || status.Pending[1] != "proxy" {
+		t.Errorf("expected the second Set's pending [cache proxy], got %v", status.Pending)
+	}
+}
+
+func TestDependencyWaitStatus_ClearNonexistentIsNoop(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.ClearDependencyWaitStatus(t.Context(), "never-waited"); err != nil {
+		t.Fatalf("expected clearing a nonexistent wait to be a no-op, got: %v", err)
+	}
+}
+
+func TestClearAllDependencyWaits(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	deadline := time.Now().Add(5 * time.Minute)
+	for _, name := range []string{"a", "b", "c"} {
+		if err := db.SetDependencyWaitStatus(t.Context(), name, []string{"dep"}, deadline); err != nil {
+			t.Fatalf("SetDependencyWaitStatus(%s): %v", name, err)
+		}
+	}
+
+	if err := db.ClearAllDependencyWaits(t.Context()); err != nil {
+		t.Fatalf("ClearAllDependencyWaits: %v", err)
+	}
+
+	for _, name := range []string{"a", "b", "c"} {
+		if _, waiting, err := db.GetDependencyWaitStatus(t.Context(), name); err != nil || waiting {
+			t.Errorf("expected %s to have no wait after ClearAllDependencyWaits, waiting=%v err=%v", name, waiting, err)
+		}
+	}
+}
+
+// TestDependencyWaitStatus_ClosedConnectionErrors proves Set/Clear/Get/
+// ClearAll all surface a wrapped error rather than panicking when the
+// underlying DB connection is gone (e.g. a database file removed out from
+// under the daemon, or shutdown racing a pending request).
+func TestDependencyWaitStatus_ClosedConnectionErrors(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	if err := db.CloseDBConnection(); err != nil {
+		t.Fatalf("CloseDBConnection: %v", err)
+	}
+
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
+		t.Error("expected SetDependencyWaitStatus to error on a closed connection")
+	}
+	if err := db.ClearDependencyWaitStatus(t.Context(), "web"); err == nil {
+		t.Error("expected ClearDependencyWaitStatus to error on a closed connection")
+	}
+	if _, _, err := db.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
+		t.Error("expected GetDependencyWaitStatus to error on a closed connection")
+	}
+	if err := db.ClearAllDependencyWaits(t.Context()); err == nil {
+		t.Error("expected ClearAllDependencyWaits to error on a closed connection")
+	}
+}
+
+// TestDependencyWaitStatus_MalformedPendingErrors proves GetDependencyWaitStatus
+// surfaces a decode error rather than a corrupted/truncated Pending slice when
+// the stored pending column isn't valid JSON — defense against a hand-edited
+// or corrupted state.db, not something SetDependencyWaitStatus itself can ever
+// produce.
+func TestDependencyWaitStatus_MalformedPendingErrors(t *testing.T) {
+	db, rawConn, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("SetDependencyWaitStatus: %v", err)
+	}
+	if _, err := rawConn.ExecContext(t.Context(), `UPDATE dependency_waits SET pending = ? WHERE service_name = ?`, "{not valid json", "web"); err != nil {
+		t.Fatalf("corrupting pending column: %v", err)
+	}
+
+	if _, _, err := db.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
+		t.Error("expected a decode error for a malformed pending column")
+	}
+}

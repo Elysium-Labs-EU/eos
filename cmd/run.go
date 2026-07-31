@@ -110,7 +110,7 @@ func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.Servi
 		return err
 	}
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
-	return manager.WaitForDependencies(ctx, mgr, entry.Name, cfg.DependsOn, maxWait)
+	return manager.RecordDependencyWait(ctx, mgr, mgr, entry.Name, cfg.DependsOn, maxWait)
 }
 
 var ErrServiceNonExistent = errors.New("service non existent")
