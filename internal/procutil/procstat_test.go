@@ -1,6 +1,9 @@
 package procutil
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 )
@@ -217,6 +220,53 @@ func TestCPUTicksFrom_MissingOrMalformedPidsSkipped(t *testing.T) {
 func TestCPUTicksFrom_EmptyPids(t *testing.T) {
 	if got := cpuTicksFrom(fakeProcReader{}, nil, 900); got != 0 {
 		t.Errorf("cpuTicksFrom(no pids) = %d, want 0", got)
+	}
+}
+
+// TestListPidsIn drives the real os.Open/Readdirnames scan against a fixture
+// directory shaped like /proc: numeric-named entries are PIDs, non-numeric
+// ones (e.g. "self", "cpuinfo") are filtered out. This is a real directory on
+// disk, not a fake — os.Open/Readdirnames aren't Linux-specific, only the
+// hardcoded "/proc" path realProcReader.listPids passes in is, so this
+// exercises the actual scan-and-filter logic on any platform.
+func TestListPidsIn(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"1", "42", "999", "self", "cpuinfo", "not-a-pid"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+
+	got, err := listPidsIn(dir)
+	if err != nil {
+		t.Fatalf("listPidsIn(%s): %v", dir, err)
+	}
+	sort.Ints(got)
+	want := []int{1, 42, 999}
+	if len(got) != len(want) {
+		t.Fatalf("listPidsIn(%s) = %v, want %v", dir, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("listPidsIn(%s) = %v, want %v", dir, got, want)
+			break
+		}
+	}
+}
+
+func TestListPidsIn_EmptyDir(t *testing.T) {
+	got, err := listPidsIn(t.TempDir())
+	if err != nil {
+		t.Fatalf("listPidsIn: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("listPidsIn(empty dir) = %v, want empty", got)
+	}
+}
+
+func TestListPidsIn_NonexistentDir(t *testing.T) {
+	if _, err := listPidsIn(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Error("listPidsIn(nonexistent dir) = nil error, want an error")
 	}
 }
 

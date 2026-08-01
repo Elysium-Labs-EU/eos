@@ -5,7 +5,6 @@ package procutil
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -44,24 +43,10 @@ func (r realProcReader) pids() []int {
 // listPids is the same /proc scan as pids, but surfaces an inaccessible
 // /proc as an error rather than swallowing it — platformCPUTime needs to
 // distinguish "read zero CPU time" from "couldn't read at all" so a
-// transient failure doesn't get recorded as a real, misleading sample.
+// transient failure doesn't get recorded as a real, misleading sample. See
+// listPidsIn (procstat.go) for the actual scan-and-filter logic.
 func (realProcReader) listPids() ([]int, error) {
-	procDir, err := os.Open("/proc")
-	if err != nil {
-		return nil, fmt.Errorf("open /proc: %w", err)
-	}
-	names, err := procDir.Readdirnames(-1)
-	_ = procDir.Close()
-	if err != nil {
-		return nil, fmt.Errorf("read /proc: %w", err)
-	}
-	pids := make([]int, 0, len(names))
-	for _, name := range names {
-		if pid, convErr := strconv.Atoi(name); convErr == nil {
-			pids = append(pids, pid)
-		}
-	}
-	return pids, nil
+	return listPidsIn("/proc")
 }
 
 // anyProcessRunning reports whether at least one process whose process group

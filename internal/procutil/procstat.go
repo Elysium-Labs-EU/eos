@@ -1,6 +1,8 @@
 package procutil
 
 import (
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -159,6 +161,32 @@ func cpuTicksFrom(r procStatReader, pids []int, pgid int) int64 {
 		total += cpuTicks
 	}
 	return total
+}
+
+// listPidsIn lists the numeric-named entries of dir as PIDs, the same way a
+// /proc listing enumerates live processes by their directory names. Split
+// out from realProcReader.listPids (procutil_linux.go) so this — the actual
+// scan-and-filter logic — is testable against a fixture directory (see
+// procstat_test.go) instead of requiring a real /proc, which only exists on
+// Linux. os.Open/Readdirnames themselves are not Linux-specific; only the
+// hardcoded "/proc" path in the caller is.
+func listPidsIn(dir string) ([]int, error) {
+	d, err := os.Open(dir) // #nosec G304 -- dir is "/proc" from the caller or a test fixture, never user input
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", dir, err)
+	}
+	names, err := d.Readdirnames(-1)
+	_ = d.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+	pids := make([]int, 0, len(names))
+	for _, name := range names {
+		if pid, convErr := strconv.Atoi(name); convErr == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids, nil
 }
 
 // ticksToDuration converts a jiffy count to a Duration given the platform's
