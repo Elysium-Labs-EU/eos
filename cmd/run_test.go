@@ -164,7 +164,7 @@ func TestRunWithNameUnregisteredCommand(t *testing.T) {
 	}
 }
 
-func TestRunWithAmbigiousCommand(t *testing.T) {
+func TestRunWithAmbiguousCommand(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupCmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())

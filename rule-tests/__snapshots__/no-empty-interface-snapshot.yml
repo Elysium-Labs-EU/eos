@@ -1,0 +1,14 @@
+id: no-empty-interface
+snapshots:
+  func f(v interface{}) interface{} { return v }:
+    labels:
+    - source: interface{}
+      style: primary
+      start: 9
+      end: 20
+  var m map[string]interface{}:
+    labels:
+    - source: interface{}
+      style: primary
+      start: 17
+      end: 28

@@ -1,0 +1,7 @@
+id: no-empty-interface
+language: go
+severity: warning
+message: "Use `any` instead of `interface{}`"
+rule:
+  pattern: interface{}
+note: "any is the builtin alias for interface{} since Go 1.18; also enforced by golangci-lint's modernize linter, this rule catches it pre-lint"
