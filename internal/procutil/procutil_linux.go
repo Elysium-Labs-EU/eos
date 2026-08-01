@@ -80,6 +80,73 @@ func parseCPUFields(afterComm string) (pgrp int, cpuTicks int64, ok bool) {
 	return pgrp, utime + stime, true
 }
 
+// parseZombieField extracts the process group (field 5, "pgrp") and whether
+// the process is a zombie (state field 3) from the post-comm portion of a
+// /proc/<pid>/stat line.
+func parseZombieField(afterComm string) (pgrp int, isZombie bool, ok bool) {
+	const (
+		stateFieldIndex = 0
+		pgrpFieldIndex  = 2
+	)
+	fields := strings.Fields(afterComm)
+	if len(fields) <= pgrpFieldIndex {
+		return 0, false, false
+	}
+	pgrp, err := strconv.Atoi(fields[pgrpFieldIndex])
+	if err != nil {
+		return 0, false, false
+	}
+	return pgrp, fields[stateFieldIndex] == "Z", true
+}
+
+// nonZombieMember reports whether pid belongs to process group pgid and is
+// running (not a zombie). A read failure (the process exited mid-check)
+// counts as no match.
+func nonZombieMember(pid, pgid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	i, ok := commEnd(string(data))
+	if !ok {
+		return false
+	}
+	memberPgrp, isZombie, ok := parseZombieField(string(data)[i+2:])
+	return ok && memberPgrp == pgid && !isZombie
+}
+
+// anyProcessRunning reports whether at least one process whose process group
+// is pgid is running (not a zombie). The fast path checks pgid's own
+// /proc/<pgid>/stat (true whenever the group leader is still alive); the
+// fallback scan covers the case where the leader has already exited but
+// another member of the group has not (see IsAlive's doc comment).
+func anyProcessRunning(pgid int) bool {
+	if nonZombieMember(pgid, pgid) {
+		return true
+	}
+
+	procDir, err := os.Open("/proc")
+	if err != nil {
+		return false
+	}
+	names, err := procDir.Readdirnames(-1)
+	_ = procDir.Close()
+	if err != nil {
+		return false
+	}
+
+	for _, name := range names {
+		pid, convErr := strconv.Atoi(name)
+		if convErr != nil || pid == pgid {
+			continue
+		}
+		if nonZombieMember(pid, pgid) {
+			return true
+		}
+	}
+	return false
+}
+
 // procCPUTicksForPGID returns the utime+stime jiffies of pid if it belongs to
 // pgid, else 0. A read failure (the process exited mid-scan) is treated as 0.
 func procCPUTicksForPGID(pid, pgid int) int64 {

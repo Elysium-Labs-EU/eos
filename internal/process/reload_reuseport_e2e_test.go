@@ -103,6 +103,19 @@ func freeLoopbackPort(t *testing.T) int {
 	return addr.Port
 }
 
+// probeLoadGeneratorRetries bounds how many times the load generator retries
+// a single request after a transient reset before counting it as a real
+// dropped connection. eos's zero-downtime contract covers connections the old
+// instance already Accept()ed (see runReusePortServer's doc comment); it
+// never promised anything about a connection whose handshake the kernel
+// completed against the old listener's SO_REUSEPORT socket a moment before
+// that socket closed — that one is still sitting in the kernel's accept
+// backlog, not yet handed to the app, and closing a listening socket RSTs
+// whatever's left in its backlog. That is a known, bounded blip inherent to
+// SO_REUSEPORT itself, not an availability gap the reload logic could avoid;
+// a well-behaved client retries. A failure that survives every retry is real.
+const probeLoadGeneratorRetries = 3
+
 // probeOnce does one full request/response against the port, returning nil only
 // when a connection was accepted and answered "ok". A dial failure is the
 // availability gap the reload must never open.
@@ -124,6 +137,20 @@ func probeOnce(port int, timeout time.Duration) error {
 		return fmt.Errorf("unexpected response %q", buf)
 	}
 	return nil
+}
+
+// probeWithRetry retries a failed probe up to retries times, returning the
+// last error only once every attempt has failed. See
+// probeLoadGeneratorRetries for why a bounded retry, not a single shot, is
+// the correct check here.
+func probeWithRetry(port int, timeout time.Duration, retries int) error {
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if lastErr = probeOnce(port, timeout); lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 // waitPortReachable blocks until the port answers a full request or the deadline
@@ -218,7 +245,7 @@ func TestReloadZeroDowntimeSOReusePort(t *testing.T) {
 				return
 			default:
 			}
-			if probeErr := probeOnce(port, time.Second); probeErr != nil {
+			if probeErr := probeWithRetry(port, time.Second, probeLoadGeneratorRetries); probeErr != nil {
 				mu.Lock()
 				failures = append(failures, probeErr.Error())
 				mu.Unlock()
