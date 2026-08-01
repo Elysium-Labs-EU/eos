@@ -1,4 +1,4 @@
-.PHONY: help dev build install test test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -70,6 +70,8 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 	go install github.com/zricethezav/gitleaks/v8@latest
 	@echo "Installing govulncheck..."
 	go install golang.org/x/vuln/cmd/govulncheck@latest
+	@echo "Installing apidiff (plugin API breaking-change detection)..."
+	go install golang.org/x/exp/cmd/apidiff@latest
 	@echo "Installing benchstat (benchmark comparison)..."
 	go install golang.org/x/perf/cmd/benchstat@latest
 	@echo "Installing git hooks..."
@@ -102,6 +104,10 @@ install: build ## Install to ~/.local/bin
 test: ## Run tests
 	@echo "Running tests..."
 	go test ./cmd ./internal/... -race -count=2
+
+verify-mod: ## Verify on-disk module cache matches go.sum (defense-in-depth beyond go.sum presence)
+	@echo "Verifying module cache..."
+	go mod verify
 
 test-integration: ## Run integration tests (requires Linux + systemd + root; use OrbStack)
 	@echo "Running integration tests..."
@@ -167,6 +173,62 @@ crap-gate-test: ## Real end-to-end test of scripts/go-crap-gate.sh's OS-integrat
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
 	bash scripts/go-crap-gate_test.sh
 
+CHECK_DIFF_SIZE_GATE_PATHS := scripts/check-diff-size.sh scripts/check-diff-size_test.sh
+
+check-diff-size: ## Block oversized files / accidental Git-LFS pointers in the diff vs origin/main (or GO_CRAP_BASE-style CHECK_DIFF_SIZE_BASE)
+	@echo "Checking diff for oversized files / LFS pointers..."
+	@base="$${CHECK_DIFF_SIZE_BASE:-origin/main}"; \
+	if ! git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  git fetch --quiet origin "$${base#origin/}" 2>/dev/null || true; \
+	fi; \
+	changed=""; \
+	if git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  diff_base="$$(git merge-base "$$base" HEAD 2>/dev/null || echo "$$base")"; \
+	  changed="$$(git diff --name-only "$$diff_base" HEAD -- $(CHECK_DIFF_SIZE_GATE_PATHS))$$(git status --porcelain -- $(CHECK_DIFF_SIZE_GATE_PATHS))"; \
+	else \
+	  changed="unknown-base"; \
+	fi; \
+	if [ -n "$$changed" ]; then \
+	  echo "check-diff-size.sh or its test changed vs $$base (or base unresolvable) -- running check-diff-size-test..."; \
+	  $(MAKE) check-diff-size-test; \
+	else \
+	  echo "check-diff-size.sh/_test.sh unchanged vs $$base -- skipping check-diff-size-test (run 'make check-diff-size-test' to force it)."; \
+	fi
+	bash scripts/check-diff-size.sh
+
+check-diff-size-test: ## Real end-to-end test of scripts/check-diff-size.sh (synthetic reverted commits)
+	@echo "Running check-diff-size.sh end-to-end self-test..."
+	bash scripts/check-diff-size_test.sh
+
+CHECK_API_DIFF_GATE_PATHS := scripts/check-plugin-api-diff.sh scripts/check-plugin-api-diff_test.sh
+
+check-plugin-api-diff: ## Fail on incompatible changes to the plugin/daemon wire contract (internal/types), requires: go install golang.org/x/exp/cmd/apidiff@latest
+	@echo "Checking plugin API surface for breaking changes..."
+	@command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }
+	@base="$${CHECK_API_DIFF_BASE:-origin/main}"; \
+	if ! git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  git fetch --quiet origin "$${base#origin/}" 2>/dev/null || true; \
+	fi; \
+	changed=""; \
+	if git rev-parse --verify --quiet "$$base" >/dev/null 2>&1; then \
+	  diff_base="$$(git merge-base "$$base" HEAD 2>/dev/null || echo "$$base")"; \
+	  changed="$$(git diff --name-only "$$diff_base" HEAD -- $(CHECK_API_DIFF_GATE_PATHS))$$(git status --porcelain -- $(CHECK_API_DIFF_GATE_PATHS))"; \
+	else \
+	  changed="unknown-base"; \
+	fi; \
+	if [ -n "$$changed" ]; then \
+	  echo "check-plugin-api-diff.sh or its test changed vs $$base (or base unresolvable) -- running check-plugin-api-diff-test..."; \
+	  $(MAKE) check-plugin-api-diff-test; \
+	else \
+	  echo "check-plugin-api-diff.sh/_test.sh unchanged vs $$base -- skipping check-plugin-api-diff-test (run 'make check-plugin-api-diff-test' to force it)."; \
+	fi
+	bash scripts/check-plugin-api-diff.sh
+
+check-plugin-api-diff-test: ## Real end-to-end test of scripts/check-plugin-api-diff.sh (synthetic reverted commits, requires apidiff)
+	@echo "Running check-plugin-api-diff.sh end-to-end self-test..."
+	@command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }
+	bash scripts/check-plugin-api-diff_test.sh
+
 crap-report: ## Full whole-repo go-crap debt report (informational, no gate)
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
 	go-crap scan . --exclude '.*_test\.go'
@@ -189,7 +251,7 @@ sg-test: ## Run ast-grep rule tests
 	ast-grep test
 
 sg-rules: ## List all ast-grep rules
-	@find rules -name '*.yml' ! -path '*__tests__*' | sort
+	@find rules -name '*.yml' | sort
 
 secrets: ## Scan working tree and history for leaked secrets (requires: go install github.com/zricethezav/gitleaks/v8@latest)
 	@command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks not found. Run: make setup"; exit 1; }
@@ -199,7 +261,7 @@ govulncheck: ## Reachability-aware vulnerability scan (complements OSV-Scanner's
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: make setup"; exit 1; }
 	govulncheck ./...
 
-ci: test lint sg nilcheck test-coverage-check crap govulncheck secrets ## Run all CI checks locally
+ci: test verify-mod lint sg nilcheck test-coverage-check crap check-diff-size check-plugin-api-diff govulncheck secrets ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)

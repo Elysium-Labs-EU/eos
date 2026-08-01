@@ -137,14 +137,14 @@ func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, err
 	return false, fmt.Errorf("getting service instance: %w", err)
 }
 
-func printStartedSuccessOuput(cmd *cobra.Command, serviceName string, pgid int) {
+func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
-func printRestartedSuccessOuput(cmd *cobra.Command, serviceName string, pgid int) {
+func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
@@ -301,9 +301,9 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				return helpers.ErrCommandFailed
 			}
 			if serviceRunResult.Restarted {
-				printRestartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
+				printRestartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 			} else {
-				printStartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
+				printStartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 			}
 			return nil
 		},

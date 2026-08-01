@@ -22,6 +22,16 @@ permissions:
   pull-requests: read
 
 jobs:
+  typos:
+    name: Typo check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check for typos
+        uses: crate-ci/typos@v1
+
   ci:
     name: CI
     runs-on: ubuntu-latest
