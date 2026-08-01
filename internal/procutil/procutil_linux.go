@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -16,181 +15,76 @@ import (
 // fixed here the same way gopsutil and others do.
 const linuxClockTicks = 100
 
-// platformStartTime reads field 22 (starttime, in clock ticks since boot) of
-// /proc/<pid>/stat. The comm field can itself contain spaces or parentheses,
-// so the field list is located from the last ')' rather than by naive
-// whitespace splitting from the start of the line.
-// commEnd locates the closing ')' of the comm field in a /proc/<pid>/stat line,
-// returning its index and ok=false if the line is malformed. The comm field can
-// contain spaces or parentheses, so the field list is found from the last ')'.
-func commEnd(statStr string) (int, bool) {
-	i := strings.LastIndex(statStr, ")")
-	if i < 0 || i+2 >= len(statStr) {
-		return 0, false
-	}
-	return i, true
-}
+// realProcReader reads process state from the live /proc filesystem — the
+// only implementation of procStatReader (see procstat.go) that actually
+// touches the OS, so the group-scan logic it feeds stays pure and portable.
+type realProcReader struct{}
 
-// parseStartTimeField extracts field 22 (starttime, in clock ticks since boot)
-// from the post-comm portion of a /proc/<pid>/stat line.
-func parseStartTimeField(afterComm string) (int64, bool) {
-	// Fields after "pid (comm) " are: state(1) ppid(2) pgrp(3) session(4)
-	// tty_nr(5) tpgid(6) flags(7) minflt(8) cminflt(9) majflt(10) cmajflt(11)
-	// utime(12) stime(13) cutime(14) cstime(15) priority(16) nice(17)
-	// num_threads(18) itrealvalue(19) starttime(20) — 0-indexed that's 19.
-	const starttimeFieldIndex = 19
-	fields := strings.Fields(afterComm)
-	if len(fields) <= starttimeFieldIndex {
-		return 0, false
-	}
-	ticks, err := strconv.ParseInt(fields[starttimeFieldIndex], 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return ticks, true
-}
-
-// parseCPUFields extracts the process group (field 5, "pgrp") and the total CPU
-// jiffies (utime field 14 + stime field 15) from the post-comm portion of a
-// /proc/<pid>/stat line. Indices are 0-based into the whitespace-split fields
-// after "pid (comm) ": state(0) ppid(1) pgrp(2) session(3) tty_nr(4) tpgid(5)
-// flags(6) minflt(7) cminflt(8) majflt(9) cmajflt(10) utime(11) stime(12).
-func parseCPUFields(afterComm string) (pgrp int, cpuTicks int64, ok bool) {
-	const (
-		pgrpFieldIndex  = 2
-		utimeFieldIndex = 11
-		stimeFieldIndex = 12
-	)
-	fields := strings.Fields(afterComm)
-	if len(fields) <= stimeFieldIndex {
-		return 0, 0, false
-	}
-	pgrp, err := strconv.Atoi(fields[pgrpFieldIndex])
-	if err != nil {
-		return 0, 0, false
-	}
-	utime, err := strconv.ParseInt(fields[utimeFieldIndex], 10, 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	stime, err := strconv.ParseInt(fields[stimeFieldIndex], 10, 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	return pgrp, utime + stime, true
-}
-
-// parseZombieField extracts the process group (field 5, "pgrp") and whether
-// the process is a zombie (state field 3) from the post-comm portion of a
-// /proc/<pid>/stat line.
-func parseZombieField(afterComm string) (pgrp int, isZombie bool, ok bool) {
-	const (
-		stateFieldIndex = 0
-		pgrpFieldIndex  = 2
-	)
-	fields := strings.Fields(afterComm)
-	if len(fields) <= pgrpFieldIndex {
-		return 0, false, false
-	}
-	pgrp, err := strconv.Atoi(fields[pgrpFieldIndex])
-	if err != nil {
-		return 0, false, false
-	}
-	return pgrp, fields[stateFieldIndex] == "Z", true
-}
-
-// nonZombieMember reports whether pid belongs to process group pgid and is
-// running (not a zombie). A read failure (the process exited mid-check)
-// counts as no match.
-func nonZombieMember(pid, pgid int) bool {
+func (realProcReader) stat(pid int) (string, bool) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
-		return false
+		return "", false
 	}
-	i, ok := commEnd(string(data))
-	if !ok {
-		return false
-	}
-	memberPgrp, isZombie, ok := parseZombieField(string(data)[i+2:])
-	return ok && memberPgrp == pgid && !isZombie
+	return string(data), true
 }
 
-// anyProcessRunning reports whether at least one process whose process group
-// is pgid is running (not a zombie). The fast path checks pgid's own
-// /proc/<pgid>/stat (true whenever the group leader is still alive); the
-// fallback scan covers the case where the leader has already exited but
-// another member of the group has not (see IsAlive's doc comment).
-func anyProcessRunning(pgid int) bool {
-	if nonZombieMember(pgid, pgid) {
-		return true
+// pids lists every PID currently visible under /proc, silently reading as
+// empty on failure — the procStatReader interface has no error return, and
+// callers through it (anyProcessRunningFrom) already treat "nothing found"
+// and "couldn't look" the same way. platformCPUTime needs to tell those two
+// apart, so it goes through listPids instead.
+func (r realProcReader) pids() []int {
+	pids, err := r.listPids()
+	if err != nil {
+		return nil
 	}
+	return pids
+}
 
+// listPids is the same /proc scan as pids, but surfaces an inaccessible
+// /proc as an error rather than swallowing it — platformCPUTime needs to
+// distinguish "read zero CPU time" from "couldn't read at all" so a
+// transient failure doesn't get recorded as a real, misleading sample.
+func (realProcReader) listPids() ([]int, error) {
 	procDir, err := os.Open("/proc")
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("open /proc: %w", err)
 	}
 	names, err := procDir.Readdirnames(-1)
 	_ = procDir.Close()
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("read /proc: %w", err)
 	}
-
+	pids := make([]int, 0, len(names))
 	for _, name := range names {
-		pid, convErr := strconv.Atoi(name)
-		if convErr != nil || pid == pgid {
-			continue
-		}
-		if nonZombieMember(pid, pgid) {
-			return true
+		if pid, convErr := strconv.Atoi(name); convErr == nil {
+			pids = append(pids, pid)
 		}
 	}
-	return false
+	return pids, nil
 }
 
-// procCPUTicksForPGID returns the utime+stime jiffies of pid if it belongs to
-// pgid, else 0. A read failure (the process exited mid-scan) is treated as 0.
-func procCPUTicksForPGID(pid, pgid int) int64 {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0
-	}
-	statStr := string(data)
-	i, ok := commEnd(statStr)
-	if !ok {
-		return 0
-	}
-	pgrp, cpuTicks, ok := parseCPUFields(statStr[i+2:])
-	if !ok || pgrp != pgid {
-		return 0
-	}
-	return cpuTicks
+// anyProcessRunning reports whether at least one process whose process group
+// is pgid is running (not a zombie), reading live process state from /proc.
+// See anyProcessRunningFrom for the actual scan logic and IsAlive's doc
+// comment on procutil.go for why every group member needs checking, not just
+// pgid itself.
+func anyProcessRunning(pgid int) bool {
+	return anyProcessRunningFrom(realProcReader{}, pgid)
 }
 
 // platformCPUTime sums utime+stime across every live process whose process
 // group (pgrp) is pgid — the same scope as the RSS sampler — and converts the
-// jiffies to a Duration via the fixed USER_HZ. eos launches each service as its
-// own group leader in the daemon's namespace, so a process's pgrp equals the
-// PGID eos stored for it.
+// jiffies to a Duration via the fixed USER_HZ. eos launches each service as
+// its own group leader in the daemon's namespace, so a process's pgrp equals
+// the PGID eos stored for it. The per-pid parsing, summation, and tick
+// conversion are the pure, portably-tested cpuTicksFrom/ticksToDuration.
 func platformCPUTime(pgid int) (time.Duration, error) {
-	procDir, err := os.Open("/proc")
+	pids, err := (realProcReader{}).listPids()
 	if err != nil {
-		return 0, fmt.Errorf("open /proc: %w", err)
+		return 0, err
 	}
-	names, err := procDir.Readdirnames(-1)
-	_ = procDir.Close()
-	if err != nil {
-		return 0, fmt.Errorf("read /proc: %w", err)
-	}
-
-	var totalTicks int64
-	for _, name := range names {
-		pid, err := strconv.Atoi(name)
-		if err != nil {
-			continue
-		}
-		totalTicks += procCPUTicksForPGID(pid, pgid)
-	}
-	return time.Duration(totalTicks) * time.Second / linuxClockTicks, nil
+	return ticksToDuration(cpuTicksFrom(realProcReader{}, pids, pgid), linuxClockTicks), nil
 }
 
 func platformStartTime(pid int) (int64, error) {
