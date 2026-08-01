@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// anyProcessRunning always reports true outside Linux and macOS: kill(-pgid,
+// 0) — the caller in IsAlive — is the only liveness signal available here.
+func anyProcessRunning(pgid int) bool {
+	return true
+}
+
 // platformStartTime has no implementation outside Linux and macOS, the two
 // platforms eos supports (systemd and launchd persistence respectively).
 // Callers must treat this error as a hard failure rather than silently
