@@ -11,7 +11,92 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+// apiLogsFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods newAPILogsCmd's helpers call, so
+// error branches can be exercised without a real DB-backed manager.
+type apiLogsFakeManager struct {
+	manager.ServiceManager
+	registeredErr error
+	processErr    error
+	logPathErr    error
+	processEntry  *types.ProcessHistory
+	logPath       *string
+	registered    bool
+}
+
+func (f *apiLogsFakeManager) IsServiceRegistered(_ string) (bool, error) {
+	return f.registered, f.registeredErr
+}
+
+func (f *apiLogsFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+	return f.processEntry, f.processErr
+}
+
+func (f *apiLogsFakeManager) GetServiceLogFilePath(_ string, _ bool) (*string, error) {
+	return f.logPath, f.logPathErr
+}
+
+func TestAPILogsEnsureServiceRegistered(t *testing.T) {
+	t.Run("registration check fails", func(t *testing.T) {
+		wantErr := errors.New("db unavailable")
+		err := apiLogsEnsureServiceRegistered(&apiLogsFakeManager{registeredErr: wantErr}, "svc")
+		if err == nil || !errors.Is(err, wantErr) {
+			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
+		}
+	})
+
+	t.Run("registered", func(t *testing.T) {
+		err := apiLogsEnsureServiceRegistered(&apiLogsFakeManager{registered: true}, "svc")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
+}
+
+func TestAPILogsEnsureServiceStarted(t *testing.T) {
+	t.Run("process history lookup fails", func(t *testing.T) {
+		wantErr := errors.New("db unavailable")
+		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processErr: wantErr}, "svc")
+		if err == nil || !errors.Is(err, wantErr) {
+			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
+		}
+	})
+
+	t.Run("never started", func(t *testing.T) {
+		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processErr: manager.ErrProcessNotFound}, "svc")
+		if err == nil || !strings.Contains(err.Error(), "never been started") {
+			t.Fatalf("expected 'never been started' error, got %v", err)
+		}
+	})
+
+	t.Run("started", func(t *testing.T) {
+		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processEntry: &types.ProcessHistory{}}, "svc")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
+}
+
+func TestAPILogsFetchLines(t *testing.T) {
+	t.Run("log path lookup fails", func(t *testing.T) {
+		wantErr := errors.New("path unavailable")
+		_, _, err := apiLogsFetchLines(&apiLogsFakeManager{logPathErr: wantErr}, "svc", false, 10)
+		if err == nil || !errors.Is(err, wantErr) {
+			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
+		}
+	})
+
+	t.Run("log file missing", func(t *testing.T) {
+		missing := "/nonexistent/path/does-not-exist.log"
+		_, _, err := apiLogsFetchLines(&apiLogsFakeManager{logPath: &missing}, "svc", false, 10)
+		if err == nil {
+			t.Fatalf("expected error reading missing log file, got nil")
+		}
+	})
+}
 
 // startServiceForLogsTest is a shared fixture for this file: it runs a real
 // service via "api run -f" so its stdout/stderr log files exist and have

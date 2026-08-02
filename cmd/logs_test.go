@@ -506,6 +506,107 @@ func TestRenderServiceLogLine_noErrorField(t *testing.T) {
 	}
 }
 
+// logsCmdFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods the logsCmd* helpers call, so
+// error branches can be exercised without a real DB-backed manager.
+type logsCmdFakeManager struct {
+	manager.ServiceManager
+	registeredErr error
+	historyErr    error
+	outLogPathErr error
+	errLogPathErr error
+	history       *types.ProcessHistory
+	outLogPath    *string
+	errLogPath    *string
+	registered    bool
+}
+
+func (f *logsCmdFakeManager) IsServiceRegistered(_ string) (bool, error) {
+	return f.registered, f.registeredErr
+}
+
+func (f *logsCmdFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+	return f.history, f.historyErr
+}
+
+func (f *logsCmdFakeManager) GetServiceLogFilePath(_ string, errorLog bool) (*string, error) {
+	if errorLog {
+		return f.errLogPath, f.errLogPathErr
+	}
+	return f.outLogPath, f.outLogPathErr
+}
+
+func TestLogsCmdCheckRegisteredError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	wantErr := errors.New("boom")
+
+	err := logsCmdCheckRegistered(cmd, &logsCmdFakeManager{registeredErr: wantErr}, "svc")
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "checking service:") {
+		t.Errorf("expected 'checking service:' error, got: %s", errBuf.String())
+	}
+}
+
+func TestLogsCmdCheckStartedHistoryError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	wantErr := errors.New("boom")
+
+	err := logsCmdCheckStarted(cmd, &logsCmdFakeManager{historyErr: wantErr}, "svc")
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting process history:") {
+		t.Errorf("expected 'getting process history:' error, got: %s", errBuf.String())
+	}
+}
+
+func TestLogsCmdRunCombinedOutPathError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	wantErr := errors.New("boom")
+
+	err := logsCmdRunCombined(cmd, &logsCmdFakeManager{outLogPathErr: wantErr}, "svc", false, 100)
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting log file path:") {
+		t.Errorf("expected 'getting log file path:' error, got: %s", errBuf.String())
+	}
+}
+
+func TestLogsCmdRunCombinedErrPathError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	wantErr := errors.New("boom")
+	outPath := filepath.Join(t.TempDir(), "out.log")
+
+	err := logsCmdRunCombined(cmd, &logsCmdFakeManager{outLogPath: &outPath, errLogPathErr: wantErr}, "svc", false, 100)
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting error log file path:") {
+		t.Errorf("expected 'getting error log file path:' error, got: %s", errBuf.String())
+	}
+}
+
+func TestLogsCmdRunSingleStreamPathError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	wantErr := errors.New("boom")
+
+	err := logsCmdRunSingleStream(cmd, &logsCmdFakeManager{outLogPathErr: wantErr}, "svc", false, false, 100)
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting log file path:") {
+		t.Errorf("expected 'getting log file path:' error, got: %s", errBuf.String())
+	}
+}
+
 func TestRenderServiceLogLine_withStreamLabel(t *testing.T) {
 	line := `{"time":"2025-01-01T10:00:00.000000000Z","level":"WARN","msg":"sink exited","error":"binary not found"}`
 	got := renderServiceLogLine(line, "err")

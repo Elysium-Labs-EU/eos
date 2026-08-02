@@ -184,16 +184,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		Short: "Manage the eos system settings",
 		Long:  `Manage eos system settings, check for updates, and inspect runtime configuration.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			_, baseDir, systemConfig, identity, err := newSystemConfig()
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
-				os.Exit(1)
-			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
-				os.Exit(1)
-			}
+			ctrl = sysResolveDaemonController(cmd)
 		},
 	}
 
@@ -205,13 +196,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, baseDir, config, _, err := newSystemConfig()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			infoCmd(cmd, installDir, baseDir, config)
-			return nil
+			return sysRunInfo(cmd, systemCmd)
 		},
 	}
 
@@ -231,56 +216,7 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, systemConfig, _, err := newSystemConfig()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			flagYes, err := cmd.Flags().GetBool("yes")
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if runtime.GOOS == "darwin" {
-				userAgent := os.Getuid() != 0
-				launchdDir := config.LaunchdTargetDir
-				if userAgent {
-					launchdDir, err = config.UserLaunchAgentsDir()
-					if err != nil {
-						systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user launch agents dir: %v", err))
-						return helpers.ErrCommandFailed
-					}
-				}
-				return startupCmdLaunchd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, flagYes, execRunCmd)
-			}
-
-			runtimeName, err := detectActiveSystemRuntime()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if runtimeName == "openrc" {
-				return openrcStartupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
-			}
-
-			userUnit := os.Getuid() != 0
-			systemdDir := config.SystemdTargetDir
-			if userUnit {
-				systemdDir, err = config.UserSystemdDir()
-				if err != nil {
-					systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user systemd dir: %v", err))
-					return helpers.ErrCommandFailed
-				}
-			}
-			return startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-				systemdDir, config.SystemdTargetFileName,
-				userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+			return sysRunStartup(cmd, systemCmd)
 		},
 	}
 	startupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
@@ -299,44 +235,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, systemConfig, identity, err := newSystemConfig()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			flagYes, err := cmd.Flags().GetBool("yes")
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if runtime.GOOS == "darwin" {
-				if systemConfig.Daemon.Launchd == nil {
-					systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no launchd startup configured for this user — nothing to remove")
-					return helpers.ErrCommandFailed
-				}
-				userAgent := os.Getuid() != 0
-				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, flagYes, execRunCmd, identity)
-			}
-
-			runtimeName, err := detectActiveSystemRuntime()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if runtimeName == "openrc" {
-				return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
-			}
-
-			if systemConfig.Daemon.Systemd == nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
-				return helpers.ErrCommandFailed
-			}
-			userUnit := os.Getuid() != 0
-			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
+			return sysRunUnstartup(cmd, systemCmd)
 		},
 	}
 	unstartupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
@@ -349,31 +248,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, _, _, err := newSystemConfig()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			includePre, err := cmd.Flags().GetBool("pre")
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			// Overrides for testing purposes
-			version := buildinfo.GetVersionOnly()
-			if override := os.Getenv("EOS_VERSION"); override != "" {
-				version = override
-			}
-			userArch := runtime.GOARCH
-			if override := os.Getenv("USER_ARCH"); override != "" {
-				userArch = override
-			}
-			userOS := runtime.GOOS
-			if override := os.Getenv("USER_OS"); override != "" {
-				userOS = override
-			}
-			return updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
+			return sysRunUpdate(cmd, systemCmd, ctrl)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -387,26 +262,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, baseDir, _, _, err := newSystemConfig()
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			flagYes, err := cmd.Flags().GetBool("yes")
-			if err != nil {
-				systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if !flagYes {
-				confirmed := helpers.PromptConfirm(cmd, "uninstall eos? (y/n):")
-				if !confirmed {
-					systemCmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
-					return nil
-				}
-			}
-			return uninstallCmd(cmd, getManager, getConfig, ctrl, installDir, baseDir, flagYes)
+			return sysRunUninstall(cmd, systemCmd, getManager, getConfig, ctrl)
 		},
 	}
 	uninstallCmd.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
@@ -417,13 +273,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		Long:    `Print the current eos version, git commit hash, and build date. Also flags version drift against the running daemon and the latest published release, and suggests the fix.`,
 		Example: `  eos system version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.Println(buildinfo.Get())
-
-			// Version drift is a bonus, not worth failing the command over: if the
-			// config can't be resolved, just skip the drift check.
-			if _, _, systemConfig, _, err := newSystemConfig(); err == nil {
-				printVersionDrift(cmd, systemConfig.Daemon)
-			}
+			sysRunVersion(cmd)
 			return nil
 		},
 	}
@@ -436,6 +286,231 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	systemCmd.AddCommand(versionCmd)
 
 	return systemCmd
+}
+
+// sysResolveDaemonController implements the "system" command group's
+// PersistentPreRun: resolve config and daemon mode, or print an error and
+// exit(1) — cobra's PersistentPreRun has no error return, so a hard failure
+// here has always meant terminating the process directly.
+func sysResolveDaemonController(cmd *cobra.Command) DaemonController {
+	_, baseDir, systemConfig, identity, err := newSystemConfig()
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+		os.Exit(1)
+	}
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
+		os.Exit(1)
+	}
+	return ctrl
+}
+
+// sysRunInfo backs the "system info" subcommand's RunE.
+func sysRunInfo(cmd *cobra.Command, systemCmd *cobra.Command) error {
+	installDir, baseDir, cfg, _, err := newSystemConfig()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	infoCmd(cmd, installDir, baseDir, cfg)
+	return nil
+}
+
+// sysRunStartup backs the "system startup" subcommand's RunE: it resolves
+// shared config/flags, then dispatches to the darwin or systemd/OpenRC path.
+func sysRunStartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
+	installDir, _, systemConfig, _, err := newSystemConfig()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	flagYes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if runtime.GOOS == "darwin" {
+		return sysStartupDarwin(cmd, systemCmd, installDir, systemConfig.Daemon.Standalone, verbose, flagYes)
+	}
+	return sysStartupLinux(cmd, systemCmd, installDir, systemConfig.Daemon.Standalone, verbose, flagYes)
+}
+
+// sysStartupDarwin handles "system startup" on macOS: resolve the launchd
+// target directory (system LaunchDaemons, or the invoking user's
+// LaunchAgents when unprivileged) and install the plist.
+func sysStartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, installDir string, standalone *config.StandaloneDaemonConfig, verbose, flagYes bool) error {
+	userAgent := os.Getuid() != 0
+	launchdDir := config.LaunchdTargetDir
+	if userAgent {
+		var err error
+		launchdDir, err = config.UserLaunchAgentsDir()
+		if err != nil {
+			systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user launch agents dir: %v", err))
+			return helpers.ErrCommandFailed
+		}
+	}
+	return startupCmdLaunchd(cmd.Context(), cmd, installDir, standalone,
+		launchdDir, config.LaunchdPlistFileName, userAgent, verbose, flagYes, execRunCmd)
+}
+
+// sysStartupLinux handles "system startup" on non-macOS platforms: detect
+// the active init system and install an OpenRC init script or a systemd
+// unit (system-wide or the invoking user's, when unprivileged).
+func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir string, standalone *config.StandaloneDaemonConfig, verbose, flagYes bool) error {
+	runtimeName, err := detectActiveSystemRuntime()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if runtimeName == "openrc" {
+		return openrcStartupCmd(cmd.Context(), cmd, installDir, standalone,
+			config.OpenRCInitDir, config.OpenRCTargetFileName,
+			verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+	}
+
+	userUnit := os.Getuid() != 0
+	systemdDir := config.SystemdTargetDir
+	if userUnit {
+		var err error
+		systemdDir, err = config.UserSystemdDir()
+		if err != nil {
+			systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user systemd dir: %v", err))
+			return helpers.ErrCommandFailed
+		}
+	}
+	return startupCmd(cmd.Context(), cmd, installDir, standalone,
+		systemdDir, config.SystemdTargetFileName,
+		userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+}
+
+// sysRunUnstartup backs the "system unstartup" subcommand's RunE: it
+// resolves shared config/flags, then dispatches to the darwin or
+// systemd/OpenRC path.
+func sysRunUnstartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
+	_, _, systemConfig, identity, err := newSystemConfig()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	flagYes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if runtime.GOOS == "darwin" {
+		return sysUnstartupDarwin(cmd, systemCmd, systemConfig.Daemon, verbose, flagYes, identity)
+	}
+	return sysUnstartupLinux(cmd, systemCmd, systemConfig.Daemon, verbose, flagYes, identity)
+}
+
+// sysUnstartupDarwin handles "system unstartup" on macOS: remove the
+// installed launchd plist, if any is configured.
+func sysUnstartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, daemon config.DaemonConfig, verbose, flagYes bool, identity userutil.Identity) error {
+	if daemon.Launchd == nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no launchd startup configured for this user — nothing to remove")
+		return helpers.ErrCommandFailed
+	}
+	userAgent := os.Getuid() != 0
+	return unstartupCmdLaunchd(cmd.Context(), cmd, *daemon.Launchd, userAgent, verbose, flagYes, execRunCmd, identity)
+}
+
+// sysUnstartupLinux handles "system unstartup" on non-macOS platforms:
+// detect the active init system and remove the OpenRC init script or the
+// configured systemd unit.
+func sysUnstartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, daemon config.DaemonConfig, verbose, flagYes bool, identity userutil.Identity) error {
+	runtimeName, err := detectActiveSystemRuntime()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if runtimeName == "openrc" {
+		return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
+			verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
+	}
+
+	if daemon.Systemd == nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
+		return helpers.ErrCommandFailed
+	}
+	userUnit := os.Getuid() != 0
+	return unstartupCmd(cmd.Context(), cmd, *daemon.Systemd, userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
+}
+
+// sysUpdateEnvOverrides resolves the version/arch/OS the update check runs
+// against, letting tests override each independently of the real build and
+// host. Pure — reads only the given env lookup function.
+func sysUpdateEnvOverrides(getenv func(string) string) (version, userArch, userOS string) {
+	version = buildinfo.GetVersionOnly()
+	if override := getenv("EOS_VERSION"); override != "" {
+		version = override
+	}
+	userArch = runtime.GOARCH
+	if override := getenv("USER_ARCH"); override != "" {
+		userArch = override
+	}
+	userOS = runtime.GOOS
+	if override := getenv("USER_OS"); override != "" {
+		userOS = override
+	}
+	return version, userArch, userOS
+}
+
+// sysRunUpdate backs the "system update" subcommand's RunE.
+func sysRunUpdate(cmd *cobra.Command, systemCmd *cobra.Command, ctrl DaemonController) error {
+	installDir, _, _, _, err := newSystemConfig()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	includePre, err := cmd.Flags().GetBool("pre")
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	version, userArch, userOS := sysUpdateEnvOverrides(os.Getenv)
+	return updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
+}
+
+// sysRunUninstall backs the "system uninstall" subcommand's RunE.
+func sysRunUninstall(cmd *cobra.Command, systemCmd *cobra.Command, getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, ctrl DaemonController) error {
+	installDir, baseDir, _, _, err := newSystemConfig()
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	flagYes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if !flagYes {
+		confirmed := helpers.PromptConfirm(cmd, "uninstall eos? (y/n):")
+		if !confirmed {
+			systemCmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
+			return nil
+		}
+	}
+	return uninstallCmd(cmd, getManager, getConfig, ctrl, installDir, baseDir, flagYes)
+}
+
+// sysRunVersion backs the "system version" subcommand's RunE. Version drift
+// is a bonus, not worth failing the command over: if the config can't be
+// resolved, the drift check is just skipped.
+func sysRunVersion(cmd *cobra.Command) {
+	cmd.Println(buildinfo.Get())
+	if _, _, systemConfig, _, err := newSystemConfig(); err == nil {
+		printVersionDrift(cmd, systemConfig.Daemon)
+	}
 }
 
 func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *config.SystemConfig) {
@@ -1956,15 +2031,34 @@ func writeResponseToTempFile(resp *http.Response, tempDir, name string) (*os.Fil
 	return file, nil
 }
 
+// sysCombineCloseErr folds a response-body close error into err, without
+// clobbering an earlier, more specific failure. Pure — no I/O.
+func sysCombineCloseErr(closeErr, err error) error {
+	if closeErr != nil && err == nil {
+		return fmt.Errorf("closing response body: %w", closeErr)
+	}
+	return err
+}
+
+// sysCombineCleanupErr folds a temp-dir cleanup error into err, without
+// clobbering an earlier, more specific failure. Pure — no I/O.
+func sysCombineCleanupErr(err, cleanUpErr error) error {
+	if cleanUpErr == nil {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("%w; cleanup also failed: %w", err, cleanUpErr)
+	}
+	return fmt.Errorf("cleaning up temporary directory: %w", cleanUpErr)
+}
+
 func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, tempDir string, err error) {
 	resp, err := fetchAssetResponse(ctx, latestAsset)
 	if err != nil {
 		return nil, "", err
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing response body: %w", closeErr)
-		}
+		err = sysCombineCloseErr(resp.Body.Close(), err)
 	}()
 
 	cleanUpRequiredOnError := true
@@ -1974,13 +2068,7 @@ func handleDownloadBinary(ctx context.Context, latestAsset *Asset) (_ *os.File, 
 	}
 	defer func() {
 		if cleanUpRequiredOnError {
-			if cleanUpErr := os.RemoveAll(tempDir); cleanUpErr != nil {
-				if err != nil {
-					err = fmt.Errorf("%w; cleanup also failed: %w", err, cleanUpErr)
-				} else {
-					err = fmt.Errorf("cleaning up temporary directory: %w", cleanUpErr)
-				}
-			}
+			err = sysCombineCleanupErr(err, os.RemoveAll(tempDir))
 		}
 	}()
 

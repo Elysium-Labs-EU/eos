@@ -88,13 +88,23 @@ func LoadSnapshot(path string) (Snapshot, error) {
 // max_wait ultimately surfaces the cycle as a loud timeout instead of a silent
 // omission).
 func OrderByDependencies(names []string, depsOf map[string][]string) []string {
+	indegree, dependents := snapBuildDependencyGraph(names, depsOf)
+	ordered := snapTopologicalWalk(names, indegree, dependents)
+	return snapAppendUnresolved(ordered, names)
+}
+
+// snapBuildDependencyGraph computes, for each name in the set, its in-degree
+// (count of same-set dependencies it's waiting on) and the reverse edges
+// (dependents), which snapTopologicalWalk consumes to peel off zero-in-degree
+// names layer by layer. Dependencies outside the set don't count.
+func snapBuildDependencyGraph(names []string, depsOf map[string][]string) (indegree map[string]int, dependents map[string][]string) {
 	inSet := make(map[string]bool, len(names))
 	for _, name := range names {
 		inSet[name] = true
 	}
 
-	indegree := make(map[string]int, len(names))
-	dependents := make(map[string][]string, len(names))
+	indegree = make(map[string]int, len(names))
+	dependents = make(map[string][]string, len(names))
 	for _, name := range names {
 		for _, dep := range depsOf[name] {
 			if !inSet[dep] {
@@ -104,7 +114,15 @@ func OrderByDependencies(names []string, depsOf map[string][]string) []string {
 			dependents[dep] = append(dependents[dep], name)
 		}
 	}
+	return indegree, dependents
+}
 
+// snapTopologicalWalk runs a Kahn's-algorithm BFS over the graph built by
+// snapBuildDependencyGraph, starting from names in their original order so
+// ties preserve input order. Names inside a dependency cycle never reach
+// in-degree zero and are left out of the result; snapAppendUnresolved
+// handles them.
+func snapTopologicalWalk(names []string, indegree map[string]int, dependents map[string][]string) []string {
 	queue := make([]string, 0, len(names))
 	for _, name := range names {
 		if indegree[name] == 0 {
@@ -124,7 +142,13 @@ func OrderByDependencies(names []string, depsOf map[string][]string) []string {
 			}
 		}
 	}
+	return ordered
+}
 
+// snapAppendUnresolved appends any names missing from ordered (i.e. caught in
+// a dependency cycle) at the end, in their original relative order from
+// names, so restore still attempts them instead of silently dropping them.
+func snapAppendUnresolved(ordered []string, names []string) []string {
 	if len(ordered) == len(names) {
 		return ordered
 	}

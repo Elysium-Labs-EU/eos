@@ -92,22 +92,28 @@ func ValidateRuntimeBinary(runtime types.Runtime) error {
 	}
 	switch runtime.Type {
 	case "bun":
-		if _, err := exec.LookPath("bun"); err != nil {
-			return fmt.Errorf("bun not found in system PATH: %w", err)
-		}
+		return cfgvLookupRuntimeBinary("bun")
 	case "deno":
-		if _, err := exec.LookPath("deno"); err != nil {
-			return fmt.Errorf("deno not found in system PATH: %w", err)
-		}
+		return cfgvLookupRuntimeBinary("deno")
 	case "node", "nodejs":
-		if _, err := exec.LookPath("node"); err != nil {
-			return fmt.Errorf("node not found in system PATH: %w", err)
-		}
+		return cfgvLookupRuntimeBinary("node")
 	case "python", "python3":
-		if _, err := exec.LookPath("python3"); err != nil {
-			if _, err := exec.LookPath("python"); err != nil {
-				return fmt.Errorf("python/python3 not found in system PATH: %w", err)
-			}
+		return cfgvLookupPythonBinary()
+	}
+	return nil
+}
+
+func cfgvLookupRuntimeBinary(name string) error {
+	if _, err := exec.LookPath(name); err != nil {
+		return fmt.Errorf("%s not found in system PATH: %w", name, err)
+	}
+	return nil
+}
+
+func cfgvLookupPythonBinary() error {
+	if _, err := exec.LookPath("python3"); err != nil {
+		if _, err := exec.LookPath("python"); err != nil {
+			return fmt.Errorf("python/python3 not found in system PATH: %w", err)
 		}
 	}
 	return nil
@@ -117,16 +123,34 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if len(configFilePath) == 0 {
 		return nil, []error{fmt.Errorf("configFilePath is empty")}
 	}
+	config, err := cfgvLoadAndParseConfig(configFilePath)
+	if err != nil {
+		return nil, []error{err}
+	}
+
+	var errs []error
+	errs = append(errs, cfgvValidateServiceFields(config)...)
+	errs = append(errs, cfgvValidateInlineLogSinks(config.LogSinks)...)
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return config, nil
+}
+
+func cfgvLoadAndParseConfig(configFilePath string) (*types.ServiceConfig, error) {
 	cleanedConfigFilePath := filepath.Clean(configFilePath)
 	data, err := os.ReadFile(cleanedConfigFilePath)
 	if err != nil {
-		return nil, []error{fmt.Errorf("reading file: %w", err)}
+		return nil, fmt.Errorf("reading file: %w", err)
 	}
 	var config types.ServiceConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, []error{fmt.Errorf("yaml parsing: %w", err)}
+		return nil, fmt.Errorf("yaml parsing: %w", err)
 	}
+	return &config, nil
+}
 
+func cfgvValidateServiceFields(config *types.ServiceConfig) []error {
 	var errs []error
 	if err := ValidateServiceName(config.Name); err != nil {
 		errs = append(errs, err)
@@ -143,13 +167,19 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	if depErrs := ValidateDependencies(config.Name, config.DependsOn, config.MaxWait); len(depErrs) > 0 {
 		errs = append(errs, depErrs...)
 	}
-	for i := range config.LogSinks {
-		ref := &config.LogSinks[i]
+	return errs
+}
+
+// cfgvValidateInlineLogSinks validates inline log_sinks entries. Name
+// references into the daemon's sink registry are skipped; the registry isn't
+// in scope during standalone service.yaml validation, so resolution and
+// validation of a referenced sink happens at service start time via
+// ResolveLogSinks.
+func cfgvValidateInlineLogSinks(refs []types.LogSinkRef) []error {
+	var errs []error
+	for i := range refs {
+		ref := &refs[i]
 		if ref.Inline == nil {
-			// Name reference into the daemon's sink registry; the registry
-			// isn't in scope during standalone service.yaml validation, so
-			// resolution and validation of the referenced sink happens at
-			// service start time via ResolveLogSinks.
 			continue
 		}
 		if sinkErrs := ValidateLogSink(ref.Inline); len(sinkErrs) > 0 {
@@ -158,10 +188,7 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 			}
 		}
 	}
-	if len(errs) > 0 {
-		return nil, errs
-	}
-	return &config, nil
+	return errs
 }
 
 // ValidateCronRestart validates the optional cron_restart field. An empty
@@ -272,25 +299,44 @@ func ValidateLogSink(sink *types.LogSink) []error {
 		errs = append(errs, fmt.Errorf("type is required"))
 		return errs
 	}
+	if err := cfgvValidateSinkBinary(sink); err != nil {
+		errs = append(errs, err)
+	}
+	errs = append(errs, cfgvValidateSinkNumericFields(sink)...)
+	errs = append(errs, cfgvValidateSinkStreams(sink.Streams)...)
+	return errs
+}
+
+func cfgvValidateSinkBinary(sink *types.LogSink) error {
 	if sink.Exec != "" {
 		if _, err := exec.LookPath(sink.Exec); err != nil {
 			if _, statErr := os.Stat(sink.Exec); statErr != nil {
-				errs = append(errs, fmt.Errorf("exec %q not found: %w", sink.Exec, err))
+				return fmt.Errorf("exec %q not found: %w", sink.Exec, err)
 			}
 		}
-	} else {
-		binaryName := "eos-sink-" + sink.Type
-		if _, err := exec.LookPath(binaryName); err != nil {
-			errs = append(errs, fmt.Errorf("plugin binary %q not found on PATH (set exec: to override)", binaryName))
-		}
+		return nil
 	}
+	binaryName := "eos-sink-" + sink.Type
+	if _, err := exec.LookPath(binaryName); err != nil {
+		return fmt.Errorf("plugin binary %q not found on PATH (set exec: to override)", binaryName)
+	}
+	return nil
+}
+
+func cfgvValidateSinkNumericFields(sink *types.LogSink) []error {
+	var errs []error
 	if sink.BufferSize < 0 {
 		errs = append(errs, fmt.Errorf("buffer_size must be >= 0"))
 	}
 	if sink.RestartDelayMs < 0 {
 		errs = append(errs, fmt.Errorf("restart_delay_ms must be >= 0"))
 	}
-	for _, s := range sink.Streams {
+	return errs
+}
+
+func cfgvValidateSinkStreams(streams []string) []error {
+	var errs []error
+	for _, s := range streams {
 		if !validStreams[s] {
 			errs = append(errs, fmt.Errorf("streams: %q is invalid (must be stdout or stderr)", s))
 		}

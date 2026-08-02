@@ -91,20 +91,9 @@ func (m *LocalManager) ReloadService(name string, probe ReadinessProbe, cfg Relo
 	}
 
 	launchSuccess := false
-	defer func() {
-		if !launchSuccess {
-			if closeErr := lio.closeAll(m, target.service.Name); closeErr != nil {
-				err = errors.Join(err, closeErr)
-			}
-		}
-	}()
+	defer m.reloadCleanupUnlaunched(lio, target.service.Name, &launchSuccess, &err)
 
-	if binaryErr := m.validateRuntimeBinary(target.config); binaryErr != nil {
-		return ReloadResult{}, binaryErr
-	}
-
-	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
-	newPGID, newStartedAtTicks, err := m.launchAndCapture(target.service, target.config, lio, target.resolvedSinks, &launchSuccess, "reload command")
+	newPGID, newStartedAtTicks, err := m.reloadLaunchIncoming(name, &target, lio, &launchSuccess)
 	if err != nil {
 		return ReloadResult{}, err
 	}
@@ -127,6 +116,33 @@ func (m *LocalManager) ReloadService(name string, probe ReadinessProbe, cfg Relo
 
 	m.recordReloadCutover(name, target.instance.RestartCount)
 	return ReloadResult{OldPGID: target.oldPGID, NewPGID: newPGID}, nil
+}
+
+// reloadCleanupUnlaunched closes lio's sinks if the incoming instance never
+// finished launching. It reads launchSuccess and writes errOut through pointers,
+// dereferenced only when this runs (as a defer), so it observes the values
+// ReloadService's own launch step leaves behind rather than a stale snapshot
+// taken when the defer was registered.
+func (m *LocalManager) reloadCleanupUnlaunched(lio launchIO, serviceName string, launchSuccess *bool, errOut *error) {
+	if *launchSuccess {
+		return
+	}
+	if closeErr := lio.closeAll(m, serviceName); closeErr != nil {
+		*errOut = errors.Join(*errOut, closeErr)
+	}
+}
+
+// reloadLaunchIncoming validates the runtime binary and launches the incoming
+// instance alongside the still-live outgoing one, isolating ReloadService's own
+// launch-or-bail branch from the two checks (binary validation, launch failure)
+// that both bail out the same way: a zero PGID and the wrapped error.
+func (m *LocalManager) reloadLaunchIncoming(name string, target *reloadTarget, lio launchIO, launchSuccess *bool) (int, int64, error) {
+	if binaryErr := m.validateRuntimeBinary(target.config); binaryErr != nil {
+		return 0, 0, binaryErr
+	}
+
+	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
+	return m.launchAndCapture(target.service, target.config, lio, target.resolvedSinks, launchSuccess, "reload command")
 }
 
 // reloadTarget is the resolved, validated input a cutover launches from: the

@@ -196,6 +196,22 @@ func TestOrderByDependenciesCycleStillReturnsAllNames(t *testing.T) {
 	}
 }
 
+func TestOrderByDependenciesPartialCyclePreservesResolvedPrefix(t *testing.T) {
+	// x has no deps and resolves normally; a and b form a cycle between
+	// themselves and are appended afterward in original relative order.
+	names := []string{"a", "x", "b"}
+	depsOf := map[string][]string{
+		"a": {"b"},
+		"b": {"a"},
+	}
+
+	got := OrderByDependencies(names, depsOf)
+	want := []string{"x", "a", "b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("OrderByDependencies() = %v, want %v", got, want)
+	}
+}
+
 func TestOrderByDependenciesEmpty(t *testing.T) {
 	got := OrderByDependencies(nil, nil)
 	if len(got) != 0 {

@@ -3,16 +3,75 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+// apiStatusFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods newAPIStatusCmd's helpers call,
+// so error branches can be exercised without a real DB-backed manager.
+type apiStatusFakeManager struct {
+	manager.ServiceManager
+	catalogErr   error
+	processErr   error
+	instanceErr  error
+	processEntry *types.ProcessHistory
+	instance     *types.ServiceInstance
+	catalog      []types.ServiceCatalogEntry
+}
+
+func (f *apiStatusFakeManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
+	return f.catalog, f.catalogErr
+}
+
+func (f *apiStatusFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+	return f.processEntry, f.processErr
+}
+
+func (f *apiStatusFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+	return f.instance, f.instanceErr
+}
+
+func TestAPIStatusCollectServicesCatalogError(t *testing.T) {
+	wantErr := errors.New("boom")
+	if _, err := apiStatusCollectServices(&apiStatusFakeManager{catalogErr: wantErr}); err == nil || !strings.Contains(err.Error(), "getting services") {
+		t.Errorf("expected wrapped 'getting services' error, got: %v", err)
+	}
+}
+
+func TestAPIStatusBuildServiceEntryProcessError(t *testing.T) {
+	wantErr := errors.New("boom")
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{processErr: wantErr}, reg); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
+		t.Errorf("expected wrapped 'getting process for' error, got: %v", err)
+	}
+}
+
+func TestAPIStatusBuildServiceEntryInstanceError(t *testing.T) {
+	wantErr := errors.New("boom")
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{instanceErr: wantErr}, reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
+		t.Errorf("expected wrapped 'getting instance for' error, got: %v", err)
+	}
+}
+
+func TestAPIStatusCollectServicesPropagatesEntryError(t *testing.T) {
+	wantErr := errors.New("boom")
+	catalog := []types.ServiceCatalogEntry{{Name: "svc"}}
+	if _, err := apiStatusCollectServices(&apiStatusFakeManager{catalog: catalog, processErr: wantErr}); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
+		t.Errorf("expected propagated 'getting process for' error, got: %v", err)
+	}
+}
 
 func TestAPIStatusEmptyRegistry(t *testing.T) {
 	cmd, outBuf, errBuf, _ := setupAPICmd(t)

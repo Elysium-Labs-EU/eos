@@ -254,11 +254,19 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 		"PID/socket paths must move to a user-writable location.", prodPidFile, err)
 }
 
-// fakeDaemonController records Start calls and returns a configured error.
+// fakeDaemonController records Start/Stop/Remove/Logs calls and returns
+// configured errors, so RunE helpers can be exercised without a real daemon.
 type fakeDaemonController struct {
-	startErr    error
-	startCalled bool
-	detachArg   bool
+	startErr     error
+	stopErr      error
+	removeErr    error
+	logsLines    int
+	startCalled  bool
+	detachArg    bool
+	stopKilled   bool
+	removeCalled bool
+	logsCalled   bool
+	logsFollow   bool
 }
 
 func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ bool) error {
@@ -268,13 +276,20 @@ func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ b
 }
 
 func (f *fakeDaemonController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
-	return false, nil
+	return f.stopKilled, f.stopErr
 }
-func (f *fakeDaemonController) IsRunning(_ context.Context) bool     { return true }
-func (f *fakeDaemonController) Remove() error                        { return nil }
-func (f *fakeDaemonController) Info(_ *cobra.Command)                {}
-func (f *fakeDaemonController) Logs(_ *cobra.Command, _ int, _ bool) {}
-func (f *fakeDaemonController) LogsHint() string                     { return "" }
+func (f *fakeDaemonController) IsRunning(_ context.Context) bool { return true }
+func (f *fakeDaemonController) Remove() error {
+	f.removeCalled = true
+	return f.removeErr
+}
+func (f *fakeDaemonController) Info(_ *cobra.Command) {}
+func (f *fakeDaemonController) Logs(_ *cobra.Command, lines int, follow bool) {
+	f.logsCalled = true
+	f.logsLines = lines
+	f.logsFollow = follow
+}
+func (f *fakeDaemonController) LogsHint() string { return "" }
 
 func newTestDaemonCmd(ctrl DaemonController) *cobra.Command {
 	parent := &cobra.Command{Use: "daemon"}
@@ -431,6 +446,95 @@ func TestDaemonStartDetachSuccessOutput(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "daemon started in background") {
 		t.Errorf("expected success message, got: %s", out.String())
+	}
+}
+
+func TestDaemonStopError(t *testing.T) {
+	fake := &fakeDaemonController{stopErr: errors.New("boom")}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"stop"})
+
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "boom") {
+		t.Errorf("expected error message in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDaemonStopKilledOutput(t *testing.T) {
+	fake := &fakeDaemonController{stopKilled: true}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"stop"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "daemon stopped") {
+		t.Errorf("expected 'daemon stopped', got: %s", out.String())
+	}
+}
+
+func TestDaemonRemoveSuccess(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"remove"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.removeCalled {
+		t.Fatal("expected Remove to be called")
+	}
+	if !strings.Contains(out.String(), "daemon removed") {
+		t.Errorf("expected 'daemon removed', got: %s", out.String())
+	}
+}
+
+func TestDaemonRemoveError(t *testing.T) {
+	fake := &fakeDaemonController{removeErr: errors.New("boom")}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"remove"})
+
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "boom") {
+		t.Errorf("expected error message in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDaemonLogsCommandDelegatesToController(t *testing.T) {
+	fake := &fakeDaemonController{}
+	cmd := newTestDaemonCmd(fake)
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"logs", "--lines", "50", "--follow"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.logsCalled {
+		t.Fatal("expected Logs to be called")
+	}
+	if fake.logsLines != 50 {
+		t.Errorf("expected lines=50, got: %d", fake.logsLines)
+	}
+	if !fake.logsFollow {
+		t.Error("expected follow=true")
 	}
 }
 

@@ -73,46 +73,88 @@ Exit codes:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			serviceName := args[0]
-			mgr := getManager()
-
-			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
-			if errors.Is(err, manager.ErrServiceNotRegistered) {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
-			}
-			if err != nil {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting registered service: %w", err))
-			}
-
-			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
-			config, err := manager.LoadServiceConfig(configPath)
-			if err != nil {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("loading service config: %w", err))
-			}
-
-			serviceInstance, err := mgr.GetServiceInstance(serviceName)
-			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting service instance: %w", err))
-			}
-
-			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
-			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting process history: %w", err))
-			}
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
-			if err != nil && serviceInstance != nil {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting log path: %w", err))
-			}
-			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
-			if err != nil && serviceInstance != nil {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting error log path: %w", err))
-			}
-
-			serviceInfo := compileServiceInfoObject(registeredService, serviceInstance, config, logPath, errorLogPath)
-			serviceInfo.Process = compileProcessInfoObject(processEntry)
-
-			return helpers.WriteJSON(cmd, serviceInfo)
+			return apiInfoRunE(cmd, args[0], getManager())
 		}}
+}
+
+func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) error {
+	registeredService, err := apiInfoLoadRegisteredService(mgr, serviceName)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
+	config, err := apiInfoLoadConfig(registeredService)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
+	serviceInstance, err := apiInfoLoadServiceInstance(mgr, serviceName)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
+	processEntry, err := apiInfoLoadProcessEntry(mgr, serviceName)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
+	logPath, errorLogPath, err := apiInfoLoadLogPaths(mgr, serviceName, serviceInstance != nil)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
+	serviceInfo := compileServiceInfoObject(registeredService, serviceInstance, config, logPath, errorLogPath)
+	serviceInfo.Process = compileProcessInfoObject(processEntry)
+
+	return helpers.WriteJSON(cmd, serviceInfo)
+}
+
+func apiInfoLoadRegisteredService(mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
+	registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+	if errors.Is(err, manager.ErrServiceNotRegistered) {
+		return types.ServiceCatalogEntry{}, fmt.Errorf("service %q not found", serviceName)
+	}
+	if err != nil {
+		return types.ServiceCatalogEntry{}, fmt.Errorf("getting registered service: %w", err)
+	}
+	return registeredService, nil
+}
+
+func apiInfoLoadConfig(registeredService types.ServiceCatalogEntry) (*types.ServiceConfig, error) {
+	configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
+	config, err := manager.LoadServiceConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading service config: %w", err)
+	}
+	return config, nil
+}
+
+func apiInfoLoadServiceInstance(mgr manager.ServiceManager, serviceName string) (*types.ServiceInstance, error) {
+	serviceInstance, err := mgr.GetServiceInstance(serviceName)
+	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
+		return nil, fmt.Errorf("getting service instance: %w", err)
+	}
+	return serviceInstance, nil
+}
+
+func apiInfoLoadProcessEntry(mgr manager.ServiceManager, serviceName string) (*types.ProcessHistory, error) {
+	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
+		return nil, fmt.Errorf("getting process history: %w", err)
+	}
+	return processEntry, nil
+}
+
+func apiInfoLoadLogPaths(mgr manager.ServiceManager, serviceName string, instanceRunning bool) (*string, *string, error) {
+	logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
+	if err != nil && instanceRunning {
+		return nil, nil, fmt.Errorf("getting log path: %w", err)
+	}
+	errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
+	if err != nil && instanceRunning {
+		return nil, nil, fmt.Errorf("getting error log path: %w", err)
+	}
+	return logPath, errorLogPath, nil
 }
 
 func compileServiceInfoObject(registeredService types.ServiceCatalogEntry, serviceInstance *types.ServiceInstance, config *types.ServiceConfig, logPath *string, errorLogPath *string) apiInfoResult {

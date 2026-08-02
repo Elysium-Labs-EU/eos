@@ -16,6 +16,33 @@ type apiRunResult struct {
 	Skipped   bool   `json:"skipped"`
 }
 
+func apiRunResolveServiceName(mgr manager.ServiceManager, serviceFile string, args []string) (string, error) {
+	if serviceFile == "" && len(args) == 0 {
+		return "", errors.New("must specify either -f <file> or a service name")
+	}
+
+	if serviceFile != "" {
+		parsed, err := parseServiceFile(serviceFile)
+		if err != nil {
+			return "", err
+		}
+		result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
+		if err != nil {
+			return "", err
+		}
+		return result.Name, nil
+	}
+
+	return isServiceRegistered(mgr, args[0])
+}
+
+func apiRunShouldSkip(mgr manager.ServiceManager, once bool, serviceName string) (bool, error) {
+	if !once {
+		return false, nil
+	}
+	return isServiceRunning(mgr, serviceName)
+}
+
 func newAPIRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [-f <file>] [--once] [name]",
@@ -52,38 +79,17 @@ Exit codes:
 			serviceFile, _ := cmd.Flags().GetString("file")
 			once, _ := cmd.Flags().GetBool("once")
 
-			if serviceFile == "" && len(args) == 0 {
-				return helpers.WriteJSONErr(cmd, errors.New("must specify either -f <file> or a service name"))
+			serviceName, err := apiRunResolveServiceName(mgr, serviceFile, args)
+			if err != nil {
+				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			var serviceName string
-
-			if serviceFile != "" {
-				parsed, err := parseServiceFile(serviceFile)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				serviceName = result.Name
-			} else {
-				name, err := isServiceRegistered(mgr, args[0])
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				serviceName = name
+			skip, err := apiRunShouldSkip(mgr, once, serviceName)
+			if err != nil {
+				return helpers.WriteJSONErr(cmd, err)
 			}
-
-			if once {
-				running, err := isServiceRunning(mgr, serviceName)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				if running {
-					return helpers.WriteJSON(cmd, apiRunResult{Name: serviceName, Skipped: true})
-				}
+			if skip {
+				return helpers.WriteJSON(cmd, apiRunResult{Name: serviceName, Skipped: true})
 			}
 
 			entry, err := mgr.GetServiceCatalogEntry(serviceName)

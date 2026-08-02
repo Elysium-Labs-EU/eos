@@ -361,6 +361,48 @@ func TestHandleRenameExistingLogsEmpty(t *testing.T) {
 	}
 }
 
+func TestDmDeleteLogEntriesPropagatesRemoveError(t *testing.T) {
+	sourceDir := t.TempDir()
+	f, err := os.Create(filepath.Join(sourceDir, "test.log"))
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatalf("Closing the file errored: %v", err)
+	}
+
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatalf("Failed to read dir: %v", err)
+	}
+
+	missingDir := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := dmDeleteLogEntries(missingDir, entries); err == nil {
+		t.Fatal("dmDeleteLogEntries should error when the target file does not exist")
+	}
+}
+
+func TestDmRenameLogEntriesPropagatesRenameError(t *testing.T) {
+	sourceDir := t.TempDir()
+	f, err := os.Create(filepath.Join(sourceDir, "test.log"))
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatalf("Closing the file errored: %v", err)
+	}
+
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatalf("Failed to read dir: %v", err)
+	}
+
+	missingDir := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := dmRenameLogEntries(missingDir, "test.log", entries); err == nil {
+		t.Fatal("dmRenameLogEntries should error when the source file does not exist")
+	}
+}
+
 func TestHandleRenameExistingLogsSingleFile(t *testing.T) {
 	tempDir := t.TempDir()
 

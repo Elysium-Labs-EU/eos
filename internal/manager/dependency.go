@@ -99,21 +99,35 @@ func WaitForDependencies(ctx context.Context, prober dependencyReadinessProber, 
 		return nil
 	}
 	maxWait = resolveMaxWait(maxWait)
-
-	var lastReported []string
-	report := func(pending []string) {
-		if onPendingChange == nil || slices.Equal(pending, lastReported) {
-			return
-		}
-		lastReported = pending
-		onPendingChange(pending)
-	}
+	report := depNewPendingReporter(onPendingChange)
 
 	timer := time.NewTimer(maxWait)
 	defer timer.Stop()
 	ticker := time.NewTicker(dependencyPollInterval)
 	defer ticker.Stop()
 
+	return depWaitLoop(ctx, prober, serviceName, deps, maxWait, timer, ticker, report)
+}
+
+// depNewPendingReporter returns a reporter that forwards to onPendingChange only
+// when the pending set narrows from the last-reported one, so a poll tick that
+// finds nothing new ready stays silent. onPendingChange may be nil, in which case
+// the returned reporter is a no-op.
+func depNewPendingReporter(onPendingChange func(pending []string)) func(pending []string) {
+	var lastReported []string
+	return func(pending []string) {
+		if onPendingChange == nil || slices.Equal(pending, lastReported) {
+			return
+		}
+		lastReported = pending
+		onPendingChange(pending)
+	}
+}
+
+// depWaitLoop runs WaitForDependencies's poll/select loop once its timer and
+// ticker are set up, so WaitForDependencies itself stays a thin setup-and-delegate
+// wrapper.
+func depWaitLoop(ctx context.Context, prober dependencyReadinessProber, serviceName string, deps []string, maxWait time.Duration, timer *time.Timer, ticker *time.Ticker, report func(pending []string)) error {
 	for {
 		pending := pendingDependencies(prober, deps)
 		if len(pending) == 0 {
@@ -125,19 +139,25 @@ func WaitForDependencies(ctx context.Context, prober dependencyReadinessProber, 
 		case <-ctx.Done():
 			return fmt.Errorf("service %q: waiting for dependencies [%s]: %w", serviceName, strings.Join(pending, ", "), ctx.Err())
 		case <-timer.C:
-			// One last read so the reported set reflects the deadline instant,
-			// not the tick before it.
-			pending = pendingDependencies(prober, deps)
-			if len(pending) == 0 {
-				return nil
-			}
-			report(pending)
-			return fmt.Errorf(
-				"service %q not started: dependencies not ready after %s: [%s]; confirm each is registered and starting cleanly (eos status, eos logs <name>)",
-				serviceName, maxWait, strings.Join(pending, ", "))
+			return depTimeoutResult(prober, deps, serviceName, maxWait, report)
 		case <-ticker.C:
 		}
 	}
+}
+
+// depTimeoutResult handles WaitForDependencies's timer.C branch: one last read so
+// the reported set reflects the deadline instant, not the tick before it, then
+// either succeeds if dependencies became ready right at the deadline or fails
+// naming what's still pending.
+func depTimeoutResult(prober dependencyReadinessProber, deps []string, serviceName string, maxWait time.Duration, report func(pending []string)) error {
+	pending := pendingDependencies(prober, deps)
+	if len(pending) == 0 {
+		return nil
+	}
+	report(pending)
+	return fmt.Errorf(
+		"service %q not started: dependencies not ready after %s: [%s]; confirm each is registered and starting cleanly (eos status, eos logs <name>)",
+		serviceName, maxWait, strings.Join(pending, ", "))
 }
 
 // pendingDependencies returns the deps that are not yet ready, preserving input

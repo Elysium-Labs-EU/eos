@@ -642,7 +642,12 @@ func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool
 		return nil, fmt.Errorf("GetServiceLogFilePath: parse response data: %w", err)
 	}
 
-	return result["filepath"], nil
+	filepath, ok := result["filepath"]
+	if !ok || filepath == nil {
+		return nil, fmt.Errorf("GetServiceLogFilePath: response missing filepath")
+	}
+
+	return filepath, nil
 }
 
 // RotatingFileWriter is an io.Writer that rotates the underlying log file once it
@@ -778,35 +783,59 @@ func handleRenameExistingLogs(logDir string, defaultFileName string, maxFiles in
 		return fmt.Errorf("read dir %q: %w", logDir, err)
 	}
 
-	var validatedDirEntries []os.DirEntry
+	matching := dmFilterMatchingLogEntries(dirEntries, defaultFileName)
+
+	matching, toDelete := dmSplitExcessLogEntries(matching, maxFiles)
+	if err := dmDeleteLogEntries(logDir, toDelete); err != nil {
+		return err
+	}
+
+	return dmRenameLogEntries(logDir, defaultFileName, matching)
+}
+
+// dmFilterMatchingLogEntries keeps only entries whose name belongs to this
+// log's rotation family (defaultFileName, defaultFileName.1, ...).
+func dmFilterMatchingLogEntries(dirEntries []os.DirEntry, defaultFileName string) []os.DirEntry {
+	var matching []os.DirEntry
 	for _, entry := range dirEntries {
 		if strings.HasPrefix(entry.Name(), defaultFileName) {
-			validatedDirEntries = append(validatedDirEntries, entry)
+			matching = append(matching, entry)
 		}
 	}
+	return matching
+}
 
-	if maxFiles > 0 && len(validatedDirEntries) >= maxFiles {
-		// validatedDirEntries is sorted ascending by name (defaultFileName, .1, .2, ...),
-		// so the oldest files sit at the end; delete enough of them to leave room for
-		// the renamed survivors plus the new active file within maxFiles total.
-		excess := len(validatedDirEntries) - maxFiles + 1
-		oldest := validatedDirEntries[len(validatedDirEntries)-excess:]
-		for _, v := range oldest {
-			if removeErr := os.Remove(filepath.Join(logDir, v.Name())); removeErr != nil {
-				return fmt.Errorf("removing old log file %q: %w", v.Name(), removeErr)
-			}
-		}
-		validatedDirEntries = validatedDirEntries[:len(validatedDirEntries)-excess]
+// dmSplitExcessLogEntries splits entries into the ones to keep (and rename)
+// and the oldest ones that must be deleted to stay within maxFiles once the
+// renamed survivors plus the new active file are counted.
+//
+// entries is assumed sorted ascending by name (defaultFileName, .1, .2, ...),
+// so the oldest files sit at the end.
+func dmSplitExcessLogEntries(entries []os.DirEntry, maxFiles int) (keep []os.DirEntry, toDelete []os.DirEntry) {
+	if maxFiles <= 0 || len(entries) < maxFiles {
+		return entries, nil
 	}
 
-	for i, v := range slices.Backward(validatedDirEntries) {
-		currentName := v.Name()
-		currentLogPath := filepath.Join(logDir, currentName)
+	excess := len(entries) - maxFiles + 1
+	return entries[:len(entries)-excess], entries[len(entries)-excess:]
+}
+
+func dmDeleteLogEntries(logDir string, entries []os.DirEntry) error {
+	for _, v := range entries {
+		if removeErr := os.Remove(filepath.Join(logDir, v.Name())); removeErr != nil {
+			return fmt.Errorf("removing old log file %q: %w", v.Name(), removeErr)
+		}
+	}
+	return nil
+}
+
+func dmRenameLogEntries(logDir string, defaultFileName string, entries []os.DirEntry) error {
+	for i, v := range slices.Backward(entries) {
+		currentLogPath := filepath.Join(logDir, v.Name())
 
 		newName := fmt.Sprintf("%s.%s", defaultFileName, strconv.Itoa(i+1))
 		newLogPath := filepath.Join(logDir, newName)
-		err := os.Rename(currentLogPath, newLogPath)
-		if err != nil {
+		if err := os.Rename(currentLogPath, newLogPath); err != nil {
 			return fmt.Errorf("rotate log file %q to %q: %w", currentLogPath, newLogPath, err)
 		}
 	}

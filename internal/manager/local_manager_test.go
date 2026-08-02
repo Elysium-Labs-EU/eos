@@ -1,9 +1,11 @@
 package manager
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1621,4 +1623,245 @@ func TestDependencyWaitStatusCrossProcess(t *testing.T) {
 	if _, waiting, err := mgrA.GetDependencyWaitStatus("web"); err != nil || waiting {
 		t.Fatalf("expected mgrA to see the clear mgrB made, waiting=%v err=%v", waiting, err)
 	}
+}
+
+func TestLmScanAndForward(t *testing.T) {
+	t.Run("forwards lines to logLine and subscribed sinks", func(t *testing.T) {
+		r, w := io.Pipe()
+		go func() {
+			_, _ = w.Write([]byte("line1\nline2\n"))
+			_ = w.Close()
+		}()
+
+		logger := testutil.NewTestLogger(t)
+		sink := newSinkProcess(&types.LogSink{Type: "test"}, "svc", logger, logger)
+
+		var got []string
+		scanner := bufio.NewScanner(r)
+		err := lmScanAndForward(scanner, "stdout", []*sinkProcess{sink}, func(line string) {
+			got = append(got, line)
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := []string{"line1", "line2"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("got[%d] = %q, want %q", i, got[i], w)
+			}
+		}
+		if sink.buf.Len() != len(want) {
+			t.Errorf("expected sink to receive %d records, got %d", len(want), sink.buf.Len())
+		}
+	})
+
+	t.Run("does not forward to a sink not subscribed to the stream", func(t *testing.T) {
+		r, w := io.Pipe()
+		go func() {
+			_, _ = w.Write([]byte("line1\n"))
+			_ = w.Close()
+		}()
+
+		logger := testutil.NewTestLogger(t)
+		sink := newSinkProcess(&types.LogSink{Type: "test", Streams: []string{"stderr"}}, "svc", logger, logger)
+
+		scanner := bufio.NewScanner(r)
+		if err := lmScanAndForward(scanner, "stdout", []*sinkProcess{sink}, func(string) {}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if sink.buf.Len() != 0 {
+			t.Errorf("expected sink not subscribed to stdout to receive nothing, got %d records", sink.buf.Len())
+		}
+	})
+
+	t.Run("returns the scanner's terminal error", func(t *testing.T) {
+		r, w := io.Pipe()
+		boom := errors.New("boom")
+		go func() {
+			_, _ = w.Write([]byte("partial"))
+			_ = w.CloseWithError(boom)
+		}()
+
+		scanner := bufio.NewScanner(r)
+		err := lmScanAndForward(scanner, "stdout", nil, func(string) {})
+		if !errors.Is(err, boom) {
+			t.Fatalf("expected wrapped boom error, got %v", err)
+		}
+	})
+}
+
+func TestLmApplyRuntimePathEnv(t *testing.T) {
+	t.Run("empty runtime path leaves env untouched", func(t *testing.T) {
+		env := []string{"FOO=bar"}
+		got := lmApplyRuntimePathEnv("", env)
+		if len(got) != 1 || got[0] != "FOO=bar" {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("replaces an existing PATH entry", func(t *testing.T) {
+		env := []string{"PATH=/usr/bin"}
+		got := lmApplyRuntimePathEnv("/opt/bun/bin", env)
+		want := "PATH=/opt/bun/bin:/usr/bin"
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("got %v, want [%q]", got, want)
+		}
+	})
+
+	t.Run("appends PATH when absent", func(t *testing.T) {
+		env := []string{"FOO=bar"}
+		got := lmApplyRuntimePathEnv("/opt/bun/bin", env)
+		want := []string{"FOO=bar", "PATH=/opt/bun/bin"}
+		if len(got) != len(want) || got[1] != want[1] {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+}
+
+func TestLmOverlayEnvVars(t *testing.T) {
+	env := []string{"FOO=old"}
+	got := lmOverlayEnvVars(env, []string{"FOO=new", "BAR=baz"})
+	want := []string{"FOO=new", "BAR=baz"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLmResolveRuntimeDir(t *testing.T) {
+	t.Run("absolute path is returned unchanged", func(t *testing.T) {
+		got, err := lmResolveRuntimeDir("/abs/path")
+		if err != nil || got != "/abs/path" {
+			t.Fatalf("got %q, err %v", got, err)
+		}
+	})
+
+	t.Run("relative path joins the home dir", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		got, err := lmResolveRuntimeDir("bin")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(home, "bin")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("errors when the home dir cannot be resolved", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		if _, err := lmResolveRuntimeDir("bin"); err == nil {
+			t.Fatal("expected error when HOME is unset")
+		}
+	})
+}
+
+func TestLmPollPendingExits(t *testing.T) {
+	const deadPGID = 999992
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test dead-pgid path", deadPGID)
+	}
+
+	// alreadyStoppedPGID stands in for a PID already recorded in stopped: it
+	// must be left alone (never re-checked via isProcessAlive) rather than
+	// re-evaluated.
+	const alreadyStoppedPGID = 999993
+	pending := map[int]bool{deadPGID: true, alreadyStoppedPGID: true}
+	stopped := map[int]bool{alreadyStoppedPGID: true}
+
+	lmPollPendingExits(pending, stopped)
+
+	if !stopped[deadPGID] {
+		t.Errorf("expected dead pgid %d to be marked stopped", deadPGID)
+	}
+	if len(stopped) != 2 {
+		t.Errorf("expected stopped to have 2 entries, got %v", stopped)
+	}
+}
+
+func TestLmDeferCleanupIO(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	readLog, writeLog, err := newPipeForStd()
+	if err != nil {
+		t.Fatalf("newPipeForStd: %v", err)
+	}
+	readErr, writeErr, err := newPipeForStd()
+	if err != nil {
+		t.Fatalf("newPipeForStd: %v", err)
+	}
+	// Pre-close one fd so closeAll's Close() call on it fails, forcing
+	// lmDeferCleanupIO's error-join branch.
+	if closeErr := readLog.Close(); closeErr != nil {
+		t.Fatalf("pre-closing readLog: %v", closeErr)
+	}
+
+	lio := launchIO{readLog: readLog, writeLog: writeLog, readErr: readErr, writeErr: writeErr}
+
+	launchSuccess := false
+	var runErr error
+	cleanup := lmDeferCleanupIO(mgr, lio, "cleanup-svc", &launchSuccess, &runErr)
+	cleanup()
+
+	if runErr == nil {
+		t.Fatal("expected the pre-close error to be joined into runErr")
+	}
+}
+
+// TestReconcileStartHistory_LiveEntryErrors exercises reconcileStartHistory's
+// error path, reached when a Running or Starting history row's process is
+// still alive: this only happens when the caller's own live-instance check
+// (lmCheckAlreadyRunning) didn't already short-circuit — e.g. the
+// service_instances row is missing entirely while process history still has
+// a live entry.
+func TestReconcileStartHistory_LiveEntryErrors(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	bystander := exec.Command("/bin/sh", "-c", "sleep 30")
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("starting bystander: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(bystander.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = bystander.Process.Wait()
+	})
+
+	ticks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	t.Run("running", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-running", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateRunning},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live running entry")
+		}
+	})
+
+	t.Run("starting", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-starting", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateStarting},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live starting entry")
+		}
+	})
 }
