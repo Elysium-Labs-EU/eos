@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -58,19 +59,69 @@ func runReusePortServer() int {
 		fmt.Fprintf(os.Stderr, "reuseport server listen: %v\n", err)
 		return 1
 	}
+	tcpLn, ok := ln.(*net.TCPListener)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "reuseport server: listener is not *net.TCPListener (%T)\n", ln)
+		return 1
+	}
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGTERM)
+	var draining atomic.Bool
 	go func() {
 		<-sigc
-		_ = ln.Close() // stop accepting; the Accept loop below breaks out
+		draining.Store(true)
+		// SO_REUSEPORT connection distribution isn't guaranteed even across
+		// platforms: once a second listener is registered, this one may see
+		// no further connections at all (observed on Darwin), leaving the
+		// Accept() call below blocked forever on a signal it can't see. An
+		// explicit deadline set from here — a second goroutine, exactly the
+		// documented way to interrupt a blocked Accept()/Read() — forces it
+		// to return immediately so the loop reaches the draining check below
+		// instead of hanging until this process is force-killed.
+		_ = tcpLn.SetDeadline(time.Now())
 	}()
 
+	// Closing a listening socket resets whatever is still sitting in its
+	// kernel accept backlog (a connection whose TCP handshake completed but
+	// that the loop below hasn't Accept()ed yet) rather than letting it be
+	// accepted — exactly the drop this test exists to catch. So on SIGTERM
+	// this doesn't close immediately: it switches Accept to a short sliding
+	// deadline and keeps accepting until one Accept() call reports a timeout
+	// — proof nothing was queued for that whole window — and closes right
+	// after, from the very same goroutine that was servicing Accept(). That
+	// matters: an external timer goroutine that sleeps-then-closes can fire
+	// while this loop is behind (scheduler contention starved it), closing
+	// out from under a backlog it hasn't drained yet. Deciding to close only
+	// from inside this loop, right where it left off, means the loop is never
+	// behind itself at that instant.
+	//
+	// Traffic that never truly goes quiet (a continuous load generator, as in
+	// this test) would otherwise make an idle-wait block forever, so a
+	// maxDrain budget bounds the total wait: once it elapses the next
+	// deadline is clamped to "now", so the very next Accept() call closes
+	// immediately regardless of whether traffic is still arriving. That
+	// leaves the same small residual close-race any Close() has, but bounded
+	// and self-paced rather than depending on either silence or a
+	// disconnected timer's guess at how long draining should take.
+	const idleQuiet = 15 * time.Millisecond
+	const maxDrain = 300 * time.Millisecond
+	var drainDeadline time.Time
 	var handlers sync.WaitGroup
 	for {
+		if draining.Load() {
+			if drainDeadline.IsZero() {
+				drainDeadline = time.Now().Add(maxDrain)
+			}
+			next := time.Now().Add(idleQuiet)
+			if next.After(drainDeadline) {
+				next = drainDeadline
+			}
+			_ = tcpLn.SetDeadline(next)
+		}
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
-			break // listener closed on SIGTERM
+			break // deadline hit while draining (backlog empty, or drain budget exhausted), or listener closed
 		}
 		handlers.Add(1)
 		go func(c net.Conn) {
@@ -82,6 +133,7 @@ func runReusePortServer() int {
 			_ = c.Close()
 		}(conn)
 	}
+	_ = ln.Close()
 	handlers.Wait()
 	return 0
 }
