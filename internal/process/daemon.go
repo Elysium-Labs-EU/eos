@@ -52,8 +52,20 @@ type daemon struct {
 // to flush before the daemon's own shutdown deadline.
 const otelShutdownTimeout = 3 * time.Second
 
-func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose bool, baseDir string, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, telemetryConfig config.TelemetryConfig, underSystemd bool) error {
-	d, err := newStandaloneDaemon(ctx, logToFileAndConsole, verbose, baseDir, standaloneDaemonConfig, shutdownConfig, telemetryConfig)
+// StandaloneDaemonStartOptions bundles the plain-value settings that shape
+// how StartStandaloneDaemon boots: where it logs, how verbosely, the base
+// data directory, and whether it's supervised by systemd. Grouped separately
+// from the *config.* parameters, which stay as their own arguments since
+// they're already-assembled config structs rather than loose scalars.
+type StandaloneDaemonStartOptions struct {
+	BaseDir             string
+	LogToFileAndConsole bool
+	Verbose             bool
+	UnderSystemd        bool
+}
+
+func StartStandaloneDaemon(ctx context.Context, opts StandaloneDaemonStartOptions, standaloneDaemonConfig *config.StandaloneDaemonConfig, healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig, telemetryConfig config.TelemetryConfig) error {
+	d, err := newStandaloneDaemon(ctx, opts.LogToFileAndConsole, opts.Verbose, opts.BaseDir, standaloneDaemonConfig, shutdownConfig, telemetryConfig)
 	if err != nil {
 		return err
 	}
@@ -73,7 +85,7 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbos
 	// never be observed ready and every dependent would stall to max_wait.
 	d.serve(healthConfig, shutdownConfig)
 
-	if underSystemd {
+	if opts.UnderSystemd {
 		if err := d.recover(); err != nil {
 			return err
 		}
@@ -86,7 +98,7 @@ func StartStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbos
 }
 
 func bootPersistedServices(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger) error {
-	allRegisteredServices, err := mgr.GetAllServiceCatalogEntries()
+	allRegisteredServices, err := mgr.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		errorMessage := fmt.Errorf("getting all service catalog entries: %w", err)
 		logger.Info(errorMessage.Error())
@@ -136,7 +148,7 @@ func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Lo
 		}
 	}
 
-	if _, startErr := mgr.StartService(entry.Name); startErr != nil {
+	if _, startErr := mgr.StartService(ctx, entry.Name); startErr != nil {
 		logger.Info(fmt.Errorf("starting service: %w", startErr).Error())
 	}
 }
@@ -270,7 +282,7 @@ func (d *daemon) recover() error {
 
 func (d *daemon) serve(healthConfig *config.HealthConfig, shutdownConfig config.ShutdownConfig) {
 	//nolint:gosec // G115: os.Getuid() is never negative on the POSIX platforms eos targets (linux, darwin)
-	go handleIncomingCommands(d.listener, d.mgr, d.logger, uint32(os.Getuid()))
+	go handleIncomingCommands(d.ctx, d.listener, d.mgr, d.logger, uint32(os.Getuid()))
 
 	healthMonitor := monitor.NewHealthMonitor(d.mgr, d.db, d.logger, healthConfig, shutdownConfig, d.otelHandles)
 	go healthMonitor.Start(d.ctx)
@@ -472,8 +484,8 @@ func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryC
 	mgr := manager.NewLocalManager(db, baseDir, ctx, logger, manager.WithTelemetry(otelHandles), manager.WithShutdownGracePeriod(shutdownConfig.GracePeriod))
 
 	if regErr := otelx.RegisterDaemonGauges(otelProvider.MeterProvider, startedAt,
-		func() int { return len(catalogEntriesOrEmpty(mgr, logger)) },
-		func() int { return len(serviceInstancesOrEmpty(mgr, logger)) },
+		func(gaugeCtx context.Context) int { return len(catalogEntriesOrEmpty(gaugeCtx, mgr, logger)) },
+		func(gaugeCtx context.Context) int { return len(serviceInstancesOrEmpty(gaugeCtx, mgr, logger)) },
 	); regErr != nil {
 		logger.Error("registering daemon telemetry gauges", "error", regErr)
 	}
@@ -486,8 +498,8 @@ func setupDaemonTelemetry(ctx context.Context, telemetryConfig config.TelemetryC
 // SDK polls these on its own export interval, well off the hot path, so a
 // query failure there is worth logging but never worth surfacing to the
 // exporter callback's own error return.
-func catalogEntriesOrEmpty(mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceCatalogEntry {
-	entries, err := mgr.GetAllServiceCatalogEntries()
+func catalogEntriesOrEmpty(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceCatalogEntry {
+	entries, err := mgr.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		logger.Debug("telemetry: listing service catalog", "error", err)
 		return nil
@@ -495,8 +507,8 @@ func catalogEntriesOrEmpty(mgr *manager.LocalManager, logger *slog.Logger) []typ
 	return entries
 }
 
-func serviceInstancesOrEmpty(mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceInstance {
-	instances, err := mgr.GetAllServiceInstances()
+func serviceInstancesOrEmpty(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger) []types.ServiceInstance {
+	instances, err := mgr.GetAllServiceInstances(ctx)
 	if err != nil {
 		logger.Debug("telemetry: listing service instances", "error", err)
 		return nil
@@ -866,7 +878,7 @@ func RemoveStandaloneDaemon(daemonConfig *config.StandaloneDaemonConfig) (bool, 
 	return true, nil
 }
 
-func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
+func handleIncomingCommands(ctx context.Context, listener net.Listener, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -878,7 +890,7 @@ func handleIncomingCommands(listener net.Listener, mgr manager.ServiceManager, l
 			return
 		}
 
-		go handleConnection(conn, mgr, logger, allowedUID)
+		go handleConnection(ctx, conn, mgr, logger, allowedUID)
 	}
 }
 
@@ -902,7 +914,7 @@ func isAuthorizedPeer(gotUID, allowedUID uint32) bool {
 	return gotUID == allowedUID || gotUID == 0
 }
 
-func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
+func handleConnection(ctx context.Context, conn net.Conn, mgr manager.ServiceManager, logger *slog.Logger, allowedUID uint32) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error("closing daemon socket", "error", err)
@@ -928,7 +940,7 @@ func handleConnection(conn net.Conn, mgr manager.ServiceManager, logger *slog.Lo
 		return
 	}
 
-	response := executeRequest(mgr, request)
+	response := executeRequest(ctx, mgr, request)
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(response); err != nil {
@@ -965,7 +977,7 @@ func logClientWriteError(logger *slog.Logger, msg string, err error) {
 // Handlers that need no args (GetVersion, GetAllServiceInstances,
 // GetAllServiceCatalogEntries) are wrapped below to ignore the unused
 // rawArgs parameter, so every entry in requestHandlers has one uniform type.
-type requestHandler func(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse
+type requestHandler func(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse
 
 // requestHandlers routes each MethodName to its handler as a lookup table
 // rather than a switch: a switch this wide (types.ValidMethods keeps
@@ -973,8 +985,8 @@ type requestHandler func(mgr manager.ServiceManager, rawArgs json.RawMessage) ty
 // method added, regardless of how simple the dispatch itself is — a map
 // lookup stays O(1) complexity no matter how many methods exist.
 var requestHandlers = map[types.MethodName]requestHandler{
-	types.MethodGetAllServiceInstances: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
-		return handleGetAllServiceInstances(mgr)
+	types.MethodGetAllServiceInstances: func(ctx context.Context, mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
+		return handleGetAllServiceInstances(ctx, mgr)
 	},
 	types.MethodGetServiceInstance:     handleGetServiceInstance,
 	types.MethodRemoveServiceInstance:  handleRemoveServiceInstance,
@@ -984,8 +996,8 @@ var requestHandlers = map[types.MethodName]requestHandler{
 	types.MethodForceStopService:       handleForceStopService,
 	types.MethodReloadService:          handleReloadService,
 	types.MethodAddServiceCatalogEntry: handleAddServiceCatalogEntry,
-	types.MethodGetAllServiceCatalogEntries: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
-		return handleGetAllServiceCatalogEntries(mgr)
+	types.MethodGetAllServiceCatalogEntries: func(ctx context.Context, mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
+		return handleGetAllServiceCatalogEntries(ctx, mgr)
 	},
 	types.MethodGetServiceCatalogEntry:           handleGetServiceCatalogEntry,
 	types.MethodIsServiceRegistered:              handleIsServiceRegistered,
@@ -997,21 +1009,21 @@ var requestHandlers = map[types.MethodName]requestHandler{
 	types.MethodGetDependencyWaitStatus:          handleGetDependencyWaitStatus,
 	types.MethodNewServiceLogFiles:               handleNewServiceLogFiles,
 	types.MethodGetServiceLogFilePath:            handleGetServiceLogFilePath,
-	types.MethodGetVersion: func(mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
-		return handleGetVersion(mgr)
+	types.MethodGetVersion: func(ctx context.Context, mgr manager.ServiceManager, _ json.RawMessage) types.DaemonResponse {
+		return handleGetVersion(ctx, mgr)
 	},
 }
 
-func executeRequest(mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
+func executeRequest(ctx context.Context, mgr manager.ServiceManager, request types.DaemonRequest) types.DaemonResponse {
 	handler, ok := requestHandlers[request.Method]
 	if !ok {
 		return errorResponse(fmt.Sprintf("unknown method: %s", request.Method))
 	}
-	return handler(mgr, request.Args)
+	return handler(ctx, mgr, request.Args)
 }
 
-func handleGetVersion(mgr manager.ServiceManager) types.DaemonResponse {
-	version, err := mgr.GetVersion()
+func handleGetVersion(ctx context.Context, mgr manager.ServiceManager) types.DaemonResponse {
+	version, err := mgr.GetVersion(ctx)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1025,8 +1037,8 @@ func handleGetVersion(mgr manager.ServiceManager) types.DaemonResponse {
 	}
 }
 
-func handleGetAllServiceInstances(mgr manager.ServiceManager) types.DaemonResponse {
-	result, err := mgr.GetAllServiceInstances()
+func handleGetAllServiceInstances(ctx context.Context, mgr manager.ServiceManager) types.DaemonResponse {
+	result, err := mgr.GetAllServiceInstances(ctx)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1045,13 +1057,13 @@ func handleGetAllServiceInstances(mgr manager.ServiceManager) types.DaemonRespon
 	}
 }
 
-func handleGetServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleGetServiceInstance(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.GetServiceInstanceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodGetServiceInstance args: %v", err))
 	}
 
-	result, err := mgr.GetServiceInstance(args.Name)
+	result, err := mgr.GetServiceInstance(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1070,12 +1082,12 @@ func handleGetServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMessag
 	}
 }
 
-func handleRemoveServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleRemoveServiceInstance(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.RemoveServiceInstanceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceInstance args: %v", err))
 	}
-	removed, err := mgr.RemoveServiceInstance(args.Name)
+	removed, err := mgr.RemoveServiceInstance(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1086,12 +1098,12 @@ func handleRemoveServiceInstance(mgr manager.ServiceManager, rawArgs json.RawMes
 	return types.DaemonResponse{Success: true, Data: data}
 }
 
-func handleStartService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleStartService(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.StartServiceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodStartService args: %v", err))
 	}
-	pid, err := mgr.StartService(args.Name)
+	pid, err := mgr.StartService(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1105,7 +1117,7 @@ func handleStartService(mgr manager.ServiceManager, rawArgs json.RawMessage) typ
 	}
 }
 
-func handleRestartService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleRestartService(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.RestartServiceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse("invalid MethodRestartService args")
@@ -1118,7 +1130,7 @@ func handleRestartService(mgr manager.ServiceManager, rawArgs json.RawMessage) t
 	if err != nil {
 		return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
 	}
-	pid, err := mgr.RestartService(args.Name, gracePeriod, tickerPeriod)
+	pid, err := mgr.RestartService(ctx, args.Name, gracePeriod, tickerPeriod)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1132,7 +1144,7 @@ func handleRestartService(mgr manager.ServiceManager, rawArgs json.RawMessage) t
 	}
 }
 
-func handleStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleStopService(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.StopServiceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse("invalid MethodStopService args")
@@ -1145,7 +1157,7 @@ func handleStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) type
 	if err != nil {
 		return errorResponse(fmt.Sprintf("invalid ticker period: %s", args.TickerPeriod))
 	}
-	result, err := mgr.StopService(args.Name, gracePeriod, tickerPeriod)
+	result, err := mgr.StopService(ctx, args.Name, gracePeriod, tickerPeriod)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1160,12 +1172,12 @@ func handleStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) type
 	}
 }
 
-func handleForceStopService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleForceStopService(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.ForceStopServiceArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodForceStopService args: %v", err))
 	}
-	result, err := mgr.ForceStopService(args.Name)
+	result, err := mgr.ForceStopService(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1184,7 +1196,7 @@ func handleForceStopService(mgr manager.ServiceManager, rawArgs json.RawMessage)
 // imports manager — so it runs only against the concrete LocalManager the daemon
 // owns, wiring monitor.ProbeReady in as the gate. A non-local manager (there is
 // none in the live daemon) is rejected rather than silently unhandled.
-func handleReloadService(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleReloadService(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	lm, ok := mgr.(*manager.LocalManager)
 	if !ok {
 		return errorResponse("reload is only supported by the standalone daemon")
@@ -1227,20 +1239,20 @@ func handleReloadService(mgr manager.ServiceManager, rawArgs json.RawMessage) ty
 	return types.DaemonResponse{Success: true, Data: data}
 }
 
-func handleAddServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleAddServiceCatalogEntry(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.AddServiceCatalogEntryArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodAddServiceCatalogEntry args: %v", err))
 	}
-	err := mgr.AddServiceCatalogEntry(args.Service)
+	err := mgr.AddServiceCatalogEntry(ctx, args.Service)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}
 }
 
-func handleGetAllServiceCatalogEntries(mgr manager.ServiceManager) types.DaemonResponse {
-	result, err := mgr.GetAllServiceCatalogEntries()
+func handleGetAllServiceCatalogEntries(ctx context.Context, mgr manager.ServiceManager) types.DaemonResponse {
+	result, err := mgr.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1254,12 +1266,12 @@ func handleGetAllServiceCatalogEntries(mgr manager.ServiceManager) types.DaemonR
 	}
 }
 
-func handleGetServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleGetServiceCatalogEntry(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.GetServiceCatalogEntryArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodGetServiceCatalogEntry args: %v", err))
 	}
-	result, err := mgr.GetServiceCatalogEntry(args.Name)
+	result, err := mgr.GetServiceCatalogEntry(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1273,12 +1285,12 @@ func handleGetServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMe
 	}
 }
 
-func handleIsServiceRegistered(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleIsServiceRegistered(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.IsServiceRegisteredArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodIsServiceRegistered args: %v", err))
 	}
-	result, err := mgr.IsServiceRegistered(args.Name)
+	result, err := mgr.IsServiceRegistered(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1292,12 +1304,12 @@ func handleIsServiceRegistered(mgr manager.ServiceManager, rawArgs json.RawMessa
 	}
 }
 
-func handleRemoveServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleRemoveServiceCatalogEntry(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.RemoveServiceCatalogEntryArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodRemoveServiceCatalogEntry args: %v", err))
 	}
-	removed, err := mgr.RemoveServiceCatalogEntry(args.Name)
+	removed, err := mgr.RemoveServiceCatalogEntry(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1309,24 +1321,24 @@ func handleRemoveServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.Ra
 	return types.DaemonResponse{Success: true, Data: data}
 }
 
-func handleUpdateServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleUpdateServiceCatalogEntry(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.UpdateServiceCatalogEntryArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodUpdateServiceCatalogEntry args: %v", err))
 	}
-	err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
+	err := mgr.UpdateServiceCatalogEntry(ctx, args.Name, args.NewDirectoryPath, args.NewConfigFileName)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}
 }
 
-func handleGetMostRecentProcessHistoryEntry(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleGetMostRecentProcessHistoryEntry(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.GetMostRecentProcessHistoryEntryArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodGetMostRecentProcessHistoryEntry args: %v", err))
 	}
-	result, err := mgr.GetMostRecentProcessHistoryEntry(args.Name)
+	result, err := mgr.GetMostRecentProcessHistoryEntry(ctx, args.Name)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1354,12 +1366,12 @@ func handleGetMostRecentProcessHistoryEntry(mgr manager.ServiceManager, rawArgs 
 // observability surface out of the broad manager.ServiceManager interface
 // every implementer (and test fake) would otherwise have to carry.
 type dependencyWaitStatusStore interface {
-	SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error
-	ClearDependencyWaitStatus(name string) error
-	GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error)
+	SetDependencyWaitStatus(ctx context.Context, name string, pending []string, deadline time.Time) error
+	ClearDependencyWaitStatus(ctx context.Context, name string) error
+	GetDependencyWaitStatus(ctx context.Context, name string) (status types.DependencyWaitStatus, waiting bool, err error)
 }
 
-func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleSetDependencyWaitStatus(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
 		return errorResponse("dependency wait status not supported by this manager")
@@ -1368,13 +1380,13 @@ func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodSetDependencyWaitStatus args: %v", err))
 	}
-	if err := store.SetDependencyWaitStatus(args.ServiceName, args.Pending, args.Deadline); err != nil {
+	if err := store.SetDependencyWaitStatus(ctx, args.ServiceName, args.Pending, args.Deadline); err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}
 }
 
-func handleClearDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleClearDependencyWaitStatus(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
 		return errorResponse("dependency wait status not supported by this manager")
@@ -1383,13 +1395,13 @@ func handleClearDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.Ra
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodClearDependencyWaitStatus args: %v", err))
 	}
-	if err := store.ClearDependencyWaitStatus(args.ServiceName); err != nil {
+	if err := store.ClearDependencyWaitStatus(ctx, args.ServiceName); err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}
 }
 
-func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleGetDependencyWaitStatus(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
 		return errorResponse("dependency wait status not supported by this manager")
@@ -1398,7 +1410,7 @@ func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodGetDependencyWaitStatus args: %v", err))
 	}
-	status, waiting, err := store.GetDependencyWaitStatus(args.ServiceName)
+	status, waiting, err := store.GetDependencyWaitStatus(ctx, args.ServiceName)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1414,13 +1426,13 @@ func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 	}
 }
 
-func handleNewServiceLogFiles(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleNewServiceLogFiles(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.NewServiceLogFilesArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodNewServiceLogFiles args: %v", err))
 	}
 
-	logPath, errorLogPath, err := mgr.NewServiceLogFiles(args.ServiceName)
+	logPath, errorLogPath, err := mgr.NewServiceLogFiles(ctx, args.ServiceName)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}
@@ -1433,13 +1445,13 @@ func handleNewServiceLogFiles(mgr manager.ServiceManager, rawArgs json.RawMessag
 	return types.DaemonResponse{Success: true, Data: data}
 }
 
-func handleGetServiceLogFilePath(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+func handleGetServiceLogFilePath(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	var args types.GetServiceLogFilePathArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return errorResponse(fmt.Sprintf("invalid MethodGetServiceLogFilePath args: %v", err))
 	}
 
-	filepath, err := mgr.GetServiceLogFilePath(args.ServiceName, args.ErrorLog)
+	filepath, err := mgr.GetServiceLogFilePath(ctx, args.ServiceName, args.ErrorLog)
 	if err != nil {
 		return sentinelErrorResponse(err)
 	}

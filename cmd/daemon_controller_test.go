@@ -183,7 +183,7 @@ func TestStandaloneDaemonController_Info(t *testing.T) {
 			}
 			defer func() { _ = conn.Close() }()
 			var req types.DaemonRequest
-			if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+			if json.NewDecoder(conn).Decode(&req) != nil {
 				return
 			}
 			data, _ := json.Marshal(types.GetVersionResponse{Version: "v9.9.9"})

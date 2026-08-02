@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -45,7 +46,7 @@ func newSnapshotSaveCmd(getManager func() manager.ServiceManager, getConfig func
 			mgr := getManager()
 			cfg := getConfig()
 
-			instances, err := mgr.GetAllServiceInstances()
+			instances, err := mgr.GetAllServiceInstances(cmd.Context())
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting running services: %v", err))
 				return helpers.ErrCommandFailed
@@ -112,7 +113,7 @@ service no longer registered is skipped with a warning.`,
 			// silently leave a restored service pinned in 'starting'.
 			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
 
-			ordered := manager.OrderByDependencies(snap.Services, loadDependsOnMap(mgr, snap.Services))
+			ordered := manager.OrderByDependencies(snap.Services, loadDependsOnMap(cmd.Context(), mgr, snap.Services))
 
 			var started, restarted, skipped, missing, failed []string
 			for _, name := range ordered {
@@ -162,7 +163,7 @@ const (
 // forced bounce of services someone deliberately started since the
 // snapshot), otherwise gate on its dependencies and start or restart it.
 func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg *config.SystemConfig, name string) (restoreOutcome, error) {
-	registeredName, err := isServiceRegistered(mgr, name)
+	registeredName, err := isServiceRegistered(cmd.Context(), mgr, name)
 	if errors.Is(err, ErrServiceNonExistent) {
 		return restoreOutcomeMissing, nil
 	}
@@ -170,7 +171,7 @@ func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 		return 0, fmt.Errorf("checking registration: %w", err)
 	}
 
-	running, err := isServiceRunning(mgr, registeredName)
+	running, err := isServiceRunning(cmd.Context(), mgr, registeredName)
 	if err != nil {
 		return 0, fmt.Errorf("checking running status: %w", err)
 	}
@@ -178,7 +179,7 @@ func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 		return restoreOutcomeAlreadyRunning, nil
 	}
 
-	registeredService, err := mgr.GetServiceCatalogEntry(registeredName)
+	registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), registeredName)
 	if err != nil {
 		return 0, fmt.Errorf("getting registered service: %w", err)
 	}
@@ -187,7 +188,7 @@ func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 		return 0, depErr
 	}
 
-	result, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
+	result, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, registeredService)
 	if err != nil {
 		return 0, fmt.Errorf("starting service: %w", err)
 	}
@@ -204,10 +205,10 @@ func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 // whose config fails to load, is simply left out of the map — it has no
 // known deps to order by, and restoreSnapshotService reports its own
 // registration/load failure when it's actually processed.
-func loadDependsOnMap(mgr manager.ServiceManager, names []string) map[string][]string {
+func loadDependsOnMap(ctx context.Context, mgr manager.ServiceManager, names []string) map[string][]string {
 	depsOf := make(map[string][]string, len(names))
 	for _, name := range names {
-		entry, err := mgr.GetServiceCatalogEntry(name)
+		entry, err := mgr.GetServiceCatalogEntry(ctx, name)
 		if err != nil {
 			continue
 		}

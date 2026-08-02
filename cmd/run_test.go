@@ -896,7 +896,7 @@ func TestRunWithFileAlreadyRegisteredKeepsOriginalConfig(t *testing.T) {
 		t.Fatalf("expected warning to suggest 'eos update', got: %v", errOutput)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry("cms")
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("failed to get catalog entry: %v", err)
 	}

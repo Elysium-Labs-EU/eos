@@ -68,13 +68,12 @@ func ReadForkStderr(pidFile string) string {
 }
 
 type DaemonManager struct {
-	ctx        context.Context
 	socketPath string
 }
 
 func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, socketTimeout time.Duration, verbose bool) (*DaemonManager, error) {
 	if isDaemonRunning(pidFile) {
-		return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
+		return &DaemonManager{socketPath: socketPath}, nil
 	}
 
 	if err := startDaemonProcess(ctx, pidFile, verbose); err != nil {
@@ -85,7 +84,7 @@ func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, so
 		return nil, fmt.Errorf("daemon started but socket not ready: %w", err)
 	}
 
-	return &DaemonManager{ctx: ctx, socketPath: socketPath}, nil
+	return &DaemonManager{socketPath: socketPath}, nil
 }
 
 func isDaemonRunning(pidFile string) bool {
@@ -218,9 +217,14 @@ func waitForSocket(ctx context.Context, socketPath string, timeout time.Duration
 	return fmt.Errorf("timeout waiting for socket")
 }
 
-func (dm *DaemonManager) sendRequest(method types.MethodName, args json.RawMessage) (response types.DaemonResponse, err error) {
+// sendRequest connects to the daemon's unix socket and round-trips a single
+// request. ctx only bounds the connect: it's a local socket dial, effectively
+// instant, and the encode/decode that follows runs over the plain conn with
+// no deadline of its own. Callers propagate their own ctx so cancellation and
+// tracing flow through as usual.
+func (dm *DaemonManager) sendRequest(ctx context.Context, method types.MethodName, args json.RawMessage) (response types.DaemonResponse, err error) {
 	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(dm.ctx, "unix", dm.socketPath)
+	conn, err := dialer.DialContext(ctx, "unix", dm.socketPath)
 	if err != nil {
 		return types.DaemonResponse{}, fmt.Errorf("connecting to daemon: %w", err)
 	}
@@ -257,8 +261,8 @@ func (dm *DaemonManager) sendRequest(method types.MethodName, args json.RawMessa
 // GetVersion queries the actual running daemon process's buildinfo over the
 // unix socket, so it reflects the binary backing the live process even after
 // an on-disk update the daemon hasn't picked up yet (it hasn't been restarted).
-func (dm *DaemonManager) GetVersion() (types.GetVersionResponse, error) {
-	response, err := dm.sendRequest(types.MethodGetVersion, nil)
+func (dm *DaemonManager) GetVersion(ctx context.Context) (types.GetVersionResponse, error) {
+	response, err := dm.sendRequest(ctx, types.MethodGetVersion, nil)
 	if err != nil {
 		return types.GetVersionResponse{}, fmt.Errorf("GetVersion: request errored: %w", err)
 	}
@@ -271,8 +275,8 @@ func (dm *DaemonManager) GetVersion() (types.GetVersionResponse, error) {
 	return result, nil
 }
 
-func (dm *DaemonManager) GetAllServiceInstances() ([]types.ServiceInstance, error) {
-	response, err := dm.sendRequest(types.MethodGetAllServiceInstances, nil)
+func (dm *DaemonManager) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstance, error) {
+	response, err := dm.sendRequest(ctx, types.MethodGetAllServiceInstances, nil)
 
 	if err != nil {
 		return nil, fmt.Errorf("GetAllServiceInstances: request errored: %w", err)
@@ -286,12 +290,12 @@ func (dm *DaemonManager) GetAllServiceInstances() ([]types.ServiceInstance, erro
 	return result.Instances, nil
 }
 
-func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
+func (dm *DaemonManager) GetServiceInstance(ctx context.Context, name string) (*types.ServiceInstance, error) {
 	args, err := json.Marshal(types.GetServiceInstanceArgs{Name: name})
 	if err != nil {
 		return nil, fmt.Errorf("GetServiceInstance: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodGetServiceInstance, args)
+	response, err := dm.sendRequest(ctx, types.MethodGetServiceInstance, args)
 
 	if err != nil {
 		return nil, fmt.Errorf("GetServiceInstance: request errored: %w", err)
@@ -305,12 +309,12 @@ func (dm *DaemonManager) GetServiceInstance(name string) (*types.ServiceInstance
 	return &result.Instance, nil
 }
 
-func (dm *DaemonManager) RemoveServiceInstance(name string) (bool, error) {
+func (dm *DaemonManager) RemoveServiceInstance(ctx context.Context, name string) (bool, error) {
 	args, err := json.Marshal(types.RemoveServiceInstanceArgs{Name: name})
 	if err != nil {
 		return false, fmt.Errorf("RemoveServiceInstance: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodRemoveServiceInstance, args)
+	response, err := dm.sendRequest(ctx, types.MethodRemoveServiceInstance, args)
 
 	if err != nil {
 		return false, fmt.Errorf("RemoveServiceInstance: request errored: %w", err)
@@ -324,12 +328,12 @@ func (dm *DaemonManager) RemoveServiceInstance(name string) (bool, error) {
 	return result["removed"], nil
 }
 
-func (dm *DaemonManager) StartService(name string) (int, error) {
+func (dm *DaemonManager) StartService(ctx context.Context, name string) (int, error) {
 	args, err := json.Marshal(types.StartServiceArgs{Name: name})
 	if err != nil {
 		return 0, fmt.Errorf("StartService: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodStartService, args)
+	response, err := dm.sendRequest(ctx, types.MethodStartService, args)
 
 	if err != nil {
 		return 0, fmt.Errorf("StartService: request errored: %w", err)
@@ -343,7 +347,7 @@ func (dm *DaemonManager) StartService(name string) (int, error) {
 	return result["pid"], nil
 }
 
-func (dm *DaemonManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error) {
+func (dm *DaemonManager) RestartService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error) {
 	args, err := json.Marshal(types.RestartServiceArgs{
 		Name:         name,
 		GracePeriod:  gracePeriod.String(),
@@ -352,7 +356,7 @@ func (dm *DaemonManager) RestartService(name string, gracePeriod time.Duration, 
 	if err != nil {
 		return 0, fmt.Errorf("RestartService: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodRestartService, args)
+	response, err := dm.sendRequest(ctx, types.MethodRestartService, args)
 
 	if err != nil {
 		return 0, fmt.Errorf("RestartService: request errored: %w", err)
@@ -370,7 +374,7 @@ func (dm *DaemonManager) RestartService(name string, gracePeriod time.Duration, 
 // The whole launch→probe→drain sequence runs daemon-side, where the service
 // processes live and the readiness probe can reach them; this call just carries
 // the timing knobs over and returns the swapped process groups.
-func (dm *DaemonManager) ReloadService(name string, cfg ReloadConfig) (ReloadResult, error) {
+func (dm *DaemonManager) ReloadService(ctx context.Context, name string, cfg ReloadConfig) (ReloadResult, error) {
 	args, err := json.Marshal(types.ReloadServiceArgs{
 		Name:             name,
 		GracePeriod:      cfg.GracePeriod.String(),
@@ -381,7 +385,7 @@ func (dm *DaemonManager) ReloadService(name string, cfg ReloadConfig) (ReloadRes
 	if err != nil {
 		return ReloadResult{}, fmt.Errorf("ReloadService: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodReloadService, args)
+	response, err := dm.sendRequest(ctx, types.MethodReloadService, args)
 	if err != nil {
 		return ReloadResult{}, fmt.Errorf("ReloadService: request errored: %w", err)
 	}
@@ -394,7 +398,7 @@ func (dm *DaemonManager) ReloadService(name string, cfg ReloadConfig) (ReloadRes
 	return ReloadResult{OldPGID: result.OldPGID, NewPGID: result.NewPGID}, nil
 }
 
-func (dm *DaemonManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
+func (dm *DaemonManager) StopService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (StopServiceResult, error) {
 	args, err := json.Marshal(types.StopServiceArgs{
 		Name:         name,
 		GracePeriod:  gracePeriod.String(),
@@ -404,7 +408,7 @@ func (dm *DaemonManager) StopService(name string, gracePeriod time.Duration, tic
 		return StopServiceResult{}, fmt.Errorf("StopService: marshaling args: %w", err)
 	}
 
-	response, err := dm.sendRequest(types.MethodStopService, args)
+	response, err := dm.sendRequest(ctx, types.MethodStopService, args)
 
 	if err != nil {
 		return StopServiceResult{}, fmt.Errorf("StopService: request errored: %w", err)
@@ -418,12 +422,12 @@ func (dm *DaemonManager) StopService(name string, gracePeriod time.Duration, tic
 	return result, nil
 }
 
-func (dm *DaemonManager) ForceStopService(name string) (StopServiceResult, error) {
+func (dm *DaemonManager) ForceStopService(ctx context.Context, name string) (StopServiceResult, error) {
 	args, err := json.Marshal(types.ForceStopServiceArgs{Name: name})
 	if err != nil {
 		return StopServiceResult{}, fmt.Errorf("ForceStopService: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodForceStopService, args)
+	response, err := dm.sendRequest(ctx, types.MethodForceStopService, args)
 
 	if err != nil {
 		return StopServiceResult{}, fmt.Errorf("ForceStopService: request errored: %w", err)
@@ -437,12 +441,12 @@ func (dm *DaemonManager) ForceStopService(name string) (StopServiceResult, error
 	return result, nil
 }
 
-func (dm *DaemonManager) AddServiceCatalogEntry(service *types.ServiceCatalogEntry) error {
+func (dm *DaemonManager) AddServiceCatalogEntry(ctx context.Context, service *types.ServiceCatalogEntry) error {
 	args, err := json.Marshal(types.AddServiceCatalogEntryArgs{Service: service})
 	if err != nil {
 		return fmt.Errorf("AddServiceCatalogEntry: marshaling args: %w", err)
 	}
-	_, err = dm.sendRequest(types.MethodAddServiceCatalogEntry, args)
+	_, err = dm.sendRequest(ctx, types.MethodAddServiceCatalogEntry, args)
 
 	if err != nil {
 		return fmt.Errorf("AddServiceCatalogEntry: request errored: %w", err)
@@ -451,8 +455,8 @@ func (dm *DaemonManager) AddServiceCatalogEntry(service *types.ServiceCatalogEnt
 	return nil
 }
 
-func (dm *DaemonManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
-	response, err := dm.sendRequest(types.MethodGetAllServiceCatalogEntries, nil)
+func (dm *DaemonManager) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error) {
+	response, err := dm.sendRequest(ctx, types.MethodGetAllServiceCatalogEntries, nil)
 
 	if err != nil {
 		return nil, fmt.Errorf("GetAllServiceCatalogEntries: request errored: %w", err)
@@ -466,12 +470,12 @@ func (dm *DaemonManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEn
 	return result, nil
 }
 
-func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error) {
+func (dm *DaemonManager) GetServiceCatalogEntry(ctx context.Context, name string) (types.ServiceCatalogEntry, error) {
 	args, err := json.Marshal(types.GetServiceCatalogEntryArgs{Name: name})
 	if err != nil {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("GetServiceCatalogEntry: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodGetServiceCatalogEntry, args)
+	response, err := dm.sendRequest(ctx, types.MethodGetServiceCatalogEntry, args)
 
 	if err != nil {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("GetServiceCatalogEntry: request errored: %w", err)
@@ -485,12 +489,12 @@ func (dm *DaemonManager) GetServiceCatalogEntry(name string) (types.ServiceCatal
 	return result, nil
 }
 
-func (dm *DaemonManager) IsServiceRegistered(name string) (bool, error) {
+func (dm *DaemonManager) IsServiceRegistered(ctx context.Context, name string) (bool, error) {
 	args, err := json.Marshal(types.GetServiceCatalogEntryArgs{Name: name})
 	if err != nil {
 		return false, fmt.Errorf("IsServiceRegistered: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodIsServiceRegistered, args)
+	response, err := dm.sendRequest(ctx, types.MethodIsServiceRegistered, args)
 
 	if err != nil {
 		return false, fmt.Errorf("IsServiceRegistered: request errored: %w", err)
@@ -504,12 +508,12 @@ func (dm *DaemonManager) IsServiceRegistered(name string) (bool, error) {
 	return result["exists"], nil
 }
 
-func (dm *DaemonManager) RemoveServiceCatalogEntry(name string) (bool, error) {
+func (dm *DaemonManager) RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error) {
 	args, err := json.Marshal(types.GetServiceCatalogEntryArgs{Name: name})
 	if err != nil {
 		return false, fmt.Errorf("RemoveServiceCatalogEntry: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodRemoveServiceCatalogEntry, args)
+	response, err := dm.sendRequest(ctx, types.MethodRemoveServiceCatalogEntry, args)
 
 	if err != nil {
 		return false, fmt.Errorf("RemoveServiceCatalogEntry: request errored: %w", err)
@@ -523,7 +527,7 @@ func (dm *DaemonManager) RemoveServiceCatalogEntry(name string) (bool, error) {
 	return result["removed"], nil
 }
 
-func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error {
+func (dm *DaemonManager) UpdateServiceCatalogEntry(ctx context.Context, name, newDirectoryPath, newConfigFileName string) error {
 	args, err := json.Marshal(types.UpdateServiceCatalogEntryArgs{
 		Name:              name,
 		NewDirectoryPath:  newDirectoryPath,
@@ -532,7 +536,7 @@ func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath
 	if err != nil {
 		return fmt.Errorf("UpdateServiceCatalogEntry: marshaling args: %w", err)
 	}
-	_, err = dm.sendRequest(types.MethodUpdateServiceCatalogEntry, args)
+	_, err = dm.sendRequest(ctx, types.MethodUpdateServiceCatalogEntry, args)
 
 	if err != nil {
 		return fmt.Errorf("UpdateServiceCatalogEntry: request errored: %w", err)
@@ -541,12 +545,12 @@ func (dm *DaemonManager) UpdateServiceCatalogEntry(name string, newDirectoryPath
 	return nil
 }
 
-func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
+func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error) {
 	args, err := json.Marshal(types.GetMostRecentProcessHistoryEntryArgs{Name: name})
 	if err != nil {
 		return nil, fmt.Errorf("GetMostRecentProcessHistoryEntry: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodGetMostRecentProcessHistoryEntry, args)
+	response, err := dm.sendRequest(ctx, types.MethodGetMostRecentProcessHistoryEntry, args)
 
 	if err != nil {
 		return nil, fmt.Errorf("GetMostRecentProcessHistoryEntry: request errored: %w", err)
@@ -564,20 +568,20 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(name string) (*types.P
 // waiting on pending to become ready, so a concurrent `eos status`/`eos api
 // status` request against this same daemon can show it. Best-effort
 // observability: see manager.RecordDependencyWait, its only caller.
-func (dm *DaemonManager) SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error {
+func (dm *DaemonManager) SetDependencyWaitStatus(ctx context.Context, name string, pending []string, deadline time.Time) error {
 	// SetDependencyWaitStatusArgs is strings/[]string/time.Time: nothing here
 	// can fail to marshal, so there's no error branch worth carrying.
 	args, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: name, Pending: pending, Deadline: deadline})
-	if _, err := dm.sendRequest(types.MethodSetDependencyWaitStatus, args); err != nil {
+	if _, err := dm.sendRequest(ctx, types.MethodSetDependencyWaitStatus, args); err != nil {
 		return fmt.Errorf("SetDependencyWaitStatus: request errored: %w", err)
 	}
 	return nil
 }
 
 // ClearDependencyWaitStatus tells the daemon to drop name's recorded wait.
-func (dm *DaemonManager) ClearDependencyWaitStatus(name string) error {
+func (dm *DaemonManager) ClearDependencyWaitStatus(ctx context.Context, name string) error {
 	args, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: name})
-	if _, err := dm.sendRequest(types.MethodClearDependencyWaitStatus, args); err != nil {
+	if _, err := dm.sendRequest(ctx, types.MethodClearDependencyWaitStatus, args); err != nil {
 		return fmt.Errorf("ClearDependencyWaitStatus: request errored: %w", err)
 	}
 	return nil
@@ -585,9 +589,9 @@ func (dm *DaemonManager) ClearDependencyWaitStatus(name string) error {
 
 // GetDependencyWaitStatus reports name's current depends_on wait as recorded
 // by the daemon. waiting is false if it isn't waiting on one right now.
-func (dm *DaemonManager) GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error) {
+func (dm *DaemonManager) GetDependencyWaitStatus(ctx context.Context, name string) (status types.DependencyWaitStatus, waiting bool, err error) {
 	args, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: name})
-	response, err := dm.sendRequest(types.MethodGetDependencyWaitStatus, args)
+	response, err := dm.sendRequest(ctx, types.MethodGetDependencyWaitStatus, args)
 	if err != nil {
 		return types.DependencyWaitStatus{}, false, fmt.Errorf("GetDependencyWaitStatus: request errored: %w", err)
 	}
@@ -607,12 +611,12 @@ type ServiceLogFilesResult struct {
 	ErrorLogFilePath string `json:"errorLogFile"`
 }
 
-func (dm *DaemonManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
+func (dm *DaemonManager) NewServiceLogFiles(ctx context.Context, serviceName string) (logPath string, errorLogPath string, err error) {
 	args, err := json.Marshal(types.NewServiceLogFilesArgs{ServiceName: serviceName})
 	if err != nil {
 		return "", "", fmt.Errorf("NewServiceLogFiles: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodNewServiceLogFiles, args)
+	response, err := dm.sendRequest(ctx, types.MethodNewServiceLogFiles, args)
 
 	if err != nil {
 		return "", "", fmt.Errorf("NewServiceLogFiles: request errored: %w", err)
@@ -626,12 +630,12 @@ func (dm *DaemonManager) NewServiceLogFiles(serviceName string) (logPath string,
 	return result.LogFilePath, result.ErrorLogFilePath, nil
 }
 
-func (dm *DaemonManager) GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error) {
+func (dm *DaemonManager) GetServiceLogFilePath(ctx context.Context, serviceName string, errorLog bool) (*string, error) {
 	args, err := json.Marshal(types.GetServiceLogFilePathArgs{ServiceName: serviceName, ErrorLog: errorLog})
 	if err != nil {
 		return nil, fmt.Errorf("GetServiceLogFilePath: marshaling args: %w", err)
 	}
-	response, err := dm.sendRequest(types.MethodGetServiceLogFilePath, args)
+	response, err := dm.sendRequest(ctx, types.MethodGetServiceLogFilePath, args)
 
 	if err != nil {
 		return nil, fmt.Errorf("GetServiceLogFilePath: request errored: %w", err)

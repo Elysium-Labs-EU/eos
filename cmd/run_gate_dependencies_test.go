@@ -79,7 +79,7 @@ func TestGateDependencies_DependencyReady(t *testing.T) {
 
 	// RecordDependencyWait must have cleared the mark once gateDependencies
 	// returned — a stuck "waiting" would misreport eos status forever.
-	if _, waiting, err := mgr.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if _, waiting, err := mgr.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Errorf("expected the wait to be cleared after gateDependencies returns, waiting=%v err=%v", waiting, err)
 	}
 }
@@ -101,7 +101,7 @@ func TestGateDependencies_MaxWaitFailsLoud(t *testing.T) {
 	}
 
 	// Even on the failure path, the wait mark must be cleared, not left stuck.
-	if _, waiting, getErr := mgr.GetDependencyWaitStatus("web"); getErr != nil || waiting {
+	if _, waiting, getErr := mgr.GetDependencyWaitStatus(t.Context(), "web"); getErr != nil || waiting {
 		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
 	}
 }
@@ -138,7 +138,7 @@ func TestGateDependencies_SelfDependencyFailsLoud(t *testing.T) {
 	}
 
 	// The wait mark must be cleared even on the failure path.
-	if _, waiting, getErr := mgr.GetDependencyWaitStatus("loop"); getErr != nil || waiting {
+	if _, waiting, getErr := mgr.GetDependencyWaitStatus(t.Context(), "loop"); getErr != nil || waiting {
 		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
 	}
 }
@@ -175,7 +175,7 @@ func TestGateDependencies_CycleFailsLoudNoHang(t *testing.T) {
 	}
 
 	// The wait mark must be cleared even on the failure path.
-	if _, waiting, getErr := mgr.GetDependencyWaitStatus("web"); getErr != nil || waiting {
+	if _, waiting, getErr := mgr.GetDependencyWaitStatus(t.Context(), "web"); getErr != nil || waiting {
 		t.Errorf("expected the wait to be cleared after gateDependencies fails, waiting=%v err=%v", waiting, getErr)
 	}
 }

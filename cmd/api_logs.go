@@ -53,7 +53,7 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 			serviceName := args[0]
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("checking service: %w", err))
 			}
@@ -61,7 +61,7 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q is not registered", serviceName))
 			}
 
-			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting process history: %w", err))
 			}
@@ -73,7 +73,7 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("lines must be between 0 and 10000"))
 			}
 
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
+			logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, errorLog)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting log file path: %w", err))
 			}

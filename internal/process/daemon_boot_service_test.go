@@ -44,7 +44,7 @@ func bootTestService(t *testing.T, mgr *manager.LocalManager, tempDir string, cf
 	if err != nil {
 		t.Fatalf("NewServiceCatalogEntry: %v", err)
 	}
-	if err := mgr.AddServiceCatalogEntry(catalogEntry); err != nil {
+	if err := mgr.AddServiceCatalogEntry(t.Context(), catalogEntry); err != nil {
 		t.Fatalf("AddServiceCatalogEntry: %v", err)
 	}
 	return entry
@@ -61,7 +61,7 @@ func TestBootService_NoDependencies(t *testing.T) {
 
 	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
 
-	if _, err := mgr.GetServiceInstance("solo"); err != nil {
+	if _, err := mgr.GetServiceInstance(t.Context(), "solo"); err != nil {
 		t.Errorf("expected 'solo' to have started, got: %v", err)
 	}
 }
@@ -83,10 +83,10 @@ func TestBootService_WaitsThenStarts(t *testing.T) {
 
 	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
 
-	if _, err := mgr.GetServiceInstance("web"); err != nil {
+	if _, err := mgr.GetServiceInstance(t.Context(), "web"); err != nil {
 		t.Errorf("expected 'web' to have started once its dependency was ready, got: %v", err)
 	}
-	if _, waiting, err := mgr.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if _, waiting, err := mgr.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Errorf("expected the wait to be cleared once bootService returns, waiting=%v err=%v", waiting, err)
 	}
 }
@@ -106,10 +106,10 @@ func TestBootService_UnmetDependencyNeverStarts(t *testing.T) {
 
 	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
 
-	if _, err := mgr.GetServiceInstance("web"); !errors.Is(err, manager.ErrServiceNotRunning) {
+	if _, err := mgr.GetServiceInstance(t.Context(), "web"); !errors.Is(err, manager.ErrServiceNotRunning) {
 		t.Errorf("expected 'web' to never have started, got err: %v", err)
 	}
-	if _, waiting, err := mgr.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if _, waiting, err := mgr.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Errorf("expected the wait to be cleared even on max_wait failure, waiting=%v err=%v", waiting, err)
 	}
 }
@@ -126,7 +126,7 @@ func TestBootService_MaxWaitParseError(t *testing.T) {
 
 	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
 
-	if _, err := mgr.GetServiceInstance("web"); !errors.Is(err, manager.ErrServiceNotRunning) {
+	if _, err := mgr.GetServiceInstance(t.Context(), "web"); !errors.Is(err, manager.ErrServiceNotRunning) {
 		t.Errorf("expected 'web' to never have started with a malformed max_wait, got err: %v", err)
 	}
 }

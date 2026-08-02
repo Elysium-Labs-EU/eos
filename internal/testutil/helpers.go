@@ -32,7 +32,7 @@ func SetupTestDB(t testing.TB, migrationsFS embed.FS, migrationsPath string) (*d
 
 type ServiceConfigOption func(*types.ServiceConfig)
 
-func WithRuntime(runtimeType string, path string) ServiceConfigOption {
+func WithRuntime(runtimeType, path string) ServiceConfigOption {
 	return func(sc *types.ServiceConfig) {
 		sc.Runtime.Type = runtimeType
 		sc.Runtime.Path = path

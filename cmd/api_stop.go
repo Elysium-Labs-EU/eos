@@ -49,7 +49,7 @@ Exit codes:
 			mgr := getManager()
 			cfg := getConfig()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("checking service: %w", err))
 			}
@@ -58,11 +58,11 @@ Exit codes:
 			}
 
 			if force {
-				forceResult, forceErr := mgr.ForceStopService(serviceName)
+				forceResult, forceErr := mgr.ForceStopService(cmd.Context(), serviceName)
 				if forceErr != nil {
 					return helpers.WriteJSONErr(cmd, fmt.Errorf("force stopping service: %w", forceErr))
 				}
-				_, _ = mgr.RemoveServiceInstance(serviceName)
+				_, _ = mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 				return helpers.WriteJSON(cmd, apiStopResult{
 					Name:    serviceName,
 					Stopped: len(forceResult.Stopped),
@@ -71,14 +71,14 @@ Exit codes:
 				})
 			}
 
-			result, err := mgr.StopService(serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+			result, err := mgr.StopService(cmd.Context(), serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("stopping service: %w", err))
 			}
 			if len(result.Errored) > 0 {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("graceful stop failed for %d process(es)", len(result.Errored)))
 			}
-			_, _ = mgr.RemoveServiceInstance(serviceName)
+			_, _ = mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 			return helpers.WriteJSON(cmd, apiStopResult{Name: serviceName, Stopped: len(result.Stopped)})
 		},
 	}

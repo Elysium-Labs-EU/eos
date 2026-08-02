@@ -253,8 +253,15 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 						return helpers.ErrCommandFailed
 					}
 				}
-				return startupCmdLaunchd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					launchdDir, config.LaunchdPlistFileName, userAgent, verbose, flagYes, execRunCmd)
+				return startupCmdLaunchd(cmd.Context(), cmd, launchdStartupParams{
+					InstallDir:    installDir,
+					DaemonConfig:  systemConfig.Daemon.Standalone,
+					LaunchdDir:    launchdDir,
+					PlistFileName: config.LaunchdPlistFileName,
+					UserAgent:     userAgent,
+					Verbose:       verbose,
+					FlagYes:       flagYes,
+				}, execRunCmd)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -264,9 +271,14 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 			}
 
 			if runtimeName == "openrc" {
-				return openrcStartupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-					config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+				return openrcStartupCmd(cmd.Context(), cmd, openrcStartupParams{
+					InstallDir:   installDir,
+					DaemonConfig: systemConfig.Daemon.Standalone,
+					InitDir:      config.OpenRCInitDir,
+					InitFile:     config.OpenRCTargetFileName,
+					Verbose:      verbose,
+					FlagYes:      flagYes,
+				}, detectActiveSystemRuntime, execRunCmd)
 			}
 
 			userUnit := os.Getuid() != 0
@@ -278,9 +290,15 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 					return helpers.ErrCommandFailed
 				}
 			}
-			return startupCmd(cmd.Context(), cmd, installDir, systemConfig.Daemon.Standalone,
-				systemdDir, config.SystemdTargetFileName,
-				userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+			return startupCmd(cmd.Context(), cmd, systemdStartupParams{
+				InstallDir:   installDir,
+				DaemonConfig: systemConfig.Daemon.Standalone,
+				SystemdDir:   systemdDir,
+				SystemdFile:  config.SystemdTargetFileName,
+				UserUnit:     userUnit,
+				Verbose:      verbose,
+				FlagYes:      flagYes,
+			}, detectActiveSystemRuntime, execRunCmd)
 		},
 	}
 	startupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
@@ -317,7 +335,12 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 					return helpers.ErrCommandFailed
 				}
 				userAgent := os.Getuid() != 0
-				return unstartupCmdLaunchd(cmd.Context(), cmd, *systemConfig.Daemon.Launchd, userAgent, verbose, flagYes, execRunCmd, identity)
+				return unstartupCmdLaunchd(cmd.Context(), cmd, launchdUnstartupParams{
+					DaemonConfig: *systemConfig.Daemon.Launchd,
+					UserAgent:    userAgent,
+					Verbose:      verbose,
+					FlagYes:      flagYes,
+				}, execRunCmd, identity)
 			}
 
 			runtimeName, err := detectActiveSystemRuntime()
@@ -327,8 +350,12 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 			}
 
 			if runtimeName == "openrc" {
-				return openrcUnstartupCmd(cmd.Context(), cmd, config.OpenRCInitDir, config.OpenRCTargetFileName,
-					verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
+				return openrcUnstartupCmd(cmd.Context(), cmd, openrcUnstartupParams{
+					InitDir:  config.OpenRCInitDir,
+					InitFile: config.OpenRCTargetFileName,
+					Verbose:  verbose,
+					FlagYes:  flagYes,
+				}, detectActiveSystemRuntime, execRunCmd, identity)
 			}
 
 			if systemConfig.Daemon.Systemd == nil {
@@ -336,7 +363,12 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 				return helpers.ErrCommandFailed
 			}
 			userUnit := os.Getuid() != 0
-			return unstartupCmd(cmd.Context(), cmd, *systemConfig.Daemon.Systemd, userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd, identity)
+			return unstartupCmd(cmd.Context(), cmd, systemdUnstartupParams{
+				DaemonConfig: *systemConfig.Daemon.Systemd,
+				UserUnit:     userUnit,
+				Verbose:      verbose,
+				FlagYes:      flagYes,
+			}, detectActiveSystemRuntime, execRunCmd, identity)
 		},
 	}
 	unstartupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
@@ -373,7 +405,14 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 			if override := os.Getenv("USER_OS"); override != "" {
 				userOS = override
 			}
-			return updateCmd(cmd.Context(), cmd, version, installDir, ctrl, userArch, userOS, includePre, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
+			return updateCmd(cmd.Context(), cmd, &updateCmdParams{
+				Version:    version,
+				InstallDir: installDir,
+				Ctrl:       ctrl,
+				UserArch:   userArch,
+				UserOS:     userOS,
+				IncludePre: includePre,
+			}, fetchLatestRelease, handleDownloadBinary, fetchChecksumForBinary)
 		},
 	}
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
@@ -504,7 +543,7 @@ func resolveStandaloneDaemonVersion(ctx context.Context, cfg *config.StandaloneD
 	if err != nil {
 		return "", fmt.Errorf("connecting to daemon: %w", err)
 	}
-	version, err := dm.GetVersion()
+	version, err := dm.GetVersion(ctx)
 	if err != nil {
 		return "", fmt.Errorf("querying daemon version: %w", err)
 	}
@@ -1011,26 +1050,38 @@ func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.Standalon
 	return nil
 }
 
-func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
-	if err := ensureRuntime(cmd, verbose, detectRuntime, "systemd"); err != nil {
+// systemdStartupParams bundles the plain-value parameters startupCmd needs to
+// render, write, and enable a systemd unit file.
+type systemdStartupParams struct {
+	InstallDir   string
+	DaemonConfig *config.StandaloneDaemonConfig
+	SystemdDir   string
+	SystemdFile  string
+	UserUnit     bool
+	Verbose      bool
+	FlagYes      bool
+}
+
+func startupCmd(ctx context.Context, cmd *cobra.Command, p systemdStartupParams, detectRuntime func() (string, error), run runCmdFn) error {
+	if err := ensureRuntime(cmd, p.Verbose, detectRuntime, "systemd"); err != nil {
 		return err
 	}
 
-	fullTargetName := filepath.Join(systemdDir, systemdFile)
-	helpers.Debugf(cmd, verbose, "target unit file: %s", fullTargetName)
+	fullTargetName := filepath.Join(p.SystemdDir, p.SystemdFile)
+	helpers.Debugf(cmd, p.Verbose, "target unit file: %s", fullTargetName)
 
-	if err := ensureSystemdUnitDir(cmd, verbose, userUnit, systemdDir, fullTargetName); err != nil {
+	if err := ensureSystemdUnitDir(cmd, p.Verbose, p.UserUnit, p.SystemdDir, fullTargetName); err != nil {
 		return err
 	}
 
-	effectiveUser, unitFile, err := resolveSystemdUnitFile(cmd, verbose, installDir, userUnit)
+	effectiveUser, unitFile, err := resolveSystemdUnitFile(cmd, p.Verbose, p.InstallDir, p.UserUnit)
 	if err != nil {
 		return err
 	}
 
-	unitKind := unitScope(userUnit) + " file"
+	unitKind := unitScope(p.UserUnit) + " file"
 
-	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("create %s? (y/n):", unitKind), unitKind+" creation canceled") {
+	if !confirmOrDecline(cmd, p.FlagYes, fmt.Sprintf("create %s? (y/n):", unitKind), unitKind+" creation canceled") {
 		return nil
 	}
 
@@ -1040,104 +1091,129 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 	}
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(unitKind+" created, at:"), fullTargetName)
 
-	if userUnit {
-		if busErr := prepareUserBus(ctx, cmd, verbose, effectiveUser, run); busErr != nil {
+	if p.UserUnit {
+		if busErr := prepareUserBus(ctx, cmd, p.Verbose, effectiveUser, run); busErr != nil {
 			return busErr
 		}
 	}
 
-	unit := unitName(systemdFile)
-	if enableErr := enableSystemdUnit(ctx, cmd, verbose, userUnit, unit, run); enableErr != nil {
+	unit := unitName(p.SystemdFile)
+	if enableErr := enableSystemdUnit(ctx, cmd, p.Verbose, p.UserUnit, unit, run); enableErr != nil {
 		return enableErr
 	}
 
-	if userUnit {
+	if p.UserUnit {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user unit enabled, eos will start on login")
 		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("to also start at boot without login: %s", ui.TextCommand.Render("loginctl enable-linger "+effectiveUser.Username)))
 	} else {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by systemd on next start") {
+	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by systemd on next start") {
 		return nil
 	}
 
-	if stopErr := stopStandaloneForRestart(cmd, daemonConfig); stopErr != nil {
+	if stopErr := stopStandaloneForRestart(cmd, p.DaemonConfig); stopErr != nil {
 		return stopErr
 	}
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "start", unit), " "))
-	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "start", unit)...)
+	helpers.Debugf(cmd, p.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(p.UserUnit, "start", unit), " "))
+	out, err := run(ctx, "systemctl", systemctlArgs(p.UserUnit, "start", unit)...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	helpers.Debugf(cmd, verbose, "start output: %s", strings.TrimSpace(string(out)))
+	helpers.Debugf(cmd, p.Verbose, "start output: %s", strings.TrimSpace(string(out)))
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
 
 // disableAndRemoveSystemdUnit stops and disables the unit, removes its file, and
 // reloads systemd. Any step failure prints context and returns ErrCommandFailed.
-func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, verbose, userUnit bool, unitKind, unit, unitPath string, run runCmdFn) error {
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "stop", unit), " "))
-	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "stop", unit)...)
+// systemdUnitRemoval bundles the unit identity and flags disableAndRemoveSystemdUnit
+// needs to stop, disable, and delete a systemd unit.
+type systemdUnitRemoval struct {
+	UnitKind string
+	Unit     string
+	UnitPath string
+	Verbose  bool
+	UserUnit bool
+}
+
+func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, u systemdUnitRemoval, run runCmdFn) error {
+	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "stop", u.Unit), " "))
+	out, err := run(ctx, "systemctl", systemctlArgs(u.UserUnit, "stop", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", unitKind, string(out)))
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" stopped")
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), u.UnitKind+" stopped")
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "disable", unit), " "))
-	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "disable", unit)...)
+	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "disable", u.Unit), " "))
+	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "disable", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", unitKind, string(out)))
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" disabled")
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), u.UnitKind+" disabled")
 
-	if err = os.Remove(unitPath); err != nil {
+	if err = os.Remove(u.UnitPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "unit file removed")
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "daemon-reload"), " "))
-	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "daemon-reload")...)
+	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "daemon-reload"), " "))
+	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "daemon-reload")...)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), unitKind+" startup removed")
+	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), u.UnitKind+" startup removed")
 	return nil
 }
 
-func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.SystemdConfig, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
-	if err := ensureRuntime(cmd, verbose, detectRuntime, "systemd"); err != nil {
+// systemdUnstartupParams bundles the plain-value parameters unstartupCmd
+// needs to disable and remove a systemd unit.
+type systemdUnstartupParams struct {
+	DaemonConfig config.SystemdConfig
+	UserUnit     bool
+	Verbose      bool
+	FlagYes      bool
+}
+
+func unstartupCmd(ctx context.Context, cmd *cobra.Command, p systemdUnstartupParams, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
+	if err := ensureRuntime(cmd, p.Verbose, detectRuntime, "systemd"); err != nil {
 		return err
 	}
 
-	unitKind := unitScope(userUnit)
+	unitKind := unitScope(p.UserUnit)
 
-	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind), "canceled") {
+	if !confirmOrDecline(cmd, p.FlagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", unitKind), "canceled") {
 		return nil
 	}
 
-	if err := prepareUserBusIfNeeded(ctx, cmd, verbose, userUnit, run); err != nil {
+	if err := prepareUserBusIfNeeded(ctx, cmd, p.Verbose, p.UserUnit, run); err != nil {
 		return err
 	}
 
-	unit := unitName(daemonConfig.SystemdTargetFileName)
-	unitPath := daemonConfig.SystemdTargetDir + daemonConfig.SystemdTargetFileName
-	if err := disableAndRemoveSystemdUnit(ctx, cmd, verbose, userUnit, unitKind, unit, unitPath, run); err != nil {
+	unit := unitName(p.DaemonConfig.SystemdTargetFileName)
+	unitPath := p.DaemonConfig.SystemdTargetDir + p.DaemonConfig.SystemdTargetFileName
+	if err := disableAndRemoveSystemdUnit(ctx, cmd, systemdUnitRemoval{
+		Verbose:  p.Verbose,
+		UserUnit: p.UserUnit,
+		UnitKind: unitKind,
+		Unit:     unit,
+		UnitPath: unitPath,
+	}, run); err != nil {
 		return err
 	}
 
-	if userUnit {
+	if p.UserUnit {
 		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
+	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon standalone? (y/n):", "") {
 		return nil
 	}
 
@@ -1381,23 +1457,35 @@ func bootstrapLaunchdJob(ctx context.Context, cmd *cobra.Command, verbose bool, 
 	return nil
 }
 
-func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, launchdDir, plistFileName string, userAgent, verbose, flagYes bool, run runCmdFn) error {
-	fullTargetName := filepath.Join(launchdDir, plistFileName)
-	helpers.Debugf(cmd, verbose, "target plist file: %s", fullTargetName)
+// launchdStartupParams bundles the plain-value parameters startupCmdLaunchd
+// needs to render, write, and enable a launchd plist file.
+type launchdStartupParams struct {
+	InstallDir    string
+	DaemonConfig  *config.StandaloneDaemonConfig
+	LaunchdDir    string
+	PlistFileName string
+	UserAgent     bool
+	Verbose       bool
+	FlagYes       bool
+}
 
-	if err := ensureLaunchdDir(cmd, verbose, userAgent, launchdDir); err != nil {
+func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdStartupParams, run runCmdFn) error {
+	fullTargetName := filepath.Join(p.LaunchdDir, p.PlistFileName)
+	helpers.Debugf(cmd, p.Verbose, "target plist file: %s", fullTargetName)
+
+	if err := ensureLaunchdDir(cmd, p.Verbose, p.UserAgent, p.LaunchdDir); err != nil {
 		return err
 	}
 
-	label := launchdLabel(plistFileName)
-	effectiveUser, plistFile, err := resolveLaunchdPlistFile(cmd, verbose, installDir, label, userAgent)
+	label := launchdLabel(p.PlistFileName)
+	effectiveUser, plistFile, err := resolveLaunchdPlistFile(cmd, p.Verbose, p.InstallDir, label, p.UserAgent)
 	if err != nil {
 		return err
 	}
 
-	plistKind := launchdScope(userAgent) + " file"
+	plistKind := launchdScope(p.UserAgent) + " file"
 
-	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("create %s? (y/n):", plistKind), plistKind+" creation canceled") {
+	if !confirmOrDecline(cmd, p.FlagYes, fmt.Sprintf("create %s? (y/n):", plistKind), plistKind+" creation canceled") {
 		return nil
 	}
 
@@ -1407,38 +1495,38 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 	}
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(plistKind+" created, at:"), fullTargetName)
 
-	uid, err := resolveLaunchdUID(cmd, userAgent, effectiveUser)
+	uid, err := resolveLaunchdUID(cmd, p.UserAgent, effectiveUser)
 	if err != nil {
 		return err
 	}
-	domain := launchdDomain(userAgent, uid)
+	domain := launchdDomain(p.UserAgent, uid)
 	target := domain + "/" + label
 
-	if bootErr := bootstrapLaunchdJob(ctx, cmd, verbose, domain, target, fullTargetName, run); bootErr != nil {
+	if bootErr := bootstrapLaunchdJob(ctx, cmd, p.Verbose, domain, target, fullTargetName, run); bootErr != nil {
 		return bootErr
 	}
 
-	if userAgent {
+	if p.UserAgent {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch agent enabled, eos will start on login")
 	} else {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by launchd on next start") {
+	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by launchd on next start") {
 		return nil
 	}
 
-	if stopErr := stopStandaloneForRestart(cmd, daemonConfig); stopErr != nil {
+	if stopErr := stopStandaloneForRestart(cmd, p.DaemonConfig); stopErr != nil {
 		return stopErr
 	}
 
-	helpers.Debugf(cmd, verbose, "running: launchctl kickstart -k %s", target)
+	helpers.Debugf(cmd, p.Verbose, "running: launchctl kickstart -k %s", target)
 	out, err := run(ctx, "launchctl", "kickstart", "-k", target)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting launchd daemon: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	helpers.Debugf(cmd, verbose, "kickstart output: %s", strings.TrimSpace(string(out)))
+	helpers.Debugf(cmd, p.Verbose, "kickstart output: %s", strings.TrimSpace(string(out)))
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
@@ -1447,32 +1535,41 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, installDir strin
 // bootout" both stops the job and unloads it in one step (the combined equivalent of
 // "systemctl stop" + "systemctl disable"): the plist stays on disk until removed below,
 // but won't be re-bootstrapped until the next "eos system startup", boot, or login.
-func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig config.LaunchdConfig, userAgent, verbose, flagYes bool, run runCmdFn, identity userutil.Identity) error {
-	scopeKind := launchdScope(userAgent)
+// launchdUnstartupParams bundles the plain-value parameters
+// unstartupCmdLaunchd needs to boot out and remove a launchd plist.
+type launchdUnstartupParams struct {
+	DaemonConfig config.LaunchdConfig
+	UserAgent    bool
+	Verbose      bool
+	FlagYes      bool
+}
 
-	if !confirmOrDecline(cmd, flagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind), "canceled") {
+func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdUnstartupParams, run runCmdFn, identity userutil.Identity) error {
+	scopeKind := launchdScope(p.UserAgent)
+
+	if !confirmOrDecline(cmd, p.FlagYes, fmt.Sprintf("remove %s and disable eos on boot? (y/n):", scopeKind), "canceled") {
 		return nil
 	}
 
-	uid, err := resolveUnstartupLaunchdUID(cmd, userAgent)
+	uid, err := resolveUnstartupLaunchdUID(cmd, p.UserAgent)
 	if err != nil {
 		return err
 	}
-	domain := launchdDomain(userAgent, uid)
-	label := launchdLabel(daemonConfig.LaunchdPlistFileName)
+	domain := launchdDomain(p.UserAgent, uid)
+	label := launchdLabel(p.DaemonConfig.LaunchdPlistFileName)
 	target := domain + "/" + label
 
-	if err := launchdBootout(ctx, cmd, verbose, scopeKind, target, run); err != nil {
+	if err := launchdBootout(ctx, cmd, p.Verbose, scopeKind, target, run); err != nil {
 		return err
 	}
 
-	if err := os.Remove(filepath.Join(daemonConfig.LaunchdTargetDir, daemonConfig.LaunchdPlistFileName)); err != nil {
+	if err := os.Remove(filepath.Join(p.DaemonConfig.LaunchdTargetDir, p.DaemonConfig.LaunchdPlistFileName)); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing plist file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
+	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon standalone? (y/n):", "") {
 		return nil
 	}
 
@@ -1686,16 +1783,27 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 	return nil
 }
 
-func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installDir string, ctrl DaemonController, userArch string, userOS string, includePre bool, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) error {
-	binaryPath := filepath.Join(installDir, "eos")
+// updateCmdParams bundles the plain-value parameters updateCmd needs to
+// check for, download, and install a new eos release.
+type updateCmdParams struct {
+	Version    string
+	InstallDir string
+	Ctrl       DaemonController
+	UserArch   string
+	UserOS     string
+	IncludePre bool
+}
+
+func updateCmd(ctx context.Context, cmd *cobra.Command, p *updateCmdParams, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) error {
+	binaryPath := filepath.Join(p.InstallDir, "eos")
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
 
-	if err := validateUpdatePreconditions(cmd, installDir, version); err != nil {
+	if err := validateUpdatePreconditions(cmd, p.InstallDir, p.Version); err != nil {
 		return err
 	}
 
-	result, proceed, err := resolveUpdateTarget(ctx, cmd, fetchRelease, version, userArch, userOS, includePre)
+	result, proceed, err := resolveUpdateTarget(ctx, cmd, fetchRelease, p.Version, p.UserArch, p.UserOS, p.IncludePre)
 	if err != nil {
 		return err
 	}
@@ -1703,13 +1811,13 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return nil
 	}
 
-	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(version), ui.TextBold.Render(result.LatestVersion))
+	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(p.Version), ui.TextBold.Render(result.LatestVersion))
 	if !helpers.PromptConfirm(cmd, "upgrade? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "update canceled")
 		return nil
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", result.LatestVersion, userOS, userArch))
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", result.LatestVersion, p.UserOS, p.UserArch))
 	binary, tempDir, err := downloadAndVerifyBinary(ctx, cmd, result, downloadBinary, getChecksum)
 	if err != nil {
 		return err
@@ -1721,7 +1829,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 
 	refreshInstalledCompletions(ctx, cmd, binaryPath)
 
-	return restartDaemonAfterUpdate(ctx, cmd, ctrl, tempDir, result.LatestVersion)
+	return restartDaemonAfterUpdate(ctx, cmd, p.Ctrl, tempDir, result.LatestVersion)
 }
 
 type Asset struct {
@@ -2071,7 +2179,7 @@ func validateDigest(expectedChecksum string, binary *os.File) error {
 	return nil
 }
 
-func copyFile(src string, dst string) (err error) {
+func copyFile(src, dst string) (err error) {
 	source, err := os.Open(filepath.Clean(src)) // #nosec G703 -- src is constructed internally, not from user input
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -2119,7 +2227,7 @@ func createDestinationFile(dst string) error {
 	return nil
 }
 
-func replaceBinary(src string, dst string) (err error) {
+func replaceBinary(src, dst string) (err error) {
 	source, err := os.Open(filepath.Clean(src)) // #nosec G703 -- src is constructed internally, not from user input
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -2164,7 +2272,7 @@ func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, 
 
 	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for active services...")
 
-	serviceInstances, err := mgr.GetAllServiceInstances()
+	serviceInstances, err := mgr.GetAllServiceInstances(cmd.Context())
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting all service instances: %v", err))
 		return helpers.ErrCommandFailed
@@ -2228,7 +2336,7 @@ func handleStoppingServices(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
 		return false
 	}
-	stoppedServices, erroredServices := stopServices(mgr, cfg, serviceInstances)
+	stoppedServices, erroredServices := stopServices(cmd.Context(), mgr, cfg, serviceInstances)
 
 	numberStoppedServices := len(stoppedServices)
 	if numberStoppedServices != 0 {
@@ -2241,14 +2349,14 @@ func handleStoppingServices(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled due to remaining active services")
 			return false
 		}
-		err := forceStopServices(mgr, extractServiceInstancesFromErrors(erroredServices))
+		err := forceStopServices(cmd.Context(), mgr, extractServiceInstancesFromErrors(erroredServices))
 		if len(err) != 0 {
 			cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warn"), fmt.Sprintf("force stopping services: %v", err))
 		}
 	}
 
 	for _, serviceInstance := range serviceInstances {
-		if _, removeErr := mgr.RemoveServiceInstance(serviceInstance.Name); removeErr != nil {
+		if _, removeErr := mgr.RemoveServiceInstance(cmd.Context(), serviceInstance.Name); removeErr != nil {
 			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", removeErr))
 		}
 	}
@@ -2264,12 +2372,12 @@ type ErrorResult struct {
 }
 type ErrorServices map[string]ErrorResult
 
-func stopServices(mgr manager.ServiceManager, cfg *config.SystemConfig, serviceInstances []types.ServiceInstance) (StoppedServices, ErrorServices) {
+func stopServices(ctx context.Context, mgr manager.ServiceManager, cfg *config.SystemConfig, serviceInstances []types.ServiceInstance) (StoppedServices, ErrorServices) {
 	stoppedServices := make(StoppedServices)
 	erroredServices := make(ErrorServices)
 
 	for _, serviceInstance := range serviceInstances {
-		stopResult, err := mgr.StopService(serviceInstance.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+		stopResult, err := mgr.StopService(ctx, serviceInstance.Name, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 		if err != nil {
 			erroredServices[serviceInstance.Name] = ErrorResult{Service: serviceInstance, Error: err}
 			continue
@@ -2280,11 +2388,11 @@ func stopServices(mgr manager.ServiceManager, cfg *config.SystemConfig, serviceI
 	return stoppedServices, erroredServices
 }
 
-func forceStopServices(mgr manager.ServiceManager, serviceInstances []types.ServiceInstance) ErrorServices {
+func forceStopServices(ctx context.Context, mgr manager.ServiceManager, serviceInstances []types.ServiceInstance) ErrorServices {
 	erroredServices := make(ErrorServices)
 
 	for _, serviceInstance := range serviceInstances {
-		_, err := mgr.ForceStopService(serviceInstance.Name)
+		_, err := mgr.ForceStopService(ctx, serviceInstance.Name)
 		if err != nil {
 			erroredServices[serviceInstance.Name] = ErrorResult{Service: serviceInstance, Error: err}
 			continue

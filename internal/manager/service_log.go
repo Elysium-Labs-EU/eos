@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -70,7 +71,7 @@ func joinLogPath(logDir, filename string) (string, error) {
 	return joined, nil
 }
 
-func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, errorLogPath string, err error) {
+func (m *LocalManager) NewServiceLogFiles(_ context.Context, serviceName string) (logPath string, errorLogPath string, err error) {
 	logDir := CreateLogDirPath(m.baseDir)
 
 	err = os.MkdirAll(logDir, 0750)
@@ -100,7 +101,7 @@ func (m *LocalManager) NewServiceLogFiles(serviceName string) (logPath string, e
 	return logPath, errorLogPath, nil
 }
 
-func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) (*string, error) {
+func (m *LocalManager) GetServiceLogFilePath(_ context.Context, serviceName string, errorLog bool) (*string, error) {
 	logDir := CreateLogDirPath(m.baseDir)
 
 	if errorLog {
@@ -135,18 +136,18 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 // itself (source=HealthBreadcrumbSource), so this never echoes back the
 // monitor's own prior "restart failed: ..." breadcrumb from an earlier cycle.
 func (m *LocalManager) GetServiceLastErrorLine(serviceName string) (line string, ok bool) {
-	logPath, err := m.GetServiceLogFilePath(serviceName, true)
+	logPath, err := m.GetServiceLogFilePath(m.ctx, serviceName, true)
 	if err != nil {
 		return "", false
 	}
 	return logutil.LastLogMessage(*logPath)
 }
 
-func (m *LocalManager) LogToServiceStdout(serviceName string, message string) error {
+func (m *LocalManager) LogToServiceStdout(serviceName, message string) error {
 	return m.appendHealthEventToLog(serviceName, false, slog.LevelInfo, message)
 }
 
-func (m *LocalManager) LogToServiceStderr(serviceName string, message string) error {
+func (m *LocalManager) LogToServiceStderr(serviceName, message string) error {
 	return m.appendHealthEventToLog(serviceName, true, slog.LevelWarn, message)
 }
 
@@ -154,7 +155,7 @@ func (m *LocalManager) appendHealthEventToLog(serviceName string, errorLog bool,
 	// GetServiceLogFilePath also confirms the log file already exists: health
 	// breadcrumbs only append to a log a prior launch already created, never
 	// create one out of thin air.
-	if _, pathErr := m.GetServiceLogFilePath(serviceName, errorLog); pathErr != nil {
+	if _, pathErr := m.GetServiceLogFilePath(m.ctx, serviceName, errorLog); pathErr != nil {
 		return pathErr
 	}
 	w, openErr := m.acquireServiceLogWriter(serviceName, errorLog, eosconfig.DaemonLogMaxFiles, eosconfig.DaemonLogFileSizeLimit)

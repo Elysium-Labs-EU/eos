@@ -25,7 +25,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -37,7 +37,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return helpers.ErrCommandFailed
 			}
 
-			history, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			history, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service state: %v", err))
 				return helpers.ErrCommandFailed
@@ -54,14 +54,14 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "this does not stop the service if it's running")
 
-			serviceInstance, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service instance: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			if serviceInstance != nil {
-				removedInstance, removeInstanceErr := mgr.RemoveServiceInstance(serviceName)
+				removedInstance, removeInstanceErr := mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 				if removeInstanceErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service instance: %v", removeInstanceErr))
 					return helpers.ErrCommandFailed
@@ -73,7 +73,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "service instance removed")
 			}
 
-			removed, err := mgr.RemoveServiceCatalogEntry(serviceName)
+			removed, err := mgr.RemoveServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing service: %v", err))
 				return helpers.ErrCommandFailed

@@ -51,7 +51,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return helpers.ErrCommandFailed
 			}
 
-			err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
+			err = mgr.AddServiceCatalogEntry(cmd.Context(), serviceCatalogEntry)
 
 			if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(config.Name), "is already registered")

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -465,7 +466,7 @@ func TestLoadDependsOnMap(t *testing.T) {
 		}
 	}
 
-	got := loadDependsOnMap(mgr, []string{"db", "api", "ghost"})
+	got := loadDependsOnMap(t.Context(), mgr, []string{"db", "api", "ghost"})
 
 	if len(got["db"]) != 0 {
 		t.Errorf("db depends_on = %v, want empty", got["db"])
@@ -499,23 +500,23 @@ type fakeSnapshotMgr struct {
 	isRegistered       bool
 }
 
-func (f *fakeSnapshotMgr) IsServiceRegistered(string) (bool, error) {
+func (f *fakeSnapshotMgr) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.isRegistered, f.isRegisteredErr
 }
 
-func (f *fakeSnapshotMgr) GetServiceInstance(string) (*types.ServiceInstance, error) {
+func (f *fakeSnapshotMgr) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.serviceInstance, f.serviceInstanceErr
 }
 
-func (f *fakeSnapshotMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
+func (f *fakeSnapshotMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return f.catalogEntry, f.catalogEntryErr
 }
 
-func (f *fakeSnapshotMgr) StartService(string) (int, error) {
+func (f *fakeSnapshotMgr) StartService(context.Context, string) (int, error) {
 	return 0, f.startErr
 }
 
-func (f *fakeSnapshotMgr) RestartService(string, time.Duration, time.Duration) (int, error) {
+func (f *fakeSnapshotMgr) RestartService(context.Context, string, time.Duration, time.Duration) (int, error) {
 	return f.restartPGID, f.restartErr
 }
 

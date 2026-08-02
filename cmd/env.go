@@ -34,7 +34,7 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 			serviceName := args[0]
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -45,7 +45,7 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 				return helpers.ErrCommandFailed
 			}
 
-			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+			registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed

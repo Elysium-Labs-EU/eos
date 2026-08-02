@@ -161,7 +161,7 @@ func readJSONLog(t *testing.T, baseDir string) []map[string]any {
 			continue
 		}
 		var entry map[string]any
-		if jsonErr := json.Unmarshal([]byte(line), &entry); jsonErr != nil {
+		if json.Unmarshal([]byte(line), &entry) != nil {
 			t.Errorf("non-JSON log line: %q", line)
 			continue
 		}

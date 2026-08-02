@@ -15,7 +15,7 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/internal/ownership"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver used by sql.Open below
 )
 
 type Database interface {

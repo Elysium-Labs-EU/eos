@@ -47,7 +47,12 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 	if detach && !c.underSystemd {
 		return forkDaemon(ctx, &c.cfg, verbose, c.identity)
 	}
-	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.telemetry, c.underSystemd)
+	return process.StartStandaloneDaemon(ctx, process.StandaloneDaemonStartOptions{
+		BaseDir:             c.baseDir,
+		LogToFileAndConsole: logToFileAndConsole,
+		Verbose:             verbose,
+		UnderSystemd:        c.underSystemd,
+	}, &c.cfg, &c.health, c.shutdown, c.telemetry)
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context, cmd *cobra.Command, verbose bool) (bool, error) {

@@ -2,6 +2,7 @@ package process
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,7 +147,7 @@ func TestAllMethodsHandled(t *testing.T) {
 	for method := range types.ValidMethods {
 		t.Run(string(method), func(t *testing.T) {
 			req := types.DaemonRequest{Method: method, Args: nil}
-			resp := executeRequest(manager, req)
+			resp := executeRequest(t.Context(), manager, req)
 
 			// Every method in ValidMethods must have an entry in requestHandlers;
 			// a missing entry falls through to this error string.
@@ -161,7 +162,7 @@ func TestAllMethodsHandled(t *testing.T) {
 // a method with no entry in requestHandlers hits the "unknown method" branch
 // rather than panicking on a nil map lookup.
 func TestExecuteRequest_UnknownMethod(t *testing.T) {
-	resp := executeRequest(nil, types.DaemonRequest{Method: "NotARealMethod"})
+	resp := executeRequest(t.Context(), nil, types.DaemonRequest{Method: "NotARealMethod"})
 	if resp.Success {
 		t.Fatal("expected failure for an unregistered method")
 	}
@@ -174,7 +175,7 @@ func TestExecuteRequest_GetVersion(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetVersion})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodGetVersion})
 	if !resp.Success {
 		t.Fatalf("expected success, got error: %s", resp.Error)
 	}
@@ -196,7 +197,7 @@ func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	getArgs, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: "web"})
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
 	if !resp.Success {
 		t.Fatalf("initial Get: expected success, got error: %s", resp.Error)
 	}
@@ -209,12 +210,12 @@ func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
 	}
 
 	setArgs, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web", Pending: []string{"db", "cache"}, Deadline: time.Now().Add(5 * time.Minute)})
-	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: setArgs})
+	resp = executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: setArgs})
 	if !resp.Success {
 		t.Fatalf("Set: expected success, got error: %s", resp.Error)
 	}
 
-	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	resp = executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
 	if !resp.Success {
 		t.Fatalf("Get after Set: expected success, got error: %s", resp.Error)
 	}
@@ -230,12 +231,12 @@ func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
 	}
 
 	clearArgs, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: "web"})
-	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: clearArgs})
+	resp = executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: clearArgs})
 	if !resp.Success {
 		t.Fatalf("Clear: expected success, got error: %s", resp.Error)
 	}
 
-	resp = executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
+	resp = executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: getArgs})
 	if !resp.Success {
 		t.Fatalf("Get after Clear: expected success, got error: %s", resp.Error)
 	}
@@ -260,7 +261,7 @@ func TestExecuteRequest_DependencyWaitStatus_unsupportedManager(t *testing.T) {
 		types.MethodGetDependencyWaitStatus,
 	} {
 		t.Run(string(method), func(t *testing.T) {
-			resp := executeRequest(mgr, types.DaemonRequest{Method: method, Args: []byte(`{}`)})
+			resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: method, Args: []byte(`{}`)})
 			if resp.Success {
 				t.Fatalf("expected failure for unsupported manager, got success")
 			}
@@ -284,22 +285,22 @@ type fakeDependencyWaitStore struct {
 	getWait   bool
 }
 
-func (f *fakeDependencyWaitStore) SetDependencyWaitStatus(string, []string, time.Time) error {
+func (f *fakeDependencyWaitStore) SetDependencyWaitStatus(context.Context, string, []string, time.Time) error {
 	return f.setErr
 }
 
-func (f *fakeDependencyWaitStore) ClearDependencyWaitStatus(string) error {
+func (f *fakeDependencyWaitStore) ClearDependencyWaitStatus(context.Context, string) error {
 	return f.clearErr
 }
 
-func (f *fakeDependencyWaitStore) GetDependencyWaitStatus(string) (types.DependencyWaitStatus, bool, error) {
+func (f *fakeDependencyWaitStore) GetDependencyWaitStatus(context.Context, string) (types.DependencyWaitStatus, bool, error) {
 	return f.getStatus, f.getWait, f.getErr
 }
 
 func TestHandleSetDependencyWaitStatus_storeError(t *testing.T) {
 	mgr := &fakeDependencyWaitStore{setErr: errors.New("disk full")}
 	args, _ := json.Marshal(types.SetDependencyWaitStatusArgs{ServiceName: "web"})
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: args})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodSetDependencyWaitStatus, Args: args})
 	if resp.Success {
 		t.Fatal("expected failure when the store errors")
 	}
@@ -308,7 +309,7 @@ func TestHandleSetDependencyWaitStatus_storeError(t *testing.T) {
 func TestHandleClearDependencyWaitStatus_storeError(t *testing.T) {
 	mgr := &fakeDependencyWaitStore{clearErr: errors.New("disk full")}
 	args, _ := json.Marshal(types.ClearDependencyWaitStatusArgs{ServiceName: "web"})
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: args})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodClearDependencyWaitStatus, Args: args})
 	if resp.Success {
 		t.Fatal("expected failure when the store errors")
 	}
@@ -317,7 +318,7 @@ func TestHandleClearDependencyWaitStatus_storeError(t *testing.T) {
 func TestHandleGetDependencyWaitStatus_storeError(t *testing.T) {
 	mgr := &fakeDependencyWaitStore{getErr: errors.New("disk full")}
 	args, _ := json.Marshal(types.GetDependencyWaitStatusArgs{ServiceName: "web"})
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: args})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodGetDependencyWaitStatus, Args: args})
 	if resp.Success {
 		t.Fatal("expected failure when the store errors")
 	}
@@ -630,21 +631,21 @@ type fakeServiceManager struct {
 	getVersionFunc func() (types.GetVersionResponse, error)
 }
 
-func (f *fakeServiceManager) RestartService(name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
+func (f *fakeServiceManager) RestartService(_ context.Context, name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
 	return f.restartFunc(name, gracePeriod, tickerPeriod)
 }
 
-func (f *fakeServiceManager) StopService(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
+func (f *fakeServiceManager) StopService(_ context.Context, name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error) {
 	return f.stopFunc(name, gracePeriod, tickerPeriod)
 }
 
-func (f *fakeServiceManager) GetVersion() (types.GetVersionResponse, error) {
+func (f *fakeServiceManager) GetVersion(_ context.Context) (types.GetVersionResponse, error) {
 	return f.getVersionFunc()
 }
 
 func TestHandleRestartService(t *testing.T) {
 	t.Run("invalid JSON args", func(t *testing.T) {
-		resp := handleRestartService(&fakeServiceManager{}, json.RawMessage(`{invalid`))
+		resp := handleRestartService(t.Context(), &fakeServiceManager{}, json.RawMessage(`{invalid`))
 		if resp.Success {
 			t.Fatal("expected failure for invalid JSON")
 		}
@@ -655,7 +656,7 @@ func TestHandleRestartService(t *testing.T) {
 
 	t.Run("invalid grace period", func(t *testing.T) {
 		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "not-a-duration", TickerPeriod: "1s"})
-		resp := handleRestartService(&fakeServiceManager{}, raw)
+		resp := handleRestartService(t.Context(), &fakeServiceManager{}, raw)
 		if resp.Success {
 			t.Fatal("expected failure for invalid grace period")
 		}
@@ -666,7 +667,7 @@ func TestHandleRestartService(t *testing.T) {
 
 	t.Run("invalid ticker period", func(t *testing.T) {
 		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "not-a-duration"})
-		resp := handleRestartService(&fakeServiceManager{}, raw)
+		resp := handleRestartService(t.Context(), &fakeServiceManager{}, raw)
 		if resp.Success {
 			t.Fatal("expected failure for invalid ticker period")
 		}
@@ -683,7 +684,7 @@ func TestHandleRestartService(t *testing.T) {
 			},
 		}
 		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "1s"})
-		resp := handleRestartService(mgr, raw)
+		resp := handleRestartService(t.Context(), mgr, raw)
 		if resp.Success {
 			t.Fatal("expected failure when mgr.RestartService errors")
 		}
@@ -708,7 +709,7 @@ func TestHandleRestartService(t *testing.T) {
 			},
 		}
 		raw, _ := json.Marshal(types.RestartServiceArgs{Name: "svc", GracePeriod: "2s", TickerPeriod: "500ms"})
-		resp := handleRestartService(mgr, raw)
+		resp := handleRestartService(t.Context(), mgr, raw)
 		if !resp.Success {
 			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
@@ -724,7 +725,7 @@ func TestHandleRestartService(t *testing.T) {
 
 func TestHandleStopService(t *testing.T) {
 	t.Run("invalid JSON args", func(t *testing.T) {
-		resp := handleStopService(&fakeServiceManager{}, json.RawMessage(`{invalid`))
+		resp := handleStopService(t.Context(), &fakeServiceManager{}, json.RawMessage(`{invalid`))
 		if resp.Success {
 			t.Fatal("expected failure for invalid JSON")
 		}
@@ -735,7 +736,7 @@ func TestHandleStopService(t *testing.T) {
 
 	t.Run("invalid grace period", func(t *testing.T) {
 		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "not-a-duration", TickerPeriod: "1s"})
-		resp := handleStopService(&fakeServiceManager{}, raw)
+		resp := handleStopService(t.Context(), &fakeServiceManager{}, raw)
 		if resp.Success {
 			t.Fatal("expected failure for invalid grace period")
 		}
@@ -746,7 +747,7 @@ func TestHandleStopService(t *testing.T) {
 
 	t.Run("invalid ticker period", func(t *testing.T) {
 		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "not-a-duration"})
-		resp := handleStopService(&fakeServiceManager{}, raw)
+		resp := handleStopService(t.Context(), &fakeServiceManager{}, raw)
 		if resp.Success {
 			t.Fatal("expected failure for invalid ticker period")
 		}
@@ -763,7 +764,7 @@ func TestHandleStopService(t *testing.T) {
 			},
 		}
 		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "1s", TickerPeriod: "1s"})
-		resp := handleStopService(mgr, raw)
+		resp := handleStopService(t.Context(), mgr, raw)
 		if resp.Success {
 			t.Fatal("expected failure when mgr.StopService errors")
 		}
@@ -788,7 +789,7 @@ func TestHandleStopService(t *testing.T) {
 			},
 		}
 		raw, _ := json.Marshal(types.StopServiceArgs{Name: "svc", GracePeriod: "2s", TickerPeriod: "500ms"})
-		resp := handleStopService(mgr, raw)
+		resp := handleStopService(t.Context(), mgr, raw)
 		if !resp.Success {
 			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
@@ -887,7 +888,7 @@ func TestHandleConnection_SameUIDAccepted(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleConnection(serverConn, mgr, logger, uint32(os.Getuid()))
+		handleConnection(t.Context(), serverConn, mgr, logger, uint32(os.Getuid()))
 		close(done)
 	}()
 
@@ -936,7 +937,7 @@ func TestHandleConnection_MismatchedUIDRejected(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleConnection(serverConn, mgr, logger, wrongUID)
+		handleConnection(t.Context(), serverConn, mgr, logger, wrongUID)
 		close(done)
 	}()
 
@@ -985,7 +986,7 @@ func TestHandleConnection_RootUIDAccepted(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleConnection(serverConn, mgr, logger, daemonUID)
+		handleConnection(t.Context(), serverConn, mgr, logger, daemonUID)
 		close(done)
 	}()
 

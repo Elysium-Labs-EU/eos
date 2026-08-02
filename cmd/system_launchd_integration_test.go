@@ -66,12 +66,16 @@ func TestStartupCmdLaunchdIntegration(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	startupCmdLaunchd(
-		t.Context(), c, installDir,
-		&config.StandaloneDaemonConfig{
-			PIDFile:    filepath.Join(tempDir, "eos.pid"),
-			SocketPath: filepath.Join(tempDir, "eos.sock"),
-		},
-		launchdDir, plistFileName, true, false, false, execRunCmd,
+		t.Context(), c, launchdStartupParams{
+			InstallDir: installDir,
+			DaemonConfig: &config.StandaloneDaemonConfig{
+				PIDFile:    filepath.Join(tempDir, "eos.pid"),
+				SocketPath: filepath.Join(tempDir, "eos.sock"),
+			},
+			LaunchdDir:    launchdDir,
+			PlistFileName: plistFileName,
+			UserAgent:     true,
+		}, execRunCmd,
 	)
 
 	t.Cleanup(func() {
@@ -145,11 +149,14 @@ func TestUnstartupCmdLaunchdIntegration(t *testing.T) {
 		t.Fatalf("resolving identity: %v", err)
 	}
 
-	unstartupCmdLaunchd(ctx, c, config.LaunchdConfig{
-		LaunchdTargetDir:     launchdDir,
-		LaunchdPlistFileName: plistFileName,
-		UserAgent:            true,
-	}, true, false, false, execRunCmd, identity)
+	unstartupCmdLaunchd(ctx, c, launchdUnstartupParams{
+		DaemonConfig: config.LaunchdConfig{
+			LaunchdTargetDir:     launchdDir,
+			LaunchdPlistFileName: plistFileName,
+			UserAgent:            true,
+		},
+		UserAgent: true,
+	}, execRunCmd, identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())

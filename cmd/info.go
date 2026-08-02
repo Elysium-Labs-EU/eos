@@ -27,7 +27,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+			registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if errors.Is(err, database.ErrServiceNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
@@ -43,24 +43,24 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
 			}
 
-			serviceInstance, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
 			}
 			// serviceInstance may be nil if service was never started
 
-			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 			}
 
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
+			logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, false)
 			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log path: %v", err))
 			}
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
-			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
+			errorLogPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, true)
 			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log path: %v", err))
 			}

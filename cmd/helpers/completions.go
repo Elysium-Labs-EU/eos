@@ -13,7 +13,7 @@ func ServiceNameCompletions(getManager func() manager.ServiceManager) func(*cobr
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 		mgr := getManager()
-		entries, err := mgr.GetAllServiceCatalogEntries()
+		entries, err := mgr.GetAllServiceCatalogEntries(cmd.Context())
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError
 		}

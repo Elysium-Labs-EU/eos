@@ -117,7 +117,7 @@ func RecordOutcome(ctx context.Context, counter metric.Int64Counter, serviceName
 // uptime and registered/running service counts. registeredCount and
 // runningCount are polled once per metric export interval (not the hot
 // path), so they may do I/O (e.g. a DB read through the manager).
-func RegisterDaemonGauges(mp metric.MeterProvider, startedAt time.Time, registeredCount, runningCount func() int) error {
+func RegisterDaemonGauges(mp metric.MeterProvider, startedAt time.Time, registeredCount, runningCount func(context.Context) int) error {
 	meter := mp.Meter(instrumentationName)
 
 	uptime, err := meter.Float64ObservableGauge("eos.daemon.uptime_seconds",
@@ -137,10 +137,10 @@ func RegisterDaemonGauges(mp metric.MeterProvider, startedAt time.Time, register
 		return fmt.Errorf("creating eos.daemon.services.running gauge: %w", err)
 	}
 
-	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		o.ObserveFloat64(uptime, time.Since(startedAt).Seconds())
-		o.ObserveInt64(registered, int64(registeredCount()))
-		o.ObserveInt64(running, int64(runningCount()))
+		o.ObserveInt64(registered, int64(registeredCount(ctx)))
+		o.ObserveInt64(running, int64(runningCount(ctx)))
 		return nil
 	}, uptime, registered, running)
 	if err != nil {

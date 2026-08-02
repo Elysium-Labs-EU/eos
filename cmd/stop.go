@@ -35,7 +35,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
 			}
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -51,7 +51,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 				return nil
 			}
 
-			stopResult, err := mgr.StopService(serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+			stopResult, err := mgr.StopService(cmd.Context(), serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
 				return helpers.ErrCommandFailed
@@ -103,7 +103,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 }
 
 func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
-	forceStopResult, err := mgr.ForceStopService(serviceName)
+	forceStopResult, err := mgr.ForceStopService(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("force stopping service: %v", err))
 		return
@@ -140,7 +140,7 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 }
 
 func cleanupServiceInstance(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
-	removed, err := mgr.RemoveServiceInstance(serviceName)
+	removed, err := mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", err))
 		return
