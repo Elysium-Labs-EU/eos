@@ -118,12 +118,12 @@ def _is_cobra_builder(e):
 # the JSON "function" key (Receiver is emitted separately too, but "function"
 # -- what this script actually reads -- is always the combined dotted form).
 OS_INTEGRATION_EXEMPT = {
-    ("internal/process/daemon.go", "*daemon.wait", 495),
+    ("internal/process/daemon.go", "*daemon.wait", 507),
     ("internal/procutil/procutil_linux.go", "procCPUTicksForPGID", 85),
     ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
     ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 669),
     ("internal/ownership/ownership.go", "Align", 48),
-    ("cmd/system.go", "installUpdatedBinary", 1585),
+    ("cmd/system.go", "installUpdatedBinary", 1584),
     ("internal/process/daemon.go", "StartStandaloneDaemon", 55),
     ("internal/process/daemon.go", "bootService", 117),
     ("internal/process/daemon.go", "newStandaloneDaemon", 324),
