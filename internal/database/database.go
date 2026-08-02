@@ -596,7 +596,13 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 		}
 	}
 
-	// #nosec G201 - column names are from a validated allowlist
+	// #nosec G201 - Sonar go:S2077: fmt.Sprintf builds the SET clause, but only
+	// with the fixed string literals appended above ("error", "started_at", ...),
+	// each gated behind a compile-time struct field on ProcessHistoryUpdate. No
+	// caller, reflection, or external input (HTTP/CLI/config) can substitute a
+	// different column name here. The processHistoryValidColumns check above is
+	// belt-and-braces on top of that. Every *value* (updates.Error, pgid, ...)
+	// goes through args as a bind parameter via "?", never through Sprintf.
 	query := fmt.Sprintf("UPDATE process_history SET %s WHERE pgid = ?",
 		strings.Join(setParts, ", "))
 	args = append(args, pgid)
@@ -758,7 +764,14 @@ func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates Se
 		}
 	}
 
-	// #nosec G201 - column names are from a validated allowlist
+	// #nosec G201 - Sonar go:S2077: fmt.Sprintf builds the SET clause, but only
+	// with the fixed string literals appended above ("restart_count",
+	// "last_health_check", ...), each gated behind a compile-time struct field
+	// on ServiceInstanceUpdate. No caller, reflection, or external input
+	// (HTTP/CLI/config) can substitute a different column name here. The
+	// serviceInstanceValidColumns check above is belt-and-braces on top of
+	// that. Every *value* (updates.RestartCount, name, ...) goes through args
+	// as a bind parameter via "?", never through Sprintf.
 	query := fmt.Sprintf("UPDATE service_instances SET %s WHERE name = ?",
 		strings.Join(setParts, ", "))
 	args = append(args, name)
