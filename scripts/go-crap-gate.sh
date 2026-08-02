@@ -32,7 +32,7 @@ else
 fi
 
 CHANGED_GO="$(git diff --name-only "$DIFF_BASE" HEAD -- '*.go' | grep -v '_test\.go$' || true)"
-if [ -z "$CHANGED_GO" ]; then
+if [[ -z "$CHANGED_GO" ]]; then
   echo "go-crap-gate: no non-test Go files changed vs $BASE; nothing to gate."
   exit 0
 fi
@@ -118,7 +118,7 @@ def _is_cobra_builder(e):
 # the JSON "function" key (Receiver is emitted separately too, but "function"
 # -- what this script actually reads -- is always the combined dotted form).
 OS_INTEGRATION_EXEMPT = {
-    ("internal/process/daemon.go", "*daemon.wait", 495),
+    ("internal/process/daemon.go", "*daemon.wait", 507),
     ("internal/procutil/procutil_linux.go", "procCPUTicksForPGID", 85),
     ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
     ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 669),
@@ -126,7 +126,7 @@ OS_INTEGRATION_EXEMPT = {
     ("cmd/system.go", "installUpdatedBinary", 1585),
     ("internal/process/daemon.go", "StartStandaloneDaemon", 55),
     ("internal/process/daemon.go", "bootService", 117),
-    ("internal/process/daemon.go", "newStandaloneDaemon", 324),
+    ("internal/process/daemon.go", "newStandaloneDaemon", 336),
     ("internal/process/peercred_linux.go", "peerUID", 16),
     ("internal/process/peercred_darwin.go", "peerUID", 16),
     ("internal/process/peercred_other.go", "peerUID", 15),

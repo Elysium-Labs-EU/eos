@@ -54,7 +54,7 @@ if ! git diff --quiet -- "$EXEMPT_FILE" || ! git diff --cached --quiet -- "$EXEM
   echo "go-crap-gate_test: $EXEMPT_FILE has uncommitted changes; aborting rather than risk clobbering them." >&2
   exit 1
 fi
-if [ -e "$SCRATCH_DIR" ]; then
+if [[ -e "$SCRATCH_DIR" ]]; then
   echo "go-crap-gate_test: $SCRATCH_DIR already exists; aborting rather than risk clobbering it (this test owns that path exclusively)." >&2
   exit 1
 fi
@@ -180,7 +180,7 @@ STATUS_A=$?
 set -e
 echo "$OUT_A"
 revert_path "$EXEMPT_FILE"
-if [ "$STATUS_A" -ne 0 ]; then
+if [[ "$STATUS_A" -ne 0 ]]; then
   echo "FAIL: touching $EXEMPT_FILE ($EXEMPT_SIG) tripped the gate (exit $STATUS_A) -- OS_INTEGRATION_EXEMPT is not exempting it." >&2
   exit 1
 fi
@@ -196,7 +196,7 @@ STATUS_B=$?
 set -e
 echo "$OUT_B"
 revert_path "$SCRATCH_FILE"
-if [ "$STATUS_B" -eq 0 ]; then
+if [[ "$STATUS_B" -eq 0 ]]; then
   echo "FAIL: the synthetic over-threshold function did not trip the gate -- it may have become a no-op." >&2
   exit 1
 fi
