@@ -151,7 +151,10 @@ func (hm *HealthMonitor) Start(ctx context.Context) {
 	}
 }
 
-// TODO: Do we want this to only do state? Or become a check for all relevant health properties, just divided per state arm?
+// checkAllServices is currently scoped to state transitions only; whether it
+// should grow into a general check for all relevant health properties
+// (memory, CPU, port reachability), divided per state arm, is an open
+// design question (see issue #160).
 func (hm *HealthMonitor) checkAllServices(ctx context.Context, services []types.ServiceCatalogEntry) {
 	for i := range services {
 		hm.checkService(ctx, &services[i])
@@ -537,7 +540,9 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 	}
 
 	if !hm.isProcessAlive(pgid) {
-		// TODO: Do we want to incorporate instance.last_health_check instead process?
+		// Backoff is keyed off process.StoppedAt; whether it should instead
+		// incorporate instance.last_health_check is an open design question
+		// (see issue #161).
 		if !canRestart(restartCount, process.StoppedAt, hm.backoff) {
 			hm.logger.Debug("restart deferred", "service", serviceName, "count", restartCount)
 			return

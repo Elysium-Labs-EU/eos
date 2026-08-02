@@ -330,8 +330,8 @@ func TestStopCommandNoRunningProcesses(t *testing.T) {
 	}
 }
 
-// TODO: Test force-quit decline path ("n" answer -> "force quit aborted" ->
-// ErrCommandFailed). Requires a process that survives the graceful-stop grace
+// Force-quit decline path ("n" answer -> "force quit aborted" ->
+// ErrCommandFailed) needs a process that survives the graceful-stop grace
 // period so countError > 0. The existing stubborn/SIGTERM-trap script pattern
 // (see TestStopCommandGracePeriod) does not reliably survive when started via
 // LocalManager.StartService in this environment - it dies well within the
@@ -339,7 +339,7 @@ func TestStopCommandNoRunningProcesses(t *testing.T) {
 // answer is never actually exercised there either (its assertions happen to
 // match the plain success path too, masking this). Needs a more reliable way
 // to force a process into the errored/still-alive-past-grace-period state
-// before this can be tested.
+// before this can be tested (see issue #159).
 
 // Simulates a second, already-dead process registered against the same
 // service (e.g. leftover history from a previous run) alongside the one

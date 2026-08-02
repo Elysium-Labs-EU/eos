@@ -899,7 +899,10 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 
 	if serviceInstance != nil {
 		if livePGID := livePGIDInHistory(processHistory); livePGID > 0 {
-			// TODO: return found PGID somehow instead?
+			// ErrAlreadyRunning intentionally omits the live PGID: changing
+			// StartService's (pgid, err) contract to carry a PGID alongside
+			// an error would ripple to every caller. Callers that need the
+			// running PGID already have GetServiceInstance for that.
 			return 0, ErrAlreadyRunning
 		}
 		// service_instances row is stale: nothing in process history is
