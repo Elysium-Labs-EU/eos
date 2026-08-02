@@ -1359,10 +1359,12 @@ type dependencyWaitStatusStore interface {
 	GetDependencyWaitStatus(name string) (status types.DependencyWaitStatus, waiting bool, err error)
 }
 
+const errDependencyWaitStatusUnsupported = "dependency wait status not supported by this manager"
+
 func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
-		return errorResponse("dependency wait status not supported by this manager")
+		return errorResponse(errDependencyWaitStatusUnsupported)
 	}
 	var args types.SetDependencyWaitStatusArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
@@ -1377,7 +1379,7 @@ func handleSetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawM
 func handleClearDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
-		return errorResponse("dependency wait status not supported by this manager")
+		return errorResponse(errDependencyWaitStatusUnsupported)
 	}
 	var args types.ClearDependencyWaitStatusArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
@@ -1392,7 +1394,7 @@ func handleClearDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.Ra
 func handleGetDependencyWaitStatus(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
 	store, ok := mgr.(dependencyWaitStatusStore)
 	if !ok {
-		return errorResponse("dependency wait status not supported by this manager")
+		return errorResponse(errDependencyWaitStatusUnsupported)
 	}
 	var args types.GetDependencyWaitStatusArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {

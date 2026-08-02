@@ -34,17 +34,17 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if !exists {
-				cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "service isn't registered.")
-				cmd.PrintErrf("  %s %s %s\n",
+				cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "service isn't registered.")
+				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("run:"),
 					ui.TextCommand.Render("eos add <path>"),
 					ui.TextMuted.Render("→ register service"),
 				)
-				cmd.PrintErrf("  %s %s %s\n",
+				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("run:"),
 					ui.TextCommand.Render("eos status"),
 					ui.TextMuted.Render("→ view registered services"),
@@ -60,16 +60,16 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting absolute path: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting absolute path: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("updating service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("updating service: %v", err))
 				return helpers.ErrCommandFailed
 			}
-			cmd.Printf("%s %s\n", ui.LabelSuccess.Render("updated"), ui.TextBold.Render(serviceName))
+			cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("updated"), ui.TextBold.Render(serviceName))
 			return nil
 		}}
 }

@@ -29,40 +29,40 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if errors.Is(err, database.ErrServiceNotFound) {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
 			config, err := manager.LoadServiceConfig(configPath)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
 			}
 
 			serviceInstance, err := mgr.GetServiceInstance(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
 			}
 			// serviceInstance may be nil if service was never started
 
 			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 			}
 
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
 			if err != nil && serviceInstance != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log path: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting log path: %v", err))
 			}
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
 			if err != nil && serviceInstance != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log path: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting error log path: %v", err))
 			}
 
 			helpers.PrintSection(cmd, "Process")

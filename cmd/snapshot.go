@@ -47,28 +47,28 @@ func newSnapshotSaveCmd(getManager func() manager.ServiceManager, getConfig func
 
 			instances, err := mgr.GetAllServiceInstances()
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting running services: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting running services: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			snap := manager.BuildSnapshot(instances, time.Now())
 			path := manager.SnapshotFilePath(cfg.BaseDir)
 			if err := manager.SaveSnapshot(path, snap); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("saving snapshot: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("saving snapshot: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			if len(snap.Services) == 0 {
-				cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no services are currently running - saved an empty snapshot")
+				cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no services are currently running - saved an empty snapshot")
 				return nil
 			}
 
-			cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), fmt.Sprintf("saved snapshot of %d running service(s)", len(snap.Services)))
+			cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("success"), fmt.Sprintf("saved snapshot of %d running service(s)", len(snap.Services)))
 			for _, name := range snap.Services {
 				cmd.Printf("  %s\n", ui.TextBold.Render(name))
 			}
 			cmd.Println()
-			cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot restore"), ui.TextMuted.Render("→ bring them all back later"))
+			cmd.Printf(fmtLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot restore"), ui.TextMuted.Render("→ bring them all back later"))
 			return nil
 		},
 	}
@@ -92,16 +92,16 @@ service no longer registered is skipped with a warning.`,
 			snap, err := manager.LoadSnapshot(path)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no snapshot found")
-					cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot save"))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no snapshot found")
+					cmd.PrintErrf(fmtIndentLabelMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot save"))
 					return helpers.ErrCommandFailed
 				}
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("loading snapshot: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("loading snapshot: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			if len(snap.Services) == 0 {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "snapshot is empty - nothing to restore")
+				cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "snapshot is empty - nothing to restore")
 				return nil
 			}
 
@@ -119,13 +119,13 @@ service no longer registered is skipped with a warning.`,
 				outcome, restoreErr := restoreSnapshotService(cmd, mgr, cfg, name)
 				switch {
 				case restoreErr != nil:
-					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(name), restoreErr.Error())
+					cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(name), restoreErr.Error())
 					failed = append(failed, name)
 				case outcome == restoreOutcomeMissing:
-					cmd.Printf("%s %s %s\n\n", ui.LabelWarning.Render("warning"), ui.TextBold.Render(name), "was running at snapshot time but is no longer registered - skipped")
+					cmd.Printf(fmtLabelTwoMsg, ui.LabelWarning.Render("warning"), ui.TextBold.Render(name), "was running at snapshot time but is no longer registered - skipped")
 					missing = append(missing, name)
 				case outcome == restoreOutcomeAlreadyRunning:
-					cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(name), "already running - skipped")
+					cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(name), "already running - skipped")
 					skipped = append(skipped, name)
 				case outcome == restoreOutcomeRestarted:
 					restarted = append(restarted, name)
@@ -134,7 +134,7 @@ service no longer registered is skipped with a warning.`,
 				}
 			}
 
-			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), fmt.Sprintf(
+			cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), fmt.Sprintf(
 				"restore complete: %d started, %d restarted, %d already running, %d no longer registered, %d failed",
 				len(started), len(restarted), len(skipped), len(missing), len(failed),
 			))

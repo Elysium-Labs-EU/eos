@@ -103,14 +103,14 @@ func refreshInstalledCompletions(ctx context.Context, cmd *cobra.Command, binary
 
 		out, err := exec.CommandContext(ctx, binaryPath, "completion", shell).Output() // #nosec G204 -- binaryPath is the eos binary just installed by system update
 		if err != nil {
-			cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not refresh %s completion: %v", shell, err))
+			cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("warning"), fmt.Sprintf("could not refresh %s completion: %v", shell, err))
 			continue
 		}
 		if writeErr := os.WriteFile(targetPath, out, 0o600); writeErr != nil {
-			cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not write refreshed %s completion: %v", shell, writeErr))
+			cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("warning"), fmt.Sprintf("could not write refreshed %s completion: %v", shell, writeErr))
 			continue
 		}
-		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("refreshed %s completion", shell))
+		cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), fmt.Sprintf("refreshed %s completion", shell))
 	}
 }
 
@@ -146,14 +146,14 @@ func runInteractiveCompletion(cmd *cobra.Command, root *cobra.Command) error {
 
 	if shell == "zsh" {
 		if patched, patchErr := patchZshrc(filepath.Dir(targetPath)); patchErr != nil {
-			cmd.Printf("  %s %s\n", ui.LabelError.Render("could not patch ~/.zshrc:"), patchErr.Error())
+			cmd.Printf(fmtIndentLabelMsgLn, ui.LabelError.Render("could not patch ~/.zshrc:"), patchErr.Error())
 		} else if patched {
-			cmd.Printf("  %s %s\n", ui.LabelSuccess.Render("patched →"), ui.TextCommand.Render("~/.zshrc"))
+			cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("patched →"), ui.TextCommand.Render("~/.zshrc"))
 		} else {
 			cmd.Printf("  %s\n", ui.TextMuted.Render("~/.zshrc already has fpath entry — no change"))
 		}
 	}
-	cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("reload shell:"), ui.TextCommand.Render("exec $SHELL"))
+	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("reload shell:"), ui.TextCommand.Render("exec $SHELL"))
 
 	return nil
 }

@@ -30,19 +30,19 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			cfg := getConfig()
 
 			if forceQuit {
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "forcefully stopping", ui.TextBold.Render(serviceName))
+				cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "forcefully stopping", ui.TextBold.Render(serviceName))
 			} else {
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
+				cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
 			}
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if !exists {
-				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return helpers.ErrCommandFailed
 			}
 
@@ -53,7 +53,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 
 			stopResult, err := mgr.StopService(serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
@@ -62,19 +62,19 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			countStaleData := len(stopResult.StaleData)
 
 			if countStopped == 0 && countError == 0 {
-				cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no running processes found")
+				cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no running processes found")
 				cleanupServiceInstance(cmd, serviceName, mgr)
 				return nil
 			}
 
 			if countStopped == 1 {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "stopped 1 process")
+				cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "stopped 1 process")
 			} else if countStopped > 1 {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d processes", countStopped))
+				cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d processes", countStopped))
 			}
 
 			if countStaleData > 0 {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"),
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelWarning.Render("warning"),
 					fmt.Sprintf("failed to update history for %d process(es) - data may be stale", countStaleData))
 			}
 
@@ -83,14 +83,14 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 				return nil
 			}
 
-			cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), "failed to gracefully stop", ui.TextBold.Render(serviceName))
+			cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), "failed to gracefully stop", ui.TextBold.Render(serviceName))
 			for erroredPGID, errored := range stopResult.Errored {
-				cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 			}
 
 			confirmed := helpers.PromptConfirm(cmd, "force quit? (y/n):")
 			if !confirmed {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "force quit aborted")
+				cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "force quit aborted")
 				return helpers.ErrCommandFailed
 			}
 			forceStopService(cmd, serviceName, mgr)
@@ -105,7 +105,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
 	forceStopResult, err := mgr.ForceStopService(serviceName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("force stopping service: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("force stopping service: %v", err))
 		return
 	}
 
@@ -114,22 +114,22 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 
 	switch {
 	case countStopped == 1:
-		cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "force stopped 1 process")
+		cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), "force stopped 1 process")
 	case countStopped > 1:
-		cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), fmt.Sprintf("force stopped %d processes", countStopped))
+		cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), fmt.Sprintf("force stopped %d processes", countStopped))
 	default:
-		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "force stopped no processes")
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "force stopped no processes")
 	}
 
 	if countStaleData > 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"),
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelWarning.Render("warning"),
 			fmt.Sprintf("failed to update history for %d process(es) - data may be stale", countStaleData))
 	}
 
 	if len(forceStopResult.Errored) > 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "failed to force stop service, manual action required")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "failed to force stop service, manual action required")
 		for erroredPGID, errored := range forceStopResult.Errored {
-			cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
+			cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 		}
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("kill -9 <pgid>") + ui.TextMuted.Render(" → use a PGID listed above for manual kill") + "\n")
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)) + ui.TextMuted.Render(" → view service info") + "\n")
@@ -142,14 +142,14 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 func cleanupServiceInstance(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
 	removed, err := mgr.RemoveServiceInstance(serviceName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", err))
 		return
 	}
 
 	if !removed {
-		cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), "no service instance removed")
+		cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("warning"), "no service instance removed")
 		return
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), "service instance cleaned up")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("success"), "service instance cleaned up")
 }

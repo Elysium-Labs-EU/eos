@@ -55,12 +55,12 @@ func newInitCmd() *cobra.Command {
 
 			absDir, err := filepath.Abs(dir)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving path: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving path: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			if _, statErr := os.Stat(absDir); os.IsNotExist(statErr) {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory does not exist: %s", absDir))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("directory does not exist: %s", absDir))
 				return helpers.ErrCommandFailed
 			}
 
@@ -119,17 +119,17 @@ func newInitCmd() *cobra.Command {
 
 			data, err := yaml.Marshal(cfg)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("marshaling config: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("marshaling config: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			if err := os.WriteFile(outputPath, []byte(initSchemaHeader+string(data)+initLogSinkHint), 0644); err != nil { // #nosec G306 -- service.yaml is a project config file, world-readable is intentional
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing file: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing file: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			cmd.Printf("\n%s %s\n\n", ui.LabelSuccess.Render("created"), outputPath)
-			cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("next:"), ui.TextCommand.Render(fmt.Sprintf("eos run -f %s", outputPath)))
+			cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("next:"), ui.TextCommand.Render(fmt.Sprintf("eos run -f %s", outputPath)))
 			return nil
 		},
 	}

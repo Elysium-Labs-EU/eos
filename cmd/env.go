@@ -36,25 +36,25 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if !exists {
-				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return helpers.ErrCommandFailed
 			}
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
 			config, err := manager.LoadServiceConfig(configPath)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
@@ -66,7 +66,7 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 			case len(args) == 3 && args[1] == "unset":
 				return runEnvUnset(cmd, config, registeredService.DirectoryPath, serviceName, args[2])
 			default:
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), `usage: eos env <service> [set KEY=VALUE|unset KEY]`)
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), `usage: eos env <service> [set KEY=VALUE|unset KEY]`)
 				return helpers.ErrCommandFailed
 			}
 		},
@@ -76,11 +76,11 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 func runEnvList(cmd *cobra.Command, config *types.ServiceConfig, serviceDirectoryPath, serviceName string) error {
 	envVars, err := manager.ParseEnvFile(config, serviceDirectoryPath)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "resolved env for", ui.TextBold.Render(serviceName))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "resolved env for", ui.TextBold.Render(serviceName))
 
 	if config.EnvFile == "" {
 		cmd.Println(ui.TextMuted.Render("  no env_file configured"))
@@ -106,7 +106,7 @@ func runEnvSet(cmd *cobra.Command, config *types.ServiceConfig, serviceDirectory
 	key, value, found := strings.Cut(assignment, "=")
 	key = strings.TrimSpace(key)
 	if !found || key == "" {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), `expected KEY=VALUE, got `+fmt.Sprintf("%q", assignment))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), `expected KEY=VALUE, got `+fmt.Sprintf("%q", assignment))
 		return helpers.ErrCommandFailed
 	}
 
@@ -117,12 +117,12 @@ func runEnvSet(cmd *cobra.Command, config *types.ServiceConfig, serviceDirectory
 
 	lines, err := readEnvFileLines(envFilePath)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
 	if err := writeEnvFileLines(envFilePath, setEnvFileLine(lines, key, value)); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing env file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing env file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -138,18 +138,18 @@ func runEnvUnset(cmd *cobra.Command, config *types.ServiceConfig, serviceDirecto
 
 	lines, err := readEnvFileLines(envFilePath)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading env file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
 	updatedLines, removed := unsetEnvFileLine(lines, key)
 	if !removed {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(key), "is not set in env_file")
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(key), "is not set in env_file")
 		return helpers.ErrCommandFailed
 	}
 
 	if err := writeEnvFileLines(envFilePath, updatedLines); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing env file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing env file: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -159,14 +159,14 @@ func runEnvUnset(cmd *cobra.Command, config *types.ServiceConfig, serviceDirecto
 
 func requireEnvFilePath(cmd *cobra.Command, config *types.ServiceConfig, serviceDirectoryPath, serviceName string) (string, error) {
 	if config.EnvFile == "" {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has no env_file configured")
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has no env_file configured")
 		cmd.PrintErrf("  %s\n\n", ui.TextMuted.Render("set env_file in the service config first"))
 		return "", helpers.ErrCommandFailed
 	}
 
 	envFilePath, err := manager.ResolveEnvFilePath(config, serviceDirectoryPath)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving env file path: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving env file path: %v", err))
 		return "", helpers.ErrCommandFailed
 	}
 	return envFilePath, nil

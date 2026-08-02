@@ -109,7 +109,7 @@ func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.Servi
 	if err != nil {
 		return err
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
 	return manager.RecordDependencyWait(ctx, mgr, mgr, entry.Name, cfg.DependsOn, maxWait)
 }
 
@@ -138,14 +138,14 @@ func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, err
 }
 
 func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
 func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
@@ -183,13 +183,13 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 
 			serviceFile, err := cmd.Flags().GetString("file")
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing file flag: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing file flag: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
 			once, err := cmd.Flags().GetBool("once")
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing once flag: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing once flag: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
@@ -197,26 +197,26 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			viaServiceName := len(args) > 0
 
 			if !viaServiceName && !viaServiceFile {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no service specified")
-				cmd.PrintErrf("  %s %s %s\n",
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no service specified")
+				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("run:"),
-					ui.TextCommand.Render("eos run -f <path>"),
+					ui.TextCommand.Render(eosRunFlagPathExample),
 					ui.TextMuted.Render("→ run from a service file"),
 				)
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
 				return helpers.ErrCommandFailed
 			}
 			if viaServiceName && viaServiceFile {
-				cmd.PrintErrf("%s %s\n\n",
+				cmd.PrintErrf(fmtLabelMsg,
 					ui.LabelError.Render("error"),
 					"ambiguous input: --file and a service name cannot be used together",
 				)
-				cmd.PrintErrf("  %s %s %s\n",
+				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("use:"),
-					ui.TextCommand.Render("eos run -f <path>"),
+					ui.TextCommand.Render(eosRunFlagPathExample),
 					ui.TextMuted.Render("→ to run from a file"),
 				)
-				cmd.PrintErrf("  %s %s %s\n\n",
+				cmd.PrintErrf(fmtIndentLabelTwoMsg,
 					ui.TextMuted.Render("use:"),
 					ui.TextCommand.Render("eos run <name>"),
 					ui.TextMuted.Render("→ to run by name"),
@@ -228,39 +228,39 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			if viaServiceFile {
 				parsedService, parseError := parseServiceFile(serviceFile)
 				if parseError != nil {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
 					return helpers.ErrCommandFailed
 				}
 
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
+				cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
 
 				printSelfDetachWarnings(cmd, parsedService.Config.Command)
 
 				registerResult, registerErr := registerServiceIfNeeded(mgr, parsedService.YamlFile, parsedService.Config.Name)
 				if registerErr != nil {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
 					return helpers.ErrCommandFailed
 				}
 
 				if registerResult.AlreadyExists {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("service %q is already registered", registerResult.Name))
-					cmd.PrintErrf("  %s %s %s\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos update %s", registerResult.Name)), ui.TextMuted.Render("to update"))
-					cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", registerResult.Name)), ui.TextMuted.Render("to remove conflicting service"))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("service %q is already registered", registerResult.Name))
+					cmd.PrintErrf(fmtIndentLabelTwoMsgLn, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos update %s", registerResult.Name)), ui.TextMuted.Render("to update"))
+					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", registerResult.Name)), ui.TextMuted.Render("to remove conflicting service"))
 				}
 				serviceName = registerResult.Name
 			} else {
 				serviceNameArg := args[0]
 
-				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
+				cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
 
 				registeredServiceName, registeredCheckErr := isServiceRegistered(mgr, serviceNameArg)
 				if errors.Is(registeredCheckErr, ErrServiceNonExistent) {
-					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
-					cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run -f <path>"))
+					cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
+					cmd.PrintErrf(fmtIndentLabelMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(eosRunFlagPathExample))
 					return helpers.ErrCommandFailed
 				}
 				if registeredCheckErr != nil {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service name: %v", registeredCheckErr))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("handling service name: %v", registeredCheckErr))
 					return helpers.ErrCommandFailed
 				}
 				serviceName = registeredServiceName
@@ -269,18 +269,18 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			if once {
 				running, runningCheckErr := isServiceRunning(mgr, serviceName)
 				if runningCheckErr != nil {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
 					return helpers.ErrCommandFailed
 				}
 				if running {
-					cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "service is already running")
+					cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "service is already running")
 					return nil
 				}
 			}
 
 			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
@@ -291,13 +291,13 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
 
 			if depErr := gateDependencies(cmd.Context(), cmd, mgr, registeredService); depErr != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), depErr.Error())
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), depErr.Error())
 				return helpers.ErrCommandFailed
 			}
 
 			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if serviceRunResult.Restarted {
