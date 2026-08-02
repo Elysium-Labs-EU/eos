@@ -1579,9 +1579,25 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 	return binary, tempDir, nil
 }
 
+// installExecutablePerm returns the permission bits to apply to the freshly
+// installed binary: whatever the previously installed binary already had,
+// capped at 0755 so an update can never widen access beyond owner-rwx/
+// group-rx/other-rx, with owner-execute guaranteed even if the prior file
+// was somehow not executable. replaceBinary's os.Rename drops the old
+// inode's mode entirely, so this must be read from the file before it's
+// replaced.
+func installExecutablePerm(existing os.FileMode) os.FileMode {
+	return (existing.Perm() & 0o755) | 0o100
+}
+
 // installUpdatedBinary backs up the current binary, replaces it with the
 // downloaded one, and makes it executable, cleaning up on failure.
 func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempDir string) error {
+	perm := os.FileMode(0o755)
+	if info, statErr := os.Stat(binaryPath); statErr == nil {
+		perm = installExecutablePerm(info.Mode())
+	}
+
 	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, time.Now().Format("20060102_150405"))
 	if err := createDestinationFile(backupPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating destination file: %v", err))
@@ -1600,7 +1616,7 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 		cleanupTempDir(cmd, tempDir)
 		return helpers.ErrCommandFailed
 	}
-	if err := os.Chmod(binaryPath, 0755); err != nil { // #nosec G302 -- executable binary needs to be runnable by all users
+	if err := os.Chmod(binaryPath, perm); err != nil { // #nosec G302 -- perm is capped at 0755 by installExecutablePerm, never wider than the binary's own previous mode
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
 		return helpers.ErrCommandFailed
 	}
