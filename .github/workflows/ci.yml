@@ -27,20 +27,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0 # go-crap-gate diffs changed functions against origin/main
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
 
       # make setup does not install ast-grep (the sg target expects it
       # preinstalled, e.g. via brew locally); the npm package is the simplest
       # reliable install on a GitHub-hosted runner (node is preinstalled).
+      # Version pinned (not a floating tag) and --ignore-scripts blocks
+      # install-time lifecycle scripts from running.
       - name: Install ast-grep
-        run: npm install -g @ast-grep/cli
+        run: npm install -g @ast-grep/cli@0.45.0 --ignore-scripts
 
       - name: Install dev tools
         run: make setup
@@ -53,10 +55,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
 
@@ -78,10 +80,10 @@ jobs:
     needs: [ci]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
 
