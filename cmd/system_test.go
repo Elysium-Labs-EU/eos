@@ -500,6 +500,13 @@ func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
 	resolvedDir, isManaged, userScope, resolveErr := config.ResolveSystemdScope(os.Getenv("EOS_SYSTEMD_TARGET_DIR"))
 	t.Logf("diag: EOS_SYSTEMD_TARGET_DIR=%q resolvedDir=%q isManaged=%v userScope=%v err=%v", os.Getenv("EOS_SYSTEMD_TARGET_DIR"), resolvedDir, isManaged, userScope, resolveErr)
 
+	_, _, diagSystemConfig, _, diagErr := newSystemConfig()
+	if diagErr != nil {
+		t.Logf("diag: newSystemConfig() err=%v", diagErr)
+	} else {
+		t.Logf("diag: newSystemConfig() Daemon.Systemd=%+v Daemon.Standalone!=nil=%v", diagSystemConfig.Daemon.Systemd, diagSystemConfig.Daemon.Standalone != nil)
+	}
+
 	setStdin(cmd, "n\n")
 	cmd.SetArgs([]string{"system", "unstartup"})
 
