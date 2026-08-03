@@ -139,9 +139,9 @@ func TestLogsSingleStreamLogMissing(t *testing.T) {
 	}
 }
 
-// TestLogsTailStartFailure checks that a failure to even start the "tail"
-// subprocess (e.g. the binary isn't found on PATH) surfaces as a "reading log
-// file" error and fails the command, rather than panicking or hanging.
+// TestLogsTailStartFailure checks that a failure to resolve the "tail"
+// binary on PATH surfaces as a "resolving tail" error and fails the command,
+// rather than panicking or hanging.
 func TestLogsTailStartFailure(t *testing.T) {
 	cmd, mgr, _, errBuf, tempDir := setupLogsTestCmd(t)
 	cfg := addAndRunLogsService(t, cmd, mgr, tempDir)
@@ -159,8 +159,8 @@ func TestLogsTailStartFailure(t *testing.T) {
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
-	if !strings.Contains(errBuf.String(), "reading log file") {
-		t.Errorf("expected 'reading log file' error, got: %s", errBuf.String())
+	if !strings.Contains(errBuf.String(), "resolving tail") {
+		t.Errorf("expected 'resolving tail' error, got: %s", errBuf.String())
 	}
 }
 

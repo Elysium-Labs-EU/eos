@@ -243,7 +243,7 @@ func TestEnsureUserBusAvailable_EnableLingerRunError(t *testing.T) {
 		return []byte("permission denied"), errors.New("enable-linger failed")
 	}
 
-	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run)
+	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run, isAccessibleDir)
 	if err == nil {
 		t.Fatal("expected error when enabling linger fails")
 	}

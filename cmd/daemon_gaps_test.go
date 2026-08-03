@@ -122,8 +122,8 @@ func TestStandaloneDaemonController_Logs_Follow(t *testing.T) {
 }
 
 // TestStandaloneDaemonController_Logs_TailStartError covers the branch where
-// tailCmd.Start() itself fails: with PATH pointed at an empty directory, the
-// "tail" binary can't be found.
+// resolving "tail" on PATH fails: with PATH pointed at an empty directory,
+// the binary can't be found before tailCmd is ever started.
 func TestStandaloneDaemonController_Logs_TailStartError(t *testing.T) {
 	tempDir := t.TempDir()
 	c := newStandaloneController(t, tempDir)
@@ -146,8 +146,8 @@ func TestStandaloneDaemonController_Logs_TailStartError(t *testing.T) {
 
 	c.Logs(cmd, 10, false)
 
-	if !strings.Contains(errBuf.String(), "starting log command") {
-		t.Errorf("expected 'starting log command' error, got: %s", errBuf.String())
+	if !strings.Contains(errBuf.String(), "resolving tail") {
+		t.Errorf("expected 'resolving tail' error, got: %s", errBuf.String())
 	}
 }
 
@@ -258,8 +258,8 @@ func TestSystemdDaemonController_Logs_StreamingAndShowing(t *testing.T) {
 	}
 }
 
-// TestRunJournalStream_StartError covers the branch where journalctl itself
-// can't be started (not found on PATH).
+// TestRunJournalStream_StartError covers the branch where resolving
+// journalctl on PATH fails (not found).
 func TestRunJournalStream_StartError(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty dir: "journalctl" cannot be found
 
@@ -271,8 +271,8 @@ func TestRunJournalStream_StartError(t *testing.T) {
 
 	runJournalStream(cmd, []string{"-u", "eos", "-n", "10"})
 
-	if !strings.Contains(errBuf.String(), "starting journalctl") {
-		t.Errorf("expected 'starting journalctl' error, got: %s", errBuf.String())
+	if !strings.Contains(errBuf.String(), "resolving journalctl") {
+		t.Errorf("expected 'resolving journalctl' error, got: %s", errBuf.String())
 	}
 }
 
