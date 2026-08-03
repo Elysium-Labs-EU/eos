@@ -122,8 +122,13 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 			}
 			tailArgs = append(tailArgs, *logPath)
 
-			// #nosec G204 - args are validated above
-			tailLogCommand := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
+			tailPath, err := helpers.ResolveExecutable("tail")
+			if err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving tail: %v", err))
+				return helpers.ErrCommandFailed
+			}
+			// #nosec G204 - args are validated above, tailPath is resolved via LookPath
+			tailLogCommand := exec.CommandContext(cmd.Context(), tailPath, tailArgs...)
 			tailLogCommand.Stderr = cmd.ErrOrStderr()
 
 			stdout, pipeErr := tailLogCommand.StdoutPipe()
@@ -300,8 +305,13 @@ func followCombinedLogs(ctx context.Context, out io.Writer, outPath, errPath str
 }
 
 func startTailGoroutine(ctx context.Context, path string, isErr bool, ch chan<- followMsg) {
-	// #nosec G204 - path comes from manager, not user input
-	tail := exec.CommandContext(ctx, "tail", "-n", "0", "-f", path)
+	tailPath, err := helpers.ResolveExecutable("tail")
+	if err != nil {
+		sendFollowErr(ctx, ch, path, err)
+		return
+	}
+	// #nosec G204 - path comes from manager, not user input; tailPath resolved via LookPath
+	tail := exec.CommandContext(ctx, tailPath, "-n", "0", "-f", path)
 	var stderr bytes.Buffer
 	tail.Stderr = &stderr
 

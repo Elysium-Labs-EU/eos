@@ -317,6 +317,215 @@ func TestSystemdDaemonController_IsRunning(t *testing.T) {
 	}
 }
 
+// stubPathExecutable points PATH at a directory containing a single fake
+// executable named name, running script when invoked, so tests can exercise
+// exec.Command call sites deterministically without depending on the real
+// tool (systemctl, launchctl, ...) being present or behaving predictably in
+// the test environment.
+func stubPathExecutable(t *testing.T, name, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatalf("writing fake %s: %v", name, err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestSystemdMainPID_NotResolvable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := systemdMainPID(t.Context(), false); err == nil {
+		t.Fatal("expected error when systemctl cannot be resolved")
+	}
+}
+
+func TestSystemdMainPID_CommandFailure(t *testing.T) {
+	stubPathExecutable(t, "systemctl", "exit 1")
+	if _, err := systemdMainPID(t.Context(), false); err == nil {
+		t.Fatal("expected error when systemctl exits non-zero")
+	}
+}
+
+func TestSystemdMainPID_UnparsablePID(t *testing.T) {
+	stubPathExecutable(t, "systemctl", "echo 0")
+	if _, err := systemdMainPID(t.Context(), false); err == nil {
+		t.Fatal("expected error for a non-positive MainPID (unit not running)")
+	}
+}
+
+func TestSystemdDaemonController_Start(t *testing.T) {
+	t.Run("resolves and runs systemctl", func(t *testing.T) {
+		stubPathExecutable(t, "systemctl", "exit 0")
+		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+		if err := c.Start(t.Context(), false, false, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("systemctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+		if err := c.Start(t.Context(), false, false, false); err == nil {
+			t.Fatal("expected error when systemctl cannot be resolved")
+		}
+	})
+
+	t.Run("systemctl failure surfaces output", func(t *testing.T) {
+		stubPathExecutable(t, "systemctl", "echo boom >&2; exit 1")
+		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+		err := c.Start(t.Context(), false, false, false)
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("expected error containing systemctl output, got: %v", err)
+		}
+	})
+}
+
+func TestSystemdDaemonController_Stop(t *testing.T) {
+	t.Run("resolves and runs systemctl", func(t *testing.T) {
+		stubPathExecutable(t, "systemctl", "exit 0")
+		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: false}}
+		cmd, _, _ := makeTestCmd(t)
+		killed, err := c.Stop(t.Context(), cmd, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !killed {
+			t.Error("expected killed=true on successful stop")
+		}
+	})
+
+	t.Run("systemctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: false}}
+		cmd, _, _ := makeTestCmd(t)
+		if _, err := c.Stop(t.Context(), cmd, false); err == nil {
+			t.Fatal("expected error when systemctl cannot be resolved")
+		}
+	})
+
+	t.Run("user unit prepares the bus before resolving systemctl", func(t *testing.T) {
+		// checkDir is faked to unconditionally report "not accessible" so this
+		// exercises the bus-preparation path in the -u branch deterministically,
+		// declining the enable-linger prompt, regardless of what /run/user/<uid>
+		// or XDG_RUNTIME_DIR genuinely look like on the machine running the test —
+		// on a root-run CI job /run/user/0 is real and root-owned, which would
+		// make the real isAccessibleDir check pass and this test flake (issue
+		// found in review round 1).
+		stubPathExecutable(t, "systemctl", "exit 0")
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return false },
+		}
+		cmd, _, _ := makeTestCmd(t)
+		setStdin(cmd, "n\n")
+		if _, err := c.Stop(t.Context(), cmd, false); err == nil {
+			t.Fatal("expected error when the user bus is unavailable and linger is declined")
+		}
+	})
+}
+
+func TestLaunchdDaemonController_Start(t *testing.T) {
+	t.Run("resolves and runs launchctl", func(t *testing.T) {
+		stubPathExecutable(t, "launchctl", "exit 0")
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		if err := c.Start(t.Context(), false, false, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("launchctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		if err := c.Start(t.Context(), false, false, false); err == nil {
+			t.Fatal("expected error when launchctl cannot be resolved")
+		}
+	})
+
+	t.Run("requires root for a system daemon", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("skipping: test assumes a non-root process")
+		}
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: false}}
+		if err := c.Start(t.Context(), false, false, false); err == nil {
+			t.Fatal("expected error when starting a system daemon without root")
+		}
+	})
+}
+
+func TestLaunchdDaemonController_Stop(t *testing.T) {
+	t.Run("resolves and runs launchctl", func(t *testing.T) {
+		stubPathExecutable(t, "launchctl", "exit 0")
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		cmd, _, _ := makeTestCmd(t)
+		if _, err := c.Stop(t.Context(), cmd, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("launchctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		cmd, _, _ := makeTestCmd(t)
+		if _, err := c.Stop(t.Context(), cmd, false); err == nil {
+			t.Fatal("expected error when launchctl cannot be resolved")
+		}
+	})
+
+	t.Run("tolerates job not loaded (exit code 3)", func(t *testing.T) {
+		stubPathExecutable(t, "launchctl", "exit 3")
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		cmd, _, _ := makeTestCmd(t)
+		killed, err := c.Stop(t.Context(), cmd, false)
+		if err != nil {
+			t.Fatalf("expected exit code 3 to be tolerated, got: %v", err)
+		}
+		if killed {
+			t.Error("expected killed=false when the job wasn't loaded")
+		}
+	})
+
+	t.Run("other launchctl failures are fatal", func(t *testing.T) {
+		stubPathExecutable(t, "launchctl", "echo boom >&2; exit 1")
+		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
+		cmd, _, _ := makeTestCmd(t)
+		_, err := c.Stop(t.Context(), cmd, false)
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("expected error containing launchctl output, got: %v", err)
+		}
+	})
+}
+
+func TestRunJournalStream(t *testing.T) {
+	t.Run("resolves and streams journalctl output", func(t *testing.T) {
+		stubPathExecutable(t, "journalctl", "echo hello from journald")
+		cmd, out, _ := makeTestCmd(t)
+		cmd.SetContext(t.Context())
+		runJournalStream(cmd, []string{"-u", "eos"})
+		if !strings.Contains(out.String(), "hello from journald") {
+			t.Errorf("expected journalctl output, got: %s", out.String())
+		}
+	})
+
+	t.Run("journalctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		cmd, _, errBuf := makeTestCmd(t)
+		cmd.SetContext(t.Context())
+		runJournalStream(cmd, []string{"-u", "eos"})
+		if !strings.Contains(errBuf.String(), "resolving journalctl") {
+			t.Errorf("expected 'resolving journalctl' error, got: %s", errBuf.String())
+		}
+	})
+
+	t.Run("non-zero exit reports failure", func(t *testing.T) {
+		stubPathExecutable(t, "journalctl", "exit 1")
+		cmd, _, errBuf := makeTestCmd(t)
+		cmd.SetContext(t.Context())
+		runJournalStream(cmd, []string{"-u", "eos"})
+		if !strings.Contains(errBuf.String(), "journalctl failed") {
+			t.Errorf("expected 'journalctl failed' error, got: %s", errBuf.String())
+		}
+	})
+}
+
 func TestLaunchdDaemonController_IsRunning(t *testing.T) {
 	// No cheap, reliable "is loaded" check exists for launchd in this codebase;
 	// IsRunning always assumes running so callers keep prompting rather than
@@ -418,6 +627,82 @@ func TestStandaloneDaemonController_Logs(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "showing daemon logs") {
 			t.Errorf("expected 'showing daemon logs' info line, got: %s", out.String())
+		}
+	})
+
+	t.Run("follow mode streams and appends -f", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		logDir := manager.CreateLogDirPath(tempDir)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("creating log dir: %v", err)
+		}
+		logPath := filepath.Join(logDir, c.cfg.Log.LogFileName)
+		if err := os.WriteFile(logPath, []byte("hello from the log\n"), 0644); err != nil {
+			t.Fatalf("writing log file: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+		defer cancel()
+		var out bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetContext(ctx)
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+
+		c.Logs(cmd, 10, true) // "tail -f" runs until ctx times out and kills it
+
+		if !strings.Contains(out.String(), "streaming daemon logs") {
+			t.Errorf("expected 'streaming daemon logs' info line, got: %s", out.String())
+		}
+	})
+
+	t.Run("tail command failure is reported", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		logDir := manager.CreateLogDirPath(tempDir)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("creating log dir: %v", err)
+		}
+		logPath := filepath.Join(logDir, c.cfg.Log.LogFileName)
+		if err := os.WriteFile(logPath, []byte("hello from the log\n"), 0644); err != nil {
+			t.Fatalf("writing log file: %v", err)
+		}
+		stubPathExecutable(t, "tail", "exit 2")
+		var errBuf bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetContext(t.Context())
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&errBuf)
+
+		c.Logs(cmd, 10, false)
+
+		if !strings.Contains(errBuf.String(), "log command failed") {
+			t.Errorf("expected 'log command failed' error, got: %s", errBuf.String())
+		}
+	})
+
+	t.Run("tail not resolvable on PATH", func(t *testing.T) {
+		tempDir := t.TempDir()
+		c := newStandaloneController(t, tempDir)
+		logDir := manager.CreateLogDirPath(tempDir)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("creating log dir: %v", err)
+		}
+		logPath := filepath.Join(logDir, c.cfg.Log.LogFileName)
+		if err := os.WriteFile(logPath, []byte("hello from the log\n"), 0644); err != nil {
+			t.Fatalf("writing log file: %v", err)
+		}
+		t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
+		var errBuf bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetContext(t.Context())
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&errBuf)
+
+		c.Logs(cmd, 10, false)
+
+		if !strings.Contains(errBuf.String(), "resolving tail") {
+			t.Errorf("expected 'resolving tail' error, got: %s", errBuf.String())
 		}
 	})
 }

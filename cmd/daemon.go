@@ -147,8 +147,13 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 	}
 	tailArgs = append(tailArgs, logPath)
 
-	// #nosec G204 - args are validated above
-	tailCmd := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
+	tailPath, err := helpers.ResolveExecutable("tail")
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving tail: %v", err))
+		return
+	}
+	// #nosec G204 - args are validated above, tailPath is resolved via LookPath
+	tailCmd := exec.CommandContext(cmd.Context(), tailPath, tailArgs...)
 	tailCmd.Stderr = cmd.ErrOrStderr()
 
 	stdout, pipeErr := tailCmd.StdoutPipe()
@@ -171,14 +176,22 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 }
 
 type systemdDaemonController struct {
-	cfg config.SystemdConfig
+	// checkDir is isAccessibleDir in production (set by newDaemonController); tests inject a
+	// fake so Stop's user-bus check doesn't depend on what runtime dirs genuinely exist in the
+	// environment running the test (e.g. a root-run CI job where /run/user/0 is real).
+	checkDir dirAccessCheckFn
+	cfg      config.SystemdConfig
 }
 
 func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
 	if !c.cfg.UserUnit && os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
-	out, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(c.cfg.UserUnit, "start", "eos")...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	systemctlPath, err := helpers.ResolveExecutable("systemctl")
+	if err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, systemctlPath, systemctlArgs(c.cfg.UserUnit, "start", "eos")...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input; systemctlPath resolved via LookPath
 	if err != nil {
 		return fmt.Errorf("starting systemd service: %s", out)
 	}
@@ -202,13 +215,17 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 		if credErr != nil {
 			return false, fmt.Errorf("getting current user credentials: %w", credErr)
 		}
-		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd); err != nil {
+		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd, c.checkDir); err != nil {
 			return false, fmt.Errorf("preparing user bus: %w", err)
 		}
 	}
 
 	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(args, " "))
-	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	systemctlPath, err := helpers.ResolveExecutable("systemctl")
+	if err != nil {
+		return false, err
+	}
+	out, err := exec.CommandContext(ctx, systemctlPath, args...).CombinedOutput() // #nosec G204 -- args are a fixed set built from a bool, not external input; systemctlPath resolved via LookPath
 	if err != nil {
 		helpers.Debugf(cmd, verbose, "systemctl exited with error: %s", strings.TrimSpace(string(out)))
 		return false, fmt.Errorf("stopping systemd service: %s", out)
@@ -260,8 +277,13 @@ func reportJournalExit(cmd *cobra.Command, err error) {
 // runJournalStream runs journalctl with the given args, forwarding its output to
 // the command's streams.
 func runJournalStream(cmd *cobra.Command, journalArgs []string) {
-	// #nosec G204 - journalArgs contains only --user, -u, eos, -n, <int>, and optionally -f
-	journalCmd := exec.CommandContext(cmd.Context(), "journalctl", journalArgs...)
+	journalctlPath, err := helpers.ResolveExecutable("journalctl")
+	if err != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving journalctl: %v", err))
+		return
+	}
+	// #nosec G204 - journalArgs contains only --user, -u, eos, -n, <int>, and optionally -f; journalctlPath resolved via LookPath
+	journalCmd := exec.CommandContext(cmd.Context(), journalctlPath, journalArgs...)
 	journalCmd.Stdout = cmd.OutOrStdout()
 	journalCmd.Stderr = cmd.ErrOrStderr()
 	if err := journalCmd.Start(); err != nil {
@@ -321,7 +343,11 @@ func (c launchdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bo
 		return errors.New("requires root — run with sudo")
 	}
 	plistPath := filepath.Join(c.cfg.LaunchdTargetDir, c.cfg.LaunchdPlistFileName)
-	out, err := exec.CommandContext(ctx, "launchctl", "bootstrap", c.domain(), plistPath).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input
+	launchctlPath, err := helpers.ResolveExecutable("launchctl")
+	if err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, launchctlPath, "bootstrap", c.domain(), plistPath).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input; launchctlPath resolved via LookPath
 	if err != nil {
 		return fmt.Errorf("starting launchd service: %s", out)
 	}
@@ -336,7 +362,11 @@ func (c launchdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bo
 func (c launchdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
 	target := c.target()
 	helpers.Debugf(cmd, verbose, "running: launchctl bootout %s", target)
-	out, err := exec.CommandContext(ctx, "launchctl", "bootout", target).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input
+	launchctlPath, err := helpers.ResolveExecutable("launchctl")
+	if err != nil {
+		return false, err
+	}
+	out, err := exec.CommandContext(ctx, launchctlPath, "bootout", target).CombinedOutput() // #nosec G204 -- args are a fixed set built from config, not external input; launchctlPath resolved via LookPath
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
@@ -463,7 +493,7 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 		}, nil
 	}
 	if cfg.Systemd != nil {
-		return systemdDaemonController{cfg: *cfg.Systemd}, nil
+		return systemdDaemonController{cfg: *cfg.Systemd, checkDir: isAccessibleDir}, nil
 	}
 	if cfg.Launchd != nil {
 		return launchdDaemonController{cfg: *cfg.Launchd, baseDir: baseDir}, nil
@@ -911,7 +941,11 @@ func systemdUserBusReachable(uid int) bool {
 // own — the same host/user-global blind spot documented on
 // config.SystemdConfig.SocketPath (issue #12).
 func systemdMainPID(ctx context.Context, userUnit bool) (int, error) {
-	pidOut, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(userUnit, "show", "-p", "MainPID", "--value", "eos")...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input
+	systemctlPath, err := helpers.ResolveExecutable("systemctl")
+	if err != nil {
+		return 0, err
+	}
+	pidOut, err := exec.CommandContext(ctx, systemctlPath, systemctlArgs(userUnit, "show", "-p", "MainPID", "--value", "eos")...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input; systemctlPath resolved via LookPath
 	if err != nil {
 		return 0, fmt.Errorf("querying systemd for daemon pid: %w", err)
 	}

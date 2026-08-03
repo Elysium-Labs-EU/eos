@@ -766,7 +766,7 @@ func TestEnsureUserBusAvailable_CorrectsWhenCurrentOwnedByOtherUser(t *testing.T
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -800,7 +800,7 @@ func TestEnsureUserBusAvailable_AcceptsExpectedOwnedByTargetUIDUnderSudo(t *test
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", targetUID, expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", targetUID, expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -822,7 +822,7 @@ func TestEnsureUserBusAvailable_CorrectsStaleEnvVar(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -844,7 +844,7 @@ func TestEnsureUserBusAvailable_DeclinePrompt(t *testing.T) {
 		return nil, nil
 	}
 
-	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run)
+	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run, isAccessibleDir)
 	if err == nil {
 		t.Fatal("expected error when user declines enabling linger")
 	}
@@ -865,7 +865,7 @@ func TestEnsureUserBusAvailable_EnablesLingerAndRecovers(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -1870,6 +1870,197 @@ func TestReplaceBinary_success(t *testing.T) {
 	}
 	if string(got) != "new binary" {
 		t.Errorf("expected 'new binary', got %q", got)
+	}
+}
+
+func TestInstallExecutablePerm(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing os.FileMode
+		want     os.FileMode
+	}{
+		{"already 0755", 0755, 0755},
+		{"world-writable capped down", 0777, 0755},
+		{"no-exec gains owner-exec", 0644, 0744},
+		{"group/other-only stays capped", 0700, 0700},
+		{"setuid bit stripped by Perm", os.ModeSetuid | 0755, 0755},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := installExecutablePerm(tt.existing)
+			if got != tt.want {
+				t.Errorf("installExecutablePerm(%v) = %v, want %v", tt.existing, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInstallUpdatedBinary_capsExistingPerm(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "eos")
+	if err := os.WriteFile(binaryPath, []byte("old binary"), 0777); err != nil {
+		t.Fatal(err)
+	}
+
+	tempDir := t.TempDir()
+	newBinaryPath := filepath.Join(tempDir, "eos-new")
+	if err := os.WriteFile(newBinaryPath, []byte("new binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newBinary, err := os.Open(filepath.Clean(newBinaryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = newBinary.Close() }()
+
+	cmd, _, _ := makeTestCmd(t)
+	if installErr := installUpdatedBinary(cmd, newBinary, binaryPath, tempDir); installErr != nil {
+		t.Fatalf("unexpected error: %v", installErr)
+	}
+
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0755 {
+		t.Errorf("expected installed binary perm 0755, got %v", got)
+	}
+
+	content, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "new binary" {
+		t.Errorf("expected new binary content, got %q", content)
+	}
+}
+
+func TestInstallUpdatedBinary_preservesTighterPerm(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "eos")
+	if err := os.WriteFile(binaryPath, []byte("old binary"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	tempDir := t.TempDir()
+	newBinaryPath := filepath.Join(tempDir, "eos-new")
+	if err := os.WriteFile(newBinaryPath, []byte("new binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newBinary, err := os.Open(filepath.Clean(newBinaryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = newBinary.Close() }()
+
+	cmd, _, _ := makeTestCmd(t)
+	if installErr := installUpdatedBinary(cmd, newBinary, binaryPath, tempDir); installErr != nil {
+		t.Fatalf("unexpected error: %v", installErr)
+	}
+
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0700 {
+		t.Errorf("expected installed binary perm to stay 0700, got %v", got)
+	}
+}
+
+func TestInstallUpdatedBinary_copyFileError(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "eos") // does not exist -> copyFile's source open fails
+
+	tempDir := t.TempDir()
+	newBinaryPath := filepath.Join(tempDir, "eos-new")
+	if err := os.WriteFile(newBinaryPath, []byte("new binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newBinary, err := os.Open(filepath.Clean(newBinaryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = newBinary.Close() }()
+
+	cmd, _, errOut := makeTestCmd(t)
+	if err := installUpdatedBinary(cmd, newBinary, binaryPath, tempDir); err == nil {
+		t.Fatal("expected error when backing up a nonexistent binary")
+	}
+	if !strings.Contains(errOut.String(), "backing up current binary") {
+		t.Errorf("expected backup-failure message, got: %s", errOut.String())
+	}
+}
+
+func TestInstallUpdatedBinary_replaceBinaryError(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "eos")
+	if err := os.WriteFile(binaryPath, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tempDir := t.TempDir()
+	newBinaryPath := filepath.Join(tempDir, "eos-new")
+	if err := os.WriteFile(newBinaryPath, []byte("new binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newBinary, err := os.Open(filepath.Clean(newBinaryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = newBinary.Close() }()
+	// Remove the downloaded binary from disk after opening it: the handle's
+	// Name() still resolves, but replaceBinary reopens by path and fails.
+	if err := os.Remove(newBinaryPath); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, _, errOut := makeTestCmd(t)
+	if err := installUpdatedBinary(cmd, newBinary, binaryPath, tempDir); err == nil {
+		t.Fatal("expected error when the downloaded binary is missing")
+	}
+	if !strings.Contains(errOut.String(), "installing new binary") {
+		t.Errorf("expected install-failure message, got: %s", errOut.String())
+	}
+}
+
+func TestInstallUpdatedBinary_createDestinationFileError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: cannot test directory permission restrictions as root")
+	}
+	outer := t.TempDir()
+	lockedDir := filepath.Join(outer, "locked")
+	if err := os.MkdirAll(lockedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	binaryPath := filepath.Join(lockedDir, "eos")
+	if err := os.WriteFile(binaryPath, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lockedDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(lockedDir, 0755) })
+
+	tempDir := t.TempDir()
+	newBinaryPath := filepath.Join(tempDir, "eos-new")
+	if err := os.WriteFile(newBinaryPath, []byte("new binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newBinary, err := os.Open(filepath.Clean(newBinaryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = newBinary.Close() }()
+
+	cmd, _, errOut := makeTestCmd(t)
+	if err := installUpdatedBinary(cmd, newBinary, binaryPath, tempDir); err == nil {
+		t.Fatal("expected error when the backup destination cannot be created")
+	}
+	if !strings.Contains(errOut.String(), "creating destination file") {
+		t.Errorf("expected destination-creation error, got: %s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "backing up current binary") {
+		t.Errorf("expected backup-failure message, got: %s", errOut.String())
 	}
 }
 

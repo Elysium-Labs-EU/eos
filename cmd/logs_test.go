@@ -90,6 +90,36 @@ func TestLogsCommand(t *testing.T) {
 	}
 }
 
+func TestLogsCommandUnresolvableTail(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupCmd(t)
+
+	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
+	path := writeServiceYAML(t, tempDir, cfg)
+
+	cmd.SetArgs([]string{"add", path})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Add command should not return an error, got : %v", err)
+	}
+
+	cmd.SetArgs([]string{"run", cfg.Name})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Run command should not return an error, got : %v", err)
+	}
+
+	t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
+
+	// --output selects the single-stream path, which shells out to tail;
+	// the default combined mode reads log files directly and never does.
+	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false", "--output"})
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+
+	if !strings.Contains(errBuf.String(), "resolving tail") {
+		t.Errorf("expected a 'resolving tail' message, got: %s", errBuf.String())
+	}
+}
+
 func TestLogsNeverRanServiceCommand(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupCmd(t)
 
@@ -389,6 +419,25 @@ func TestStartTailGoroutineReportsStartFailure(t *testing.T) {
 		}
 		if !msg.isErr {
 			t.Errorf("expected the failure message to be flagged as an error stream message")
+		}
+	case <-ctx.Done():
+		t.Fatal("expected a failure message before the context timeout")
+	}
+}
+
+func TestStartTailGoroutineReportsUnresolvableTail(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	ch := make(chan followMsg, 4)
+	startTailGoroutine(ctx, filepath.Join(t.TempDir(), "some.log"), false, ch)
+
+	select {
+	case msg := <-ch:
+		if !strings.Contains(msg.text, "failed to tail") {
+			t.Errorf("expected a 'failed to tail' message, got: %q", msg.text)
 		}
 	case <-ctx.Done():
 		t.Fatal("expected a failure message before the context timeout")
