@@ -491,21 +491,20 @@ func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
 	cmd, outBuf, errBuf, tempDir := setupCmd(t)
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
+	// Unset regardless of the runner's own process ancestry: config.IsUnderSystemd
+	// checks INVOCATION_ID, which systemd propagates to every descendant of a
+	// systemd-supervised process — including this test binary, when CI's own
+	// runner agent happens to run as a systemd unit. Left set, newDaemonConfig's
+	// "isSystemdManaged && !underSystemd" check flips to the standalone branch
+	// and Daemon.Systemd resolves nil regardless of the fake unit file below,
+	// short-circuiting this test before it ever reaches the wiring it targets.
+	t.Setenv("INVOCATION_ID", "")
+
 	systemdDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(systemdDir, "eos.service"), []byte("[Unit]"), 0644); err != nil {
 		t.Fatalf("seeding fake unit file: %v", err)
 	}
 	t.Setenv("EOS_SYSTEMD_TARGET_DIR", systemdDir+"/")
-
-	resolvedDir, isManaged, userScope, resolveErr := config.ResolveSystemdScope(os.Getenv("EOS_SYSTEMD_TARGET_DIR"))
-	t.Logf("diag: EOS_SYSTEMD_TARGET_DIR=%q resolvedDir=%q isManaged=%v userScope=%v err=%v", os.Getenv("EOS_SYSTEMD_TARGET_DIR"), resolvedDir, isManaged, userScope, resolveErr)
-
-	_, _, diagSystemConfig, _, diagErr := newSystemConfig()
-	if diagErr != nil {
-		t.Logf("diag: newSystemConfig() err=%v", diagErr)
-	} else {
-		t.Logf("diag: newSystemConfig() Daemon.Systemd=%+v Daemon.Standalone!=nil=%v", diagSystemConfig.Daemon.Systemd, diagSystemConfig.Daemon.Standalone != nil)
-	}
 
 	setStdin(cmd, "n\n")
 	cmd.SetArgs([]string{"system", "unstartup"})
