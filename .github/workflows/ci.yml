@@ -49,8 +49,10 @@ jobs:
       # make setup does not install ast-grep (the sg target expects it
       # preinstalled, e.g. via brew locally); the npm package is the simplest
       # reliable install on a GitHub-hosted runner (node is preinstalled).
+      # Version pinned (not a floating tag) and --ignore-scripts blocks
+      # install-time lifecycle scripts from running.
       - name: Install ast-grep
-        run: npm install -g @ast-grep/cli
+        run: npm install -g @ast-grep/cli@0.45.0 --ignore-scripts
 
       - name: Install dev tools
         run: make setup
