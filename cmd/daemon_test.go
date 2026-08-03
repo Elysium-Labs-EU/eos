@@ -255,10 +255,16 @@ func TestDaemonPidFilePermission_Bug(t *testing.T) {
 }
 
 // fakeDaemonController records Start calls and returns a configured error.
+// stopErr/stopKilled and removeErr let tests drive the Stop/Remove error and
+// success branches of buildDaemonSubcmds' stopCmd/removeCmd without a real
+// standalone/systemd/launchd/OpenRC controller behind them.
 type fakeDaemonController struct {
 	startErr    error
+	stopErr     error
+	removeErr   error
 	startCalled bool
 	detachArg   bool
+	stopKilled  bool
 }
 
 func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ bool) error {
@@ -268,10 +274,10 @@ func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ b
 }
 
 func (f *fakeDaemonController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
-	return false, nil
+	return f.stopKilled, f.stopErr
 }
 func (f *fakeDaemonController) IsRunning(_ context.Context) bool     { return true }
-func (f *fakeDaemonController) Remove() error                        { return nil }
+func (f *fakeDaemonController) Remove() error                        { return f.removeErr }
 func (f *fakeDaemonController) Info(_ *cobra.Command)                {}
 func (f *fakeDaemonController) Logs(_ *cobra.Command, _ int, _ bool) {}
 func (f *fakeDaemonController) LogsHint() string                     { return "" }

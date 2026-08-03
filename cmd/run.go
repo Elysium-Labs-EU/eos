@@ -126,6 +126,24 @@ func isServiceRegistered(mgr manager.ServiceManager, serviceName string) (string
 	return serviceName, nil
 }
 
+// ensureServiceRegistered prints a "not registered, try eos add" hint and
+// returns helpers.ErrCommandFailed if serviceName isn't registered with mgr.
+// Shared by env/logs/reload/remove/stop, which otherwise duplicate this
+// check-and-message block verbatim.
+func ensureServiceRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
+	exists, err := mgr.IsServiceRegistered(serviceName)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	if !exists {
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+		return helpers.ErrCommandFailed
+	}
+	return nil
+}
+
 func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, error) {
 	_, err := mgr.GetServiceInstance(serviceName)
 	if err == nil {

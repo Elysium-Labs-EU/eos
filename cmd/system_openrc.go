@@ -161,15 +161,5 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFi
 	}
 	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "daemon started in background")
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, flagYes, identity)
 }

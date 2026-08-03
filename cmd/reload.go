@@ -65,15 +65,8 @@ instance untouched.`,
 
 			cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "reloading", ui.TextBold.Render(serviceName))
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
-			if err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			if !exists {
-				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
-				return helpers.ErrCommandFailed
+			if err := ensureServiceRegistered(cmd, mgr, serviceName); err != nil {
+				return err
 			}
 
 			reloader, ok := mgr.(serviceReloader)

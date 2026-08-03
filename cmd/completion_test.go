@@ -423,6 +423,36 @@ func TestRefreshInstalledCompletions_WarnsOnExecFailure(t *testing.T) {
 	}
 }
 
+// TestRefreshInstalledCompletions_WarnsOnWriteFailure covers the
+// os.WriteFile error branch (cmd/completion.go:109-111): the completion
+// target path exists as a *directory* rather than a file, so the initial
+// os.Stat "is it installed?" probe still succeeds (entering the refresh
+// path), the fake binary's exec still succeeds, but the final write of the
+// refreshed script fails because its destination is a directory — a real,
+// permission-independent failure distinct from the exec-failure branch
+// TestRefreshInstalledCompletions_WarnsOnExecFailure already covers.
+func TestRefreshInstalledCompletions_WarnsOnWriteFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	zshPath, err := completionTargetPath("zsh")
+	if err != nil {
+		t.Fatalf("resolving zsh target path: %v", err)
+	}
+	if mkdirErr := os.MkdirAll(zshPath, 0o750); mkdirErr != nil {
+		t.Fatalf("seeding zsh completion path as a directory: %v", mkdirErr)
+	}
+
+	root, out, _, tempDir := setupCmd(t)
+	fakeBinary := writeFakeBinary(t, tempDir, `echo "NEWSCRIPT"`)
+
+	refreshInstalledCompletions(t.Context(), root, fakeBinary)
+
+	if !strings.Contains(out.String(), "could not write refreshed zsh completion") {
+		t.Errorf("expected write-failure warning, got: %s", out.String())
+	}
+}
+
 func TestPatchZshrc_AppendsToExistingFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -447,5 +477,38 @@ func TestPatchZshrc_AppendsToExistingFile(t *testing.T) {
 	}
 	if !strings.Contains(content, "fpath=(/home/user/.zsh/completions $fpath)") {
 		t.Errorf("fpath line not appended, got: %s", content)
+	}
+}
+
+// TestCompletionInteractive_PatchZshrcError covers the patchZshrc error
+// branch inside runInteractiveCompletion (cmd/completion.go:148-149).
+// ~/.zshrc is pre-created as a *directory* rather than a regular file, so
+// os.ReadFile inside patchZshrc fails with a genuine (non-IsNotExist) error
+// that propagates up as the "could not patch ~/.zshrc" warning, while the
+// rest of the install (writing the completion script itself) still succeeds.
+func TestCompletionInteractive_PatchZshrcError(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := os.Mkdir(filepath.Join(home, ".zshrc"), 0o755); err != nil {
+		t.Fatalf("seeding ~/.zshrc as a directory: %v", err)
+	}
+
+	root, out, _, _ := setupCmd(t)
+	root.SetArgs([]string{"completion"})
+	root.SetIn(&slowReader{strings.NewReader("y\n")})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "could not patch ~/.zshrc") {
+		t.Errorf("expected patch-failure warning, got: %s", out.String())
+	}
+
+	targetPath := filepath.Join(home, ".zsh", "completions", "_eos")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Errorf("expected completion script to still be installed despite the patch failure: %v", err)
 	}
 }

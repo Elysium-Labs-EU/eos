@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
@@ -343,3 +345,72 @@ func TestInitCmd_NextStep(t *testing.T) {
 		t.Errorf("next step missing path %q, got: %s", wantPath, out)
 	}
 }
+
+// TestInitCmd_NonexistentDir covers the os.Stat/os.IsNotExist branch
+// (cmd/init.go:62-65): pointing init at a directory that doesn't exist must
+// fail up front, before any prompting starts.
+func TestInitCmd_NonexistentDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"init", dir})
+
+	err := root.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "directory does not exist") {
+		t.Errorf("expected 'directory does not exist', got: %s", buf.String())
+	}
+}
+
+// TestInitCmd_WriteFileError covers the os.WriteFile error branch
+// (cmd/init.go:126-129). service.yaml is pre-created as a *directory* at the
+// output path rather than a regular file: os.Stat still succeeds so init
+// proceeds past the exists/overwrite prompt (satisfied here via --force), but
+// the final os.WriteFile of the generated config fails because its target is
+// a directory, not a file — a real, permission-independent failure mode.
+func TestInitCmd_WriteFileError(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "service.yaml")
+	if err := os.Mkdir(outputPath, 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&slowReader{strings.NewReader("svc\napp.js\ns\n\n")})
+	root.SetArgs([]string{"init", "--force", dir})
+
+	err := root.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "writing file") {
+		t.Errorf("expected 'writing file' error, got: %s", buf.String())
+	}
+}
+
+// Not tested, and why:
+//
+// cmd/init.go:58 (filepath.Abs error resolving the target directory) —
+// same as add.go's identical pattern: filepath.Abs only fails when
+// os.Getwd() fails, which would require deleting the test binary's own
+// working directory — an unsafe, non-isolated mutation of global process
+// state shared with every other test in this package.
+//
+// cmd/init.go:122 (yaml.Marshal error) — initServiceConfig is a plain
+// struct of strings, ints, and a pointer to another plain struct; yaml.v3
+// cannot fail marshaling it (no channels, funcs, or cyclic references are
+// possible here), so this branch is unreachable dead code from any real
+// input the command can construct.

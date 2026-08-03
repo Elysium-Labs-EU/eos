@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"os"
@@ -3171,5 +3172,621 @@ func TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles(
 		if msg != errMsgs[0] {
 			t.Errorf("cycle %d: error message changed/grew across cycles.\n  cycle 0: %s\n  cycle %d: %s", i, errMsgs[0], i, msg)
 		}
+	}
+}
+
+// logFailManager wraps a monitorManager and forces LogToServiceStdout and/or
+// LogToServiceStderr to return a configured error, to exercise the health
+// monitor's log-write failure branches without needing a genuinely unwritable
+// log directory (permission-based fault injection is already covered
+// elsewhere, e.g. TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop).
+type logFailManager struct {
+	monitorManager
+	stdoutErr error
+	stderrErr error
+}
+
+func (m *logFailManager) LogToServiceStdout(serviceName string, message string) error {
+	if m.stdoutErr != nil {
+		return m.stdoutErr
+	}
+	return m.monitorManager.LogToServiceStdout(serviceName, message)
+}
+
+func (m *logFailManager) LogToServiceStderr(serviceName string, message string) error {
+	if m.stderrErr != nil {
+		return m.stderrErr
+	}
+	return m.monitorManager.LogToServiceStderr(serviceName, message)
+}
+
+func readDaemonLog(t *testing.T, daemonConfig config.DaemonConfig) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
+	if err != nil {
+		t.Fatalf("failed to read daemon log: %v", err)
+	}
+	return string(content)
+}
+
+// TestHealthMonitor_CheckStartProcess_LogWriteFailureLogged covers the
+// otherwise-untested branch where checkStartProcess successfully detects a
+// Starting service is now alive and ready, but the "now running" breadcrumb
+// write to the service's own log fails (e.g. disk full) - the monitor must
+// log the failure and still persist the state transition.
+func TestHealthMonitor_CheckStartProcess_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+
+	mgr := &logFailManager{monitorManager: realMgr, stdoutErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "log-write-fail-svc"
+	fullDirPath := filepath.Join(tempDir, "log-write-fail-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create project directory: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("create service catalog entry failed: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("error registering service: %v", err)
+	}
+
+	pgid, err := realMgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || processHistoryEntry == nil {
+		t.Fatalf("failed to get process history entry: %v", err)
+	}
+
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceOutput, logContent)
+	}
+
+	// The state transition itself must still have gone through: a log-write
+	// failure is a breadcrumb problem, not a reason to leave the DB stale.
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || updated == nil {
+		t.Fatal("failed to get updated process history")
+		return
+	}
+	if updated.State != types.ProcessStateRunning {
+		t.Errorf("expected state Running despite log-write failure, got %v", updated.State)
+	}
+}
+
+// TestHealthMonitor_CheckStartProcess_UpdateHistoryFailureLogged covers the
+// branch where checkStartProcess confirms the process is alive and ready, but
+// persisting the Starting->Running transition fails because the PGID was
+// never registered in process_history (e.g. the row disappeared underneath
+// it) - it must log the failure rather than silently drop the state change.
+func TestHealthMonitor_CheckStartProcess_UpdateHistoryFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "update-history-fail-svc"
+	fullDirPath := filepath.Join(tempDir, "update-history-fail-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create project directory: %v", err)
+	}
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName), testutil.WithPort(0))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(serviceName, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("create service catalog entry failed: %v", err)
+	}
+
+	// Log files exist so the breadcrumb write itself succeeds - only the DB
+	// update is made to fail.
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+
+	// A live PGID (this test process's own group) that was never registered
+	// in process_history, so UpdateProcessHistoryEntry affects zero rows.
+	ownPgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+	startedAt := time.Now()
+	process := &types.ProcessHistory{PGID: ownPgid, ServiceName: serviceName, State: types.ProcessStateStarting, StartedAt: &startedAt}
+
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, process, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_UpdateProcessEntry_DBFailureLogged covers updateProcessEntry's
+// error branch directly: a heartbeat/threshold update targeting a PGID absent from
+// process_history must be logged, not silently dropped.
+func TestHealthMonitor_UpdateProcessEntry_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "update-entry-fail-svc"
+	const unregisteredPGID = 888881
+
+	rss := int64(1234)
+	hm.updateProcessEntry(t.Context(), unregisteredPGID, &rss, &rss, nil, serviceName)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_CheckCronRestart_LogWriteFailureLogged covers the branch
+// where a due cron restart's "cron restart triggered" breadcrumb fails to
+// write to the service's own log - the restart must still be attempted, but
+// the log-write failure itself must be logged.
+func TestHealthMonitor_CheckCronRestart_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+	mgr := &logFailManager{monitorManager: realMgr, stdoutErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "cron-log-fail-svc"
+	fullDirPath := filepath.Join(tempDir, "cron-log-fail-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCronRestart("0 3 * * *"),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("create service catalog entry failed: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+		t.Fatalf("error registering service: %v", err)
+	}
+
+	pgid, err := realMgr.StartService(serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("service unable to start: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+	past := time.Now().Add(-1 * time.Hour)
+	instance.NextRestartAt = &past
+
+	hm.checkCronRestart(t.Context(), serviceCatalogEntry, instance, "0 3 * * *")
+	t.Cleanup(func() {
+		if latest, latestErr := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName); latestErr == nil && latest != nil {
+			_ = syscall.Kill(-latest.PGID, syscall.SIGKILL)
+		}
+	})
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_DispatchMemoryAction_Warning_LogWriteFailureLogged covers
+// the memory-warning breadcrumb's log-write failure branch.
+func TestHealthMonitor_DispatchMemoryAction_Warning_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	mgr := &logFailManager{monitorManager: realMgr, stdoutErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "dispatch-memory-log-fail-svc"
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+	const pgid = 999901
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("failed to register process history: %v", err)
+	}
+
+	service := &types.ServiceCatalogEntry{Name: serviceName}
+	process, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || process == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+
+	hm.dispatchMemoryAction(t.Context(), service, process, instance, ReasonWarning, pgid, 5000, true, 12.5, true)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_DispatchMemoryAction_ReasonNone_DBFailureLogged covers the
+// steady-state heartbeat update's DB-failure branch: a PGID absent from
+// process_history must produce a logged failure, not a silent no-op.
+func TestHealthMonitor_DispatchMemoryAction_ReasonNone_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "dispatch-reason-none-fail-svc"
+	const unregisteredPGID = 888882
+
+	service := &types.ServiceCatalogEntry{Name: serviceName}
+	process := &types.ProcessHistory{PeakRssMemoryKb: 1000}
+	instance := &types.ServiceInstance{Name: serviceName}
+
+	hm.dispatchMemoryAction(t.Context(), service, process, instance, ReasonNone, unregisteredPGID, 2000, true, 10.0, true)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_RestartOnMemoryThreshold_LogWriteFailureLogged covers the
+// "auto restarted due to memory limits" breadcrumb's log-write failure branch,
+// reached after a successful memory-threshold restart.
+func TestHealthMonitor_RestartOnMemoryThreshold_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	mgr := &logFailManager{monitorManager: realMgr, stderrErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	fullDirPath := filepath.Join(tempDir, "restart-threshold-log-fail-project")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("failed to create project dir: %v", mkdirErr)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	const serviceName = "restart-threshold-log-fail-svc"
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = realMgr.AddServiceCatalogEntry(entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	pgid, err := realMgr.StartService(serviceName)
+	if err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+
+	// Backdate StartedAt so canRestart's backoff window has already elapsed.
+	if updateErr := db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
+		StartedAt: new(time.Now().Add(-5 * time.Minute)),
+	}); updateErr != nil {
+		t.Fatalf("failed to backdate StartedAt: %v", updateErr)
+	}
+
+	process, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || process == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+	instance, err := hm.mgr.GetServiceInstance(serviceName)
+	if err != nil || instance == nil {
+		t.Fatalf("failed to get service instance: %v", err)
+	}
+
+	rssKb := int64(1024)
+	hm.restartOnMemoryThreshold(t.Context(), entry, process, instance, pgid, rssKb, &rssKb, &rssKb, "soft", 5*time.Second, 200*time.Millisecond)
+
+	newProcess, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	if err != nil || newProcess == nil {
+		t.Fatalf("failed to get new process history: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-newProcess.PGID, syscall.SIGKILL) })
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceErrOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceErrOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_HandleRestartFailure_DBFailureLogged covers
+// handleRestartFailure's DB-update-failure branch for a non-permission
+// restart error: a PGID absent from process_history must produce a logged
+// failure rather than a silent drop of the restart-failed breadcrumb.
+func TestHealthMonitor_HandleRestartFailure_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "handle-restart-fail-db-svc"
+	const unregisteredPGID = 888883
+
+	// Log files exist so LogToServiceStderr succeeds - only the DB update
+	// (targeting a PGID never registered in process_history) is made to fail.
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	hm.handleRestartFailure(t.Context(), serviceName, unregisteredPGID, 0, errors.New("exec: not found"), "", false)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessRunning_LogWriteFailureLogged covers
+// markProcessRunning's "is running" breadcrumb log-write failure branch.
+func TestHealthMonitor_MarkProcessRunning_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	mgr := &logFailManager{monitorManager: realMgr, stdoutErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "mark-running-log-fail-svc"
+	const pgid = 888884
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateUnknown); err != nil {
+		t.Fatalf("failed to register process history: %v", err)
+	}
+
+	hm.markProcessRunning(t.Context(), pgid, serviceName, 0)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessRunning_DBFailureLogged covers
+// markProcessRunning's DB-update-failure branch: a PGID absent from
+// process_history must produce a logged failure.
+func TestHealthMonitor_MarkProcessRunning_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "mark-running-db-fail-svc"
+	const unregisteredPGID = 888885
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+
+	hm.markProcessRunning(t.Context(), unregisteredPGID, serviceName, 0)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessFailed_LogWriteFailureLogged covers
+// markProcessFailed's error-breadcrumb log-write failure branch.
+func TestHealthMonitor_MarkProcessFailed_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	mgr := &logFailManager{monitorManager: realMgr, stderrErr: errors.New("disk full")}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "mark-failed-log-fail-svc"
+	const pgid = 888886
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("failed to register process history: %v", err)
+	}
+
+	hm.markProcessFailed(t.Context(), pgid, serviceName, slog.LevelError, "["+serviceName+"] is not running")
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceErrOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceErrOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessFailed_DBFailureLogged covers
+// markProcessFailed's DB-update-failure branch: a PGID absent from
+// process_history must produce a logged failure.
+func TestHealthMonitor_MarkProcessFailed_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "mark-failed-db-fail-svc"
+	const unregisteredPGID = 888887
+	if _, _, err = mgr.NewServiceLogFiles(serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+
+	hm.markProcessFailed(t.Context(), unregisteredPGID, serviceName, slog.LevelError, "["+serviceName+"] is not running")
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
 	}
 }

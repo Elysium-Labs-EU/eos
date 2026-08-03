@@ -646,6 +646,31 @@ Otherwise, starts the daemon detached in the background by default; control retu
 	daemonCmd.AddCommand(stopCmd)
 }
 
+// resolveDaemonControllerPreRun loads the system config via getConfig and
+// builds the DaemonController for it, printing an error and exiting on
+// either failure. Shared by newSystemCmd and newDaemonCmd, whose
+// PersistentPreRun bodies were otherwise byte-identical.
+func resolveDaemonControllerPreRun(cmd *cobra.Command, getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) DaemonController {
+	baseDir, systemConfig, identity, err := getConfig()
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+		os.Exit(1)
+		return nil
+	}
+	if systemConfig == nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "getting config: got a nil system config")
+		os.Exit(1)
+		return nil
+	}
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
+		os.Exit(1)
+		return nil
+	}
+	return ctrl
+}
+
 func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	var ctrl DaemonController
 
@@ -654,16 +679,7 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Ident
 		Short: "Manage the deployment daemon",
 		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			baseDir, systemConfig, identity, err := getConfig()
-			if err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
-				os.Exit(1)
-			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
-			if err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
-				os.Exit(1)
-			}
+			ctrl = resolveDaemonControllerPreRun(cmd, getConfig)
 		},
 	}
 
@@ -778,6 +794,24 @@ func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose
 	}
 
 	return confirmForkAlive(ctx, cfg)
+}
+
+// restartDaemonStandaloneIfConfirmed prompts to restart the daemon standalone
+// after a startup/unstartup change, forking it and reporting the outcome.
+// Shared by system.go's unstartupCmd/unstartupCmdLaunchd and
+// system_openrc.go's openrcUnstartupCmd, which otherwise repeat this
+// prompt-fork-report sequence verbatim.
+func restartDaemonStandaloneIfConfirmed(ctx context.Context, cmd *cobra.Command, flagYes bool, identity userutil.Identity) error {
+	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
+		return nil
+	}
+	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
+		return helpers.ErrCommandFailed
+	}
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), msgDaemonStartedBg)
+	return nil
 }
 
 // ensureDaemonNotRunning errors if a live daemon already holds cfg's PID

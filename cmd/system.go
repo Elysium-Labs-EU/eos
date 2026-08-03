@@ -176,6 +176,25 @@ var supportedPlatforms = []string{
 	"linux-arm64",
 }
 
+// loadSystemConfigAndFlags loads the system config and resolves the shared
+// verbose/--yes flags used by the startup/unstartup commands, printing to
+// printCmd and returning helpers.ErrCommandFailed on failure so callers only
+// need to check err != nil.
+func loadSystemConfigAndFlags(cmd *cobra.Command, printCmd *cobra.Command) (installDir string, systemConfig *config.SystemConfig, identity userutil.Identity, verbose, flagYes bool, err error) {
+	installDir, _, systemConfig, identity, err = newSystemConfig()
+	if err != nil {
+		printCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return installDir, systemConfig, identity, verbose, flagYes, helpers.ErrCommandFailed
+	}
+	verbose, _ = cmd.Flags().GetBool("verbose")
+	flagYes, err = cmd.Flags().GetBool("yes")
+	if err != nil {
+		printCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return installDir, systemConfig, identity, verbose, flagYes, helpers.ErrCommandFailed
+	}
+	return installDir, systemConfig, identity, verbose, flagYes, nil
+}
+
 func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	var ctrl DaemonController // closed over by all subcommands below
 
@@ -184,16 +203,10 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 		Short: "Manage the eos system settings",
 		Long:  `Manage eos system settings, check for updates, and inspect runtime configuration.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			_, baseDir, systemConfig, identity, err := newSystemConfig()
-			if err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
-				os.Exit(1)
-			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
-			if err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
-				os.Exit(1)
-			}
+			ctrl = resolveDaemonControllerPreRun(cmd, func() (string, *config.SystemConfig, userutil.Identity, error) {
+				_, baseDir, systemConfig, identity, err := newSystemConfig()
+				return baseDir, systemConfig, identity, err
+			})
 		},
 	}
 
@@ -231,16 +244,9 @@ On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires ro
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			installDir, _, systemConfig, _, err := newSystemConfig()
+			installDir, systemConfig, _, verbose, flagYes, err := loadSystemConfigAndFlags(cmd, systemCmd)
 			if err != nil {
-				systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			flagYes, err := cmd.Flags().GetBool("yes")
-			if err != nil {
-				systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
+				return err
 			}
 
 			if runtime.GOOS == "darwin" {
@@ -299,16 +305,9 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, systemConfig, identity, err := newSystemConfig()
+			_, systemConfig, identity, verbose, flagYes, err := loadSystemConfigAndFlags(cmd, systemCmd)
 			if err != nil {
-				systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			flagYes, err := cmd.Flags().GetBool("yes")
-			if err != nil {
-				systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
+				return err
 			}
 
 			if runtime.GOOS == "darwin" {
@@ -1137,17 +1136,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), msgDaemonStartedBg)
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, flagYes, identity)
 }
 
 type plistData struct {
@@ -1472,17 +1461,7 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig c
 	}
 	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), msgDaemonStartedBg)
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, flagYes, identity)
 }
 
 // cleanupTempDir removes a download temp dir, printing a manual-removal hint if

@@ -368,6 +368,27 @@ func TestSnapshotRestoreCommandCorruptSnapshotFile(t *testing.T) {
 	}
 }
 
+// TestSnapshotSaveCommandWriteError covers the manager.SaveSnapshot error
+// branch (cmd/snapshot.go:56-59). Repointing EOS_BASE_DIR at a directory
+// that doesn't exist (and that SaveSnapshot never creates) makes the
+// underlying os.WriteFile fail with ENOENT — config.GetBaseDir itself only
+// validates ownership of a path that already exists, so a nonexistent
+// override is otherwise accepted right up until the write.
+func TestSnapshotSaveCommandWriteError(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupCmd(t)
+
+	t.Setenv("EOS_BASE_DIR", filepath.Join(tempDir, "does-not-exist"))
+
+	cmd.SetArgs([]string{"snapshot", "save"})
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "saving snapshot") {
+		t.Errorf("expected 'saving snapshot' error, got: %s", errBuf.String())
+	}
+}
+
 func TestSnapshotSaveCommandServiceInstanceLookupError(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
