@@ -300,6 +300,13 @@ func TestPrepareUserBus_EnsureUserBusAvailableError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving effective user: %v", err)
 	}
+	effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+	if credErr != nil {
+		t.Fatalf("resolving effective uid: %v", credErr)
+	}
+	if isAccessibleDir(userRuntimeDir(int(effectiveUID)), int(effectiveUID)) {
+		t.Skip("skipping: a real user bus dir exists for this uid on this runner (common on systemd/logind CI images) — clearing XDG_RUNTIME_DIR alone can't simulate 'no bus available' here")
+	}
 	c, _, errBuf := makeTestCmd(t)
 	setStdin(c, "n\n") // decline enabling linger
 	t.Setenv("XDG_RUNTIME_DIR", "")
@@ -689,6 +696,9 @@ func TestStartupCmdLaunchd_WritePlistFileError(t *testing.T) {
 // TestStartupCmdLaunchd_UserAgentFullPath exercises the userAgent=true branch
 // end to end — existing tests in system_test.go only cover userAgent=false.
 func TestStartupCmdLaunchd_UserAgentFullPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: a LaunchAgent's gui/<uid> domain is a per-user concept, not meaningful for the root uid a root CI runner reports")
+	}
 	tempDir := t.TempDir()
 	c, outBuf, _ := makeTestCmd(t)
 	setStdin(c, "y\nn\n") // confirm plist creation, decline restart
