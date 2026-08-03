@@ -123,7 +123,7 @@ OS_INTEGRATION_EXEMPT = {
     ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
     ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 722),
     ("internal/ownership/ownership.go", "Align", 48),
-    ("cmd/system.go", "installUpdatedBinary", 1563),
+    ("cmd/system.go", "installUpdatedBinary", 1583),
     ("internal/process/daemon.go", "StartStandaloneDaemon", 55),
     ("internal/process/daemon.go", "bootService", 117),
     ("internal/process/daemon.go", "newStandaloneDaemon", 336),
@@ -132,7 +132,7 @@ OS_INTEGRATION_EXEMPT = {
     ("internal/process/peercred_other.go", "peerUID", 15),
     ("internal/manager/local_manager.go", "*LocalManager.pipeToLogFile", 424),
     ("internal/manager/local_manager.go", "*LocalManager.pipeToErrorLogFile", 457),
-    ("cmd/daemon.go", "systemdDaemonController.Stop", 188),
+    ("cmd/daemon.go", "systemdDaemonController.Stop", 201),
     ("internal/manager/sink_process.go", "*sinkProcess.runOnce", 122),
 }
 
