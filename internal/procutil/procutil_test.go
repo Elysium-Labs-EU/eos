@@ -105,17 +105,29 @@ func TestCPUTime_BusyProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CPUTime(%d): %v", pgid, err)
 	}
-	time.Sleep(400 * time.Millisecond)
-	second, err := CPUTime(pgid)
-	if err != nil {
-		t.Fatalf("CPUTime(%d) second read: %v", pgid, err)
-	}
 
-	// A fully busy single process should accrue a large fraction of the wall
-	// interval as CPU time; require at least 100ms over the 400ms window.
-	if delta := second - first; delta < 100*time.Millisecond {
-		t.Errorf("busy CPUTime delta = %v, want a substantial fraction of 400ms", delta)
+	// A fully busy single process should accrue a large fraction of wall-clock
+	// time as CPU time. Poll for the threshold instead of taking one
+	// fixed-window sample: on a CI machine under heavy contention the busy
+	// loop itself gets scheduled less often, so a single 400ms window can
+	// legitimately fall short without CPUTime being broken. Only a delta that
+	// never advances relative to wall time over a generous ceiling indicates
+	// a real regression.
+	const wantDelta = 100 * time.Millisecond
+	deadline := time.Now().Add(5 * time.Second)
+	var delta time.Duration
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		second, err := CPUTime(pgid)
+		if err != nil {
+			t.Fatalf("CPUTime(%d) second read: %v", pgid, err)
+		}
+		delta = second - first
+		if delta >= wantDelta {
+			return
+		}
 	}
+	t.Errorf("busy CPUTime delta = %v after 5s, want at least %v", delta, wantDelta)
 }
 
 func TestStartTime(t *testing.T) {
