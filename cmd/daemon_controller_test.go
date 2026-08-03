@@ -403,12 +403,18 @@ func TestSystemdDaemonController_Stop(t *testing.T) {
 	})
 
 	t.Run("user unit prepares the bus before resolving systemctl", func(t *testing.T) {
-		// No accessible XDG_RUNTIME_DIR in the test environment, so this
-		// exercises the bus-preparation path in the -u branch, declining the
-		// enable-linger prompt rather than shelling out to loginctl.
-		t.Setenv("XDG_RUNTIME_DIR", "")
+		// checkDir is faked to unconditionally report "not accessible" so this
+		// exercises the bus-preparation path in the -u branch deterministically,
+		// declining the enable-linger prompt, regardless of what /run/user/<uid>
+		// or XDG_RUNTIME_DIR genuinely look like on the machine running the test —
+		// on a root-run CI job /run/user/0 is real and root-owned, which would
+		// make the real isAccessibleDir check pass and this test flake (issue
+		// found in review round 1).
 		stubPathExecutable(t, "systemctl", "exit 0")
-		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return false },
+		}
 		cmd, _, _ := makeTestCmd(t)
 		setStdin(cmd, "n\n")
 		if _, err := c.Stop(t.Context(), cmd, false); err == nil {

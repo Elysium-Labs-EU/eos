@@ -766,7 +766,7 @@ func TestEnsureUserBusAvailable_CorrectsWhenCurrentOwnedByOtherUser(t *testing.T
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -800,7 +800,7 @@ func TestEnsureUserBusAvailable_AcceptsExpectedOwnedByTargetUIDUnderSudo(t *test
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", targetUID, expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", targetUID, expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -822,7 +822,7 @@ func TestEnsureUserBusAvailable_CorrectsStaleEnvVar(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, true, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {
@@ -844,7 +844,7 @@ func TestEnsureUserBusAvailable_DeclinePrompt(t *testing.T) {
 		return nil, nil
 	}
 
-	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run)
+	err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run, isAccessibleDir)
 	if err == nil {
 		t.Fatal("expected error when user declines enabling linger")
 	}
@@ -865,7 +865,7 @@ func TestEnsureUserBusAvailable_EnablesLingerAndRecovers(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run); err != nil {
+	if err := ensureUserBusAvailable(t.Context(), c, false, "testuser", os.Getuid(), expected, run, isAccessibleDir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := os.Getenv("XDG_RUNTIME_DIR"); got != expected {

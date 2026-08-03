@@ -810,6 +810,13 @@ func isAccessibleDir(path string, uid int) bool {
 	return int(stat.Uid) == uid
 }
 
+// dirAccessCheckFn matches isAccessibleDir's signature; ensureUserBusAvailable takes it as a
+// parameter (isAccessibleDir in production) instead of calling isAccessibleDir directly, so tests
+// can inject a fake that doesn't depend on the real /run/user/<uid> — needed because on a root-run
+// CI job /run/user/0 genuinely exists and is root-owned, making the real check pass in an
+// environment a test wants to treat as "no bus available".
+type dirAccessCheckFn func(path string, uid int) bool
+
 // ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
 // condition that causes `systemctl --user ...` to fail with "Failed to connect to bus: Permission
 // denied". This happens when XDG_RUNTIME_DIR is unset/stale (fixable by correcting the env var) or
@@ -817,16 +824,18 @@ func isAccessibleDir(path string, uid int) bool {
 // expected is the runtime dir this process should be using (userRuntimeDir(uid) in production;
 // injected directly in tests so they don't depend on the real /run/user/<uid>). uid is the target
 // user's uid — the user the systemd --user session belongs to, resolved via
-// userutil.EffectiveUser() by the caller, not necessarily os.Getuid() (root under sudo).
-func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username string, uid int, expected string, run runCmdFn) error {
+// userutil.EffectiveUser() by the caller, not necessarily os.Getuid() (root under sudo). checkDir
+// is isAccessibleDir in production; tests inject a fake to stay deterministic regardless of what
+// runtime dirs genuinely exist in the environment running the test.
+func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username string, uid int, expected string, run runCmdFn, checkDir dirAccessCheckFn) error {
 	current := os.Getenv("XDG_RUNTIME_DIR")
 	helpers.Debugf(cmd, verbose, "XDG_RUNTIME_DIR=%q (expected %q)", current, expected)
 
-	if isAccessibleDir(current, uid) {
+	if checkDir(current, uid) {
 		return nil
 	}
 
-	if isAccessibleDir(expected, uid) {
+	if checkDir(expected, uid) {
 		helpers.Debugf(cmd, verbose, "correcting XDG_RUNTIME_DIR to %q", expected)
 		if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 			return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
@@ -853,7 +862,7 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 
 	for attempt := 1; attempt <= 5; attempt++ {
 		helpers.Debugf(cmd, verbose, "checking for %q (attempt %d/5)", expected, attempt)
-		if isAccessibleDir(expected, uid) {
+		if checkDir(expected, uid) {
 			if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 				return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
 			}
@@ -953,7 +962,7 @@ func prepareUserBus(ctx context.Context, cmd *cobra.Command, verbose bool, effec
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
 		return helpers.ErrCommandFailed
 	}
-	if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run); err != nil {
+	if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run, isAccessibleDir); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
 		return helpers.ErrCommandFailed
 	}

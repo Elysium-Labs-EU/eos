@@ -176,7 +176,11 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 }
 
 type systemdDaemonController struct {
-	cfg config.SystemdConfig
+	// checkDir is isAccessibleDir in production (set by newDaemonController); tests inject a
+	// fake so Stop's user-bus check doesn't depend on what runtime dirs genuinely exist in the
+	// environment running the test (e.g. a root-run CI job where /run/user/0 is real).
+	checkDir dirAccessCheckFn
+	cfg      config.SystemdConfig
 }
 
 func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
@@ -211,7 +215,7 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 		if credErr != nil {
 			return false, fmt.Errorf("getting current user credentials: %w", credErr)
 		}
-		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd); err != nil {
+		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd, c.checkDir); err != nil {
 			return false, fmt.Errorf("preparing user bus: %w", err)
 		}
 	}
@@ -489,7 +493,7 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 		}, nil
 	}
 	if cfg.Systemd != nil {
-		return systemdDaemonController{cfg: *cfg.Systemd}, nil
+		return systemdDaemonController{cfg: *cfg.Systemd, checkDir: isAccessibleDir}, nil
 	}
 	if cfg.Launchd != nil {
 		return launchdDaemonController{cfg: *cfg.Launchd, baseDir: baseDir}, nil

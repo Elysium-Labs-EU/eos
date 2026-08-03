@@ -192,10 +192,10 @@ func restoreSnapshotService(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 		return 0, fmt.Errorf("starting service: %w", err)
 	}
 	if result.Restarted {
-		printRestartedSuccessOuput(cmd, registeredService.Name, result.PGID)
+		printRestartedSuccessOutput(cmd, registeredService.Name, result.PGID)
 		return restoreOutcomeRestarted, nil
 	}
-	printStartedSuccessOuput(cmd, registeredService.Name, result.PGID)
+	printStartedSuccessOutput(cmd, registeredService.Name, result.PGID)
 	return restoreOutcomeStarted, nil
 }
 
