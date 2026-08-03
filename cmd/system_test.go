@@ -488,7 +488,7 @@ func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
 		t.Skip("skipping: the root path targets /etc/systemd/system, unsafe for a unit test")
 	}
 
-	cmd, _, _, tempDir := setupCmd(t)
+	cmd, outBuf, errBuf, tempDir := setupCmd(t)
 	t.Setenv("EOS_INSTALL_DIR", tempDir)
 
 	systemdDir := t.TempDir()
@@ -501,7 +501,7 @@ func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
 	cmd.SetArgs([]string{"system", "unstartup"})
 
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("expected unstartup to return nil when the removal prompt is declined, got: %v", err)
+		t.Fatalf("expected unstartup to return nil when the removal prompt is declined, got: %v\nstdout:\n%s\nstderr:\n%s", err, outBuf.String(), errBuf.String())
 	}
 }
 
