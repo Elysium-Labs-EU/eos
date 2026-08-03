@@ -2414,6 +2414,79 @@ func TestDispatchMemoryAction_warningAndNone(t *testing.T) {
 	}
 }
 
+// TestDispatchMemoryAction_softAndForceRestart proves the ReasonSoftRestart and
+// ReasonForceRestart branches of dispatchMemoryAction each route into
+// restartOnMemoryThreshold with the label/timing appropriate to their urgency.
+// The dispatched service has no catalog entry, so mgr.RestartService fails —
+// this also exercises restartOnMemoryThreshold's error path (updateProcessEntry
+// + log on failure) instead of a full restart.
+func TestDispatchMemoryAction_softAndForceRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	for i, tc := range []struct {
+		name   string
+		action RestartReason
+	}{
+		{"soft", ReasonSoftRestart},
+		{"force", ReasonForceRestart},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			serviceName := "dispatch-" + tc.name + "-restart-svc"
+			if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+				t.Fatalf("failed to register service instance: %v", err)
+			}
+			pgid := 999901 + i
+			if _, err = db.RegisterProcessHistoryEntry(t.Context(), pgid, 0, serviceName, types.ProcessStateRunning); err != nil {
+				t.Fatalf("failed to register process history: %v", err)
+			}
+			// Backdate StartedAt so canRestart's backoff window has already elapsed.
+			if updateErr := db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{
+				StartedAt: new(time.Now().Add(-5 * time.Minute)),
+			}); updateErr != nil {
+				t.Fatalf("failed to backdate StartedAt: %v", updateErr)
+			}
+
+			service := &types.ServiceCatalogEntry{Name: serviceName}
+			process, procErr := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+			if procErr != nil || process == nil {
+				t.Fatalf("failed to get process history: %v", procErr)
+			}
+			instance, instErr := hm.mgr.GetServiceInstance(t.Context(), serviceName)
+			if instErr != nil || instance == nil {
+				t.Fatalf("failed to get service instance: %v", instErr)
+			}
+
+			// No catalog entry was registered for serviceName, so
+			// mgr.RestartService fails inside restartOnMemoryThreshold —
+			// this dispatch call must not panic and must leave the instance
+			// unrestarted.
+			hm.dispatchMemoryAction(t.Context(), service, process, instance, tc.action, memorySample{
+				pgid: pgid, rssKb: 999999, sampled: true,
+			})
+
+			unchanged, getErr := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+			if getErr != nil || unchanged == nil {
+				t.Fatalf("failed to get process history: %v", getErr)
+			}
+			if unchanged.PGID != pgid {
+				t.Errorf("expected no restart (PGID unchanged) since service has no catalog entry, got new PGID %d", unchanged.PGID)
+			}
+		})
+	}
+}
+
 func TestRestartOnMemoryThreshold_soft(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))

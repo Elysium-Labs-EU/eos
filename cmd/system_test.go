@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -383,6 +384,124 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 
 	if !strings.Contains(outBuf.String(), "system unit startup removed") {
 		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+// failingRunCmd returns a runCmdFn that errors on its failOnCall'th call
+// (1-indexed) and succeeds on every other call.
+func failingRunCmd(t *testing.T, calls *[]string, failOnCall int) runCmdFn {
+	t.Helper()
+	n := 0
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		n++
+		*calls = append(*calls, strings.Join(append([]string{name}, args...), " "))
+		if n == failOnCall {
+			return []byte("boom"), errors.New("command failed")
+		}
+		return []byte("ok"), nil
+	}
+}
+
+func TestDisableAndRemoveSystemdUnit_StopFails(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+	var calls []string
+
+	err := disableAndRemoveSystemdUnit(t.Context(), c, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: filepath.Join(t.TempDir(), "eos.service"),
+	}, failingRunCmd(t, &calls, 1))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "stopping system unit") {
+		t.Errorf("expected stop error message, got: %s", errBuf.String())
+	}
+	if len(calls) != 1 {
+		t.Errorf("expected only the stop call to run, got: %v", calls)
+	}
+}
+
+func TestDisableAndRemoveSystemdUnit_DisableFails(t *testing.T) {
+	c, outBuf, errBuf := makeTestCmd(t)
+	var calls []string
+
+	err := disableAndRemoveSystemdUnit(t.Context(), c, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: filepath.Join(t.TempDir(), "eos.service"),
+	}, failingRunCmd(t, &calls, 2))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "disabling system unit") {
+		t.Errorf("expected disable error message, got: %s", errBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "system unit stopped") {
+		t.Errorf("expected the stop step to have succeeded first, got: %s", outBuf.String())
+	}
+	want := []string{"systemctl stop eos", "systemctl disable eos"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+	}
+}
+
+// TestSystemStartupCmd_SystemdBranchDeclined drives `eos system startup`
+// through the top-level RunE closure (cmd.ExecuteContext, not the lower
+// startupCmd helper other tests call directly) so the systemd wiring branch
+// itself — building systemdStartupParams and calling startupCmd — actually
+// executes. Declining the "create unit file?" prompt makes startupCmd return
+// before it ever calls the real execRunCmd, so this never touches the host's
+// actual systemd state.
+func TestSystemStartupCmd_SystemdBranchDeclined(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd startup wiring branch is linux-only")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("skipping: the root path targets /etc/systemd/system, unsafe for a unit test")
+	}
+
+	cmd, _, _, tempDir := setupCmd(t)
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "startup"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected startup to return nil when the unit-file prompt is declined, got: %v", err)
+	}
+}
+
+// TestSystemUnstartupCmd_SystemdBranchDeclined mirrors
+// TestSystemStartupCmd_SystemdBranchDeclined for `eos system unstartup`.
+// EOS_SYSTEMD_TARGET_DIR is pointed at a sandboxed directory pre-seeded with
+// a fake unit file so newSystemConfig resolves Daemon.Systemd as managed —
+// otherwise the RunE closure short-circuits on "no systemd startup
+// configured" before ever reaching the wiring lines this test targets.
+// Declining the removal prompt returns before any real systemctl call.
+func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd unstartup wiring branch is linux-only")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("skipping: the root path targets /etc/systemd/system, unsafe for a unit test")
+	}
+
+	cmd, _, _, tempDir := setupCmd(t)
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+
+	systemdDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(systemdDir, "eos.service"), []byte("[Unit]"), 0644); err != nil {
+		t.Fatalf("seeding fake unit file: %v", err)
+	}
+	t.Setenv("EOS_SYSTEMD_TARGET_DIR", systemdDir+"/")
+
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "unstartup"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected unstartup to return nil when the removal prompt is declined, got: %v", err)
 	}
 }
 

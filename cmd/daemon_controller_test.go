@@ -85,6 +85,39 @@ func touchFile(t *testing.T, path string) {
 	}
 }
 
+// TestStandaloneDaemonController_StartForeground proves the non-detached
+// (or under-systemd) branch of Start calls process.StartStandaloneDaemon
+// directly rather than forking — it runs the daemon inline and returns once
+// the daemon's wait loop observes ctx.Done(), instead of returning
+// immediately like the detach-and-fork branch does.
+func TestStandaloneDaemonController_StartForeground(t *testing.T) {
+	// A short os.MkdirTemp root, not t.TempDir(): the latter nests under this
+	// test's (long) name, and a unix socket path is capped at ~104 bytes —
+	// nesting under the test name alone can blow that budget.
+	tempDir, err := os.MkdirTemp("", "eos-sock-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+	_, sysCfg := setupDaemonTestEnv(t)
+	sysCfg.Daemon.Standalone.PIDFile = filepath.Join(tempDir, "eos.pid")
+	sysCfg.Daemon.Standalone.SocketPath = filepath.Join(tempDir, "eos.sock")
+	sysCfg.Daemon.Standalone.Log.LogDir = filepath.Join(tempDir, "logs")
+	c := &standaloneDaemonController{
+		baseDir: tempDir,
+		cfg:     *sysCfg.Daemon.Standalone,
+		health:  sysCfg.Health,
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	if err := c.Start(ctx, false, false, false); err != nil {
+		t.Errorf("expected Start to return nil once the context is done, got: %v", err)
+	}
+}
+
 func TestStandaloneDaemonController_LogsHint(t *testing.T) {
 	c := newStandaloneController(t, t.TempDir())
 	if got := c.LogsHint(); got != "eos daemon logs" {

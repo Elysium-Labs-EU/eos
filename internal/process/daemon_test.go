@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/otelx"
 	"github.com/Elysium-Labs-EU/eos/internal/procutil"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
@@ -626,9 +628,21 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 // handleRestartService, handleStopService, and handleGetVersion invoke.
 type fakeServiceManager struct {
 	manager.ServiceManager
-	restartFunc    func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
-	stopFunc       func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
-	getVersionFunc func() (types.GetVersionResponse, error)
+	restartFunc                   func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
+	stopFunc                      func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
+	getVersionFunc                func() (types.GetVersionResponse, error)
+	getServiceInstanceFunc        func(name string) (*types.ServiceInstance, error)
+	removeServiceInstanceFunc     func(name string) (bool, error)
+	startServiceFunc              func(name string) (int, error)
+	forceStopServiceFunc          func(name string) (manager.StopServiceResult, error)
+	addServiceCatalogEntryFunc    func(service *types.ServiceCatalogEntry) error
+	getServiceCatalogEntryFunc    func(name string) (types.ServiceCatalogEntry, error)
+	isServiceRegisteredFunc       func(name string) (bool, error)
+	removeServiceCatalogEntryFunc func(name string) (bool, error)
+	updateServiceCatalogEntryFunc func(name, newDirectoryPath, newConfigFileName string) error
+	getMostRecentProcessHistFunc  func(name string) (*types.ProcessHistory, error)
+	newServiceLogFilesFunc        func(serviceName string) (string, string, error)
+	getServiceLogFilePathFunc     func(serviceName string, errorLog bool) (*string, error)
 }
 
 func (f *fakeServiceManager) RestartService(_ context.Context, name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
@@ -641,6 +655,54 @@ func (f *fakeServiceManager) StopService(_ context.Context, name string, gracePe
 
 func (f *fakeServiceManager) GetVersion(_ context.Context) (types.GetVersionResponse, error) {
 	return f.getVersionFunc()
+}
+
+func (f *fakeServiceManager) GetServiceInstance(_ context.Context, name string) (*types.ServiceInstance, error) {
+	return f.getServiceInstanceFunc(name)
+}
+
+func (f *fakeServiceManager) RemoveServiceInstance(_ context.Context, name string) (bool, error) {
+	return f.removeServiceInstanceFunc(name)
+}
+
+func (f *fakeServiceManager) StartService(_ context.Context, name string) (int, error) {
+	return f.startServiceFunc(name)
+}
+
+func (f *fakeServiceManager) ForceStopService(_ context.Context, name string) (manager.StopServiceResult, error) {
+	return f.forceStopServiceFunc(name)
+}
+
+func (f *fakeServiceManager) AddServiceCatalogEntry(_ context.Context, service *types.ServiceCatalogEntry) error {
+	return f.addServiceCatalogEntryFunc(service)
+}
+
+func (f *fakeServiceManager) GetServiceCatalogEntry(_ context.Context, name string) (types.ServiceCatalogEntry, error) {
+	return f.getServiceCatalogEntryFunc(name)
+}
+
+func (f *fakeServiceManager) IsServiceRegistered(_ context.Context, name string) (bool, error) {
+	return f.isServiceRegisteredFunc(name)
+}
+
+func (f *fakeServiceManager) RemoveServiceCatalogEntry(_ context.Context, name string) (bool, error) {
+	return f.removeServiceCatalogEntryFunc(name)
+}
+
+func (f *fakeServiceManager) UpdateServiceCatalogEntry(_ context.Context, name, newDirectoryPath, newConfigFileName string) error {
+	return f.updateServiceCatalogEntryFunc(name, newDirectoryPath, newConfigFileName)
+}
+
+func (f *fakeServiceManager) GetMostRecentProcessHistoryEntry(_ context.Context, name string) (*types.ProcessHistory, error) {
+	return f.getMostRecentProcessHistFunc(name)
+}
+
+func (f *fakeServiceManager) NewServiceLogFiles(_ context.Context, serviceName string) (string, string, error) {
+	return f.newServiceLogFilesFunc(serviceName)
+}
+
+func (f *fakeServiceManager) GetServiceLogFilePath(_ context.Context, serviceName string, errorLog bool) (*string, error) {
+	return f.getServiceLogFilePathFunc(serviceName, errorLog)
 }
 
 func TestHandleRestartService(t *testing.T) {
@@ -799,6 +861,360 @@ func TestHandleStopService(t *testing.T) {
 		}
 		if !got.Stopped[4242] {
 			t.Errorf("expected pid 4242 marked stopped, got %+v", got.Stopped)
+		}
+	})
+}
+
+func TestHandleGetServiceInstance(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{getServiceInstanceFunc: func(name string) (*types.ServiceInstance, error) {
+			return nil, wantErr
+		}}
+		raw, _ := json.Marshal(types.GetServiceInstanceArgs{Name: "svc"})
+		resp := handleGetServiceInstance(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.GetServiceInstance errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{getServiceInstanceFunc: func(name string) (*types.ServiceInstance, error) {
+			return &types.ServiceInstance{Name: name}, nil
+		}}
+		raw, _ := json.Marshal(types.GetServiceInstanceArgs{Name: "svc"})
+		resp := handleGetServiceInstance(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got types.GetServiceInstanceResponse
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got.Instance.Name != "svc" {
+			t.Errorf("expected instance name svc, got %s", got.Instance.Name)
+		}
+	})
+}
+
+func TestHandleRemoveServiceInstance(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("remove failed")
+		mgr := &fakeServiceManager{removeServiceInstanceFunc: func(name string) (bool, error) { return false, wantErr }}
+		raw, _ := json.Marshal(types.RemoveServiceInstanceArgs{Name: "svc"})
+		resp := handleRemoveServiceInstance(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.RemoveServiceInstance errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{removeServiceInstanceFunc: func(name string) (bool, error) { return true, nil }}
+		raw, _ := json.Marshal(types.RemoveServiceInstanceArgs{Name: "svc"})
+		resp := handleRemoveServiceInstance(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]bool
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if !got["removed"] {
+			t.Errorf("expected removed=true, got %+v", got)
+		}
+	})
+}
+
+func TestHandleStartService(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("start failed")
+		mgr := &fakeServiceManager{startServiceFunc: func(name string) (int, error) { return 0, wantErr }}
+		raw, _ := json.Marshal(types.StartServiceArgs{Name: "svc"})
+		resp := handleStartService(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.StartService errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{startServiceFunc: func(name string) (int, error) { return 4242, nil }}
+		raw, _ := json.Marshal(types.StartServiceArgs{Name: "svc"})
+		resp := handleStartService(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]int
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got["pid"] != 4242 {
+			t.Errorf("expected pid 4242, got %d", got["pid"])
+		}
+	})
+}
+
+func TestHandleForceStopService(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("force stop failed")
+		mgr := &fakeServiceManager{forceStopServiceFunc: func(name string) (manager.StopServiceResult, error) {
+			return manager.StopServiceResult{}, wantErr
+		}}
+		raw, _ := json.Marshal(types.ForceStopServiceArgs{Name: "svc"})
+		resp := handleForceStopService(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.ForceStopService errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{forceStopServiceFunc: func(name string) (manager.StopServiceResult, error) {
+			return manager.StopServiceResult{Stopped: map[int]bool{4242: true}}, nil
+		}}
+		raw, _ := json.Marshal(types.ForceStopServiceArgs{Name: "svc"})
+		resp := handleForceStopService(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got manager.StopServiceResult
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if !got.Stopped[4242] {
+			t.Errorf("expected pid 4242 marked stopped, got %+v", got.Stopped)
+		}
+	})
+}
+
+func TestHandleAddServiceCatalogEntry(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("add failed")
+		mgr := &fakeServiceManager{addServiceCatalogEntryFunc: func(service *types.ServiceCatalogEntry) error { return wantErr }}
+		raw, _ := json.Marshal(types.AddServiceCatalogEntryArgs{Service: &types.ServiceCatalogEntry{Name: "svc"}})
+		resp := handleAddServiceCatalogEntry(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.AddServiceCatalogEntry errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{addServiceCatalogEntryFunc: func(service *types.ServiceCatalogEntry) error { return nil }}
+		raw, _ := json.Marshal(types.AddServiceCatalogEntryArgs{Service: &types.ServiceCatalogEntry{Name: "svc"}})
+		resp := handleAddServiceCatalogEntry(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+	})
+}
+
+func TestHandleGetServiceCatalogEntry(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{getServiceCatalogEntryFunc: func(name string) (types.ServiceCatalogEntry, error) {
+			return types.ServiceCatalogEntry{}, wantErr
+		}}
+		raw, _ := json.Marshal(types.GetServiceCatalogEntryArgs{Name: "svc"})
+		resp := handleGetServiceCatalogEntry(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.GetServiceCatalogEntry errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{getServiceCatalogEntryFunc: func(name string) (types.ServiceCatalogEntry, error) {
+			return types.ServiceCatalogEntry{Name: name}, nil
+		}}
+		raw, _ := json.Marshal(types.GetServiceCatalogEntryArgs{Name: "svc"})
+		resp := handleGetServiceCatalogEntry(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got types.ServiceCatalogEntry
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got.Name != "svc" {
+			t.Errorf("expected name svc, got %s", got.Name)
+		}
+	})
+}
+
+func TestHandleIsServiceRegistered(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{isServiceRegisteredFunc: func(name string) (bool, error) { return false, wantErr }}
+		raw, _ := json.Marshal(types.IsServiceRegisteredArgs{Name: "svc"})
+		resp := handleIsServiceRegistered(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.IsServiceRegistered errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{isServiceRegisteredFunc: func(name string) (bool, error) { return true, nil }}
+		raw, _ := json.Marshal(types.IsServiceRegisteredArgs{Name: "svc"})
+		resp := handleIsServiceRegistered(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]bool
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if !got["exists"] {
+			t.Errorf("expected exists=true, got %+v", got)
+		}
+	})
+}
+
+func TestHandleRemoveServiceCatalogEntry(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("remove failed")
+		mgr := &fakeServiceManager{removeServiceCatalogEntryFunc: func(name string) (bool, error) { return false, wantErr }}
+		raw, _ := json.Marshal(types.RemoveServiceCatalogEntryArgs{Name: "svc"})
+		resp := handleRemoveServiceCatalogEntry(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.RemoveServiceCatalogEntry errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{removeServiceCatalogEntryFunc: func(name string) (bool, error) { return true, nil }}
+		raw, _ := json.Marshal(types.RemoveServiceCatalogEntryArgs{Name: "svc"})
+		resp := handleRemoveServiceCatalogEntry(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]bool
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if !got["removed"] {
+			t.Errorf("expected removed=true, got %+v", got)
+		}
+	})
+}
+
+func TestHandleUpdateServiceCatalogEntry(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("update failed")
+		mgr := &fakeServiceManager{updateServiceCatalogEntryFunc: func(name, newDirectoryPath, newConfigFileName string) error {
+			return wantErr
+		}}
+		raw, _ := json.Marshal(types.UpdateServiceCatalogEntryArgs{Name: "svc", NewDirectoryPath: "/new", NewConfigFileName: "service.yaml"})
+		resp := handleUpdateServiceCatalogEntry(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.UpdateServiceCatalogEntry errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{updateServiceCatalogEntryFunc: func(name, newDirectoryPath, newConfigFileName string) error {
+			if name != "svc" || newDirectoryPath != "/new" || newConfigFileName != "service.yaml" {
+				t.Errorf("unexpected args: %s %s %s", name, newDirectoryPath, newConfigFileName)
+			}
+			return nil
+		}}
+		raw, _ := json.Marshal(types.UpdateServiceCatalogEntryArgs{Name: "svc", NewDirectoryPath: "/new", NewConfigFileName: "service.yaml"})
+		resp := handleUpdateServiceCatalogEntry(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+	})
+}
+
+func TestHandleGetMostRecentProcessHistoryEntry(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{getMostRecentProcessHistFunc: func(name string) (*types.ProcessHistory, error) {
+			return nil, wantErr
+		}}
+		raw, _ := json.Marshal(types.GetMostRecentProcessHistoryEntryArgs{Name: "svc"})
+		resp := handleGetMostRecentProcessHistoryEntry(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.GetMostRecentProcessHistoryEntry errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{getMostRecentProcessHistFunc: func(name string) (*types.ProcessHistory, error) {
+			return &types.ProcessHistory{ServiceName: name}, nil
+		}}
+		raw, _ := json.Marshal(types.GetMostRecentProcessHistoryEntryArgs{Name: "svc"})
+		resp := handleGetMostRecentProcessHistoryEntry(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got types.GetMostRecentProcessHistoryEntryResponse
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got.ProcessEntry.ServiceName != "svc" {
+			t.Errorf("expected service name svc, got %s", got.ProcessEntry.ServiceName)
+		}
+	})
+}
+
+func TestHandleNewServiceLogFiles(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("create failed")
+		mgr := &fakeServiceManager{newServiceLogFilesFunc: func(serviceName string) (string, string, error) {
+			return "", "", wantErr
+		}}
+		raw, _ := json.Marshal(types.NewServiceLogFilesArgs{ServiceName: "svc"})
+		resp := handleNewServiceLogFiles(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.NewServiceLogFiles errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{newServiceLogFilesFunc: func(serviceName string) (string, string, error) {
+			return "/log/out.log", "/log/err.log", nil
+		}}
+		raw, _ := json.Marshal(types.NewServiceLogFilesArgs{ServiceName: "svc"})
+		resp := handleNewServiceLogFiles(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]string
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got["logPath"] != "/log/out.log" || got["errorLogPath"] != "/log/err.log" {
+			t.Errorf("unexpected paths: %+v", got)
+		}
+	})
+}
+
+func TestHandleGetServiceLogFilePath(t *testing.T) {
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{getServiceLogFilePathFunc: func(serviceName string, errorLog bool) (*string, error) {
+			return nil, wantErr
+		}}
+		raw, _ := json.Marshal(types.GetServiceLogFilePathArgs{ServiceName: "svc"})
+		resp := handleGetServiceLogFilePath(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.GetServiceLogFilePath errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		path := "/log/out.log"
+		mgr := &fakeServiceManager{getServiceLogFilePathFunc: func(serviceName string, errorLog bool) (*string, error) {
+			return &path, nil
+		}}
+		raw, _ := json.Marshal(types.GetServiceLogFilePathArgs{ServiceName: "svc"})
+		resp := handleGetServiceLogFilePath(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got map[string]*string
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if got["filepath"] == nil || *got["filepath"] != path {
+			t.Errorf("unexpected filepath: %+v", got)
 		}
 	})
 }
@@ -998,5 +1414,133 @@ func TestHandleConnection_RootUIDAccepted(t *testing.T) {
 
 	if !resp.Success {
 		t.Fatalf("expected root to be authorized against a non-root daemon uid, got error: %s", resp.Error)
+	}
+}
+
+// TestBootPersistedServices_ListError proves a failure listing the service
+// catalog is wrapped with context and returned rather than silently
+// swallowed — the daemon can't recover persisted services it couldn't list.
+func TestBootPersistedServices_ListError(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	if err := db.CloseDBConnection(); err != nil {
+		t.Fatalf("CloseDBConnection: %v", err)
+	}
+
+	logger, buf := capturingLogger()
+	if err := bootPersistedServices(t.Context(), mgr, logger); err == nil {
+		t.Fatal("expected an error when listing the service catalog fails")
+	}
+	if !strings.Contains(buf.String(), "getting all service catalog entries") {
+		t.Errorf("expected the list failure to be logged, got: %s", buf.String())
+	}
+}
+
+// TestCatalogEntriesOrEmpty and TestServiceInstancesOrEmpty prove the daemon
+// telemetry gauge callbacks degrade to an empty slice (rather than panicking
+// or propagating an error the OTel SDK has no way to surface) when their
+// underlying query fails.
+func TestCatalogEntriesOrEmpty(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if got := catalogEntriesOrEmpty(t.Context(), mgr, testutil.NewTestLogger(t)); got != nil {
+		t.Errorf("expected no entries in an empty catalog, got: %+v", got)
+	}
+
+	if err := db.CloseDBConnection(); err != nil {
+		t.Fatalf("CloseDBConnection: %v", err)
+	}
+	if got := catalogEntriesOrEmpty(t.Context(), mgr, testutil.NewTestLogger(t)); got != nil {
+		t.Errorf("expected nil on query failure, got: %+v", got)
+	}
+}
+
+func TestServiceInstancesOrEmpty(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if got := serviceInstancesOrEmpty(t.Context(), mgr, testutil.NewTestLogger(t)); got != nil {
+		t.Errorf("expected no instances with none registered, got: %+v", got)
+	}
+
+	if err := db.CloseDBConnection(); err != nil {
+		t.Fatalf("CloseDBConnection: %v", err)
+	}
+	if got := serviceInstancesOrEmpty(t.Context(), mgr, testutil.NewTestLogger(t)); got != nil {
+		t.Errorf("expected nil on query failure, got: %+v", got)
+	}
+}
+
+// TestDaemonServe proves serve launches both the IPC command listener and the
+// health monitor as background goroutines rather than blocking the caller.
+func TestDaemonServe(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+
+	d := &daemon{
+		listener:    ln,
+		ctx:         ctx,
+		logger:      testutil.NewTestLogger(t),
+		db:          db,
+		mgr:         mgr,
+		otelHandles: otelx.NoopHandles(),
+	}
+
+	d.serve(&config.HealthConfig{}, config.ShutdownConfig{})
+
+	// Dial the listener so handleIncomingCommands's Accept loop actually
+	// hands a connection off to handleConnection, not just starts up idle.
+	conn, dialErr := net.Dial("tcp", ln.Addr().String())
+	if dialErr != nil {
+		t.Fatalf("dial: %v", dialErr)
+	}
+	// handleConnection reads a request off conn and would block on an empty
+	// dial; a JSON-decode error response is enough to let the accept-side
+	// goroutine finish rather than lingering past the test.
+	_ = json.NewEncoder(conn).Encode(types.DaemonRequest{Method: types.MethodGetVersion})
+	var resp types.DaemonResponse
+	_ = json.NewDecoder(conn).Decode(&resp)
+	_ = conn.Close()
+
+	// No further assertion beyond "did not block/panic": serve's job is
+	// only to launch the two goroutines and return immediately.
+	cancel()
+}
+
+// TestStartStandaloneDaemon_UnderSystemd proves the UnderSystemd branch
+// recovers persisted services (an empty catalog here, so recover is a
+// no-op) before returning, and that the daemon returns cleanly once its
+// context is canceled rather than blocking forever.
+func TestStartStandaloneDaemon_UnderSystemd(t *testing.T) {
+	// A short os.MkdirTemp root, not t.TempDir(): the latter nests under
+	// this test's (long) name, and a unix socket path is capped at
+	// ~104 bytes — nesting under the test name alone can blow that budget.
+	tempDir, err := os.MkdirTemp("", "eos-startdaemon-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+	daemonCfg := testutil.NewTestStandaloneDaemonConfig(t, tempDir)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	opts := StandaloneDaemonStartOptions{
+		BaseDir:      tempDir,
+		UnderSystemd: true,
+	}
+	if err := StartStandaloneDaemon(ctx, opts, daemonCfg.Standalone, &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}); err != nil {
+		t.Errorf("expected StartStandaloneDaemon to return nil once the context is done, got: %v", err)
 	}
 }
