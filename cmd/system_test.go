@@ -388,29 +388,51 @@ func TestSysStartupDarwin_UserAgentDeclinePlist(t *testing.T) {
 }
 
 // TestSysStartupLinux_SystemdDirNotAccessible exercises sysStartupLinux's
-// systemd dispatch path (runtimeName != "openrc"). detectActiveSystemRuntime
-// runs for real; on a host with neither /run/systemd/system nor
-// /sbin/openrc it reports "unknown", which startupCmd's ensureRuntime then
-// rejects before touching any directory — deterministic and side-effect-free
-// regardless of whether the host actually runs systemd or OpenRC.
+// non-openrc dispatch into startupCmd, and startupCmd's ensureRuntime gate:
+// when the detected runtime isn't "systemd", it rejects before touching any
+// directory. This used to call the real, non-injectable
+// detectActiveSystemRuntime — that made the test depend on the host's actual
+// init system rather than being deterministic, and it broke on GitHub Actions
+// runners, which really do run systemd as PID 1: runtime detection returned
+// "systemd" there, so the confirmation prompt declined instead of
+// ensureRuntime ever rejecting. sysStartupLinux now takes an injected
+// detectRuntime (like startupCmd/openrcStartupCmd already did), so a fake
+// makes both the dispatch decision and the rejection deterministic on every
+// host.
 func TestSysStartupLinux_SystemdDirNotAccessible(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("requires non-root to exercise the user-unit branch")
-	}
-	tempHome := t.TempDir()
-	t.Setenv("HOME", tempHome)
 	c, _, errBuf := makeTestCmd(t)
 
-	err := sysStartupLinux(c, c, filepath.Join(tempHome, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempHome, "eos.pid"),
-		SocketPath: filepath.Join(tempHome, "eos.sock"),
-	}, false, false)
+	err := sysStartupLinux(c, c, "/usr/local/bin", nil, false, false, fakeDetectRuntime("unknown"))
 
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 	if !strings.Contains(errBuf.String(), "not supported for this runtime") {
 		t.Errorf("expected 'not supported for this runtime' error, got: %s", errBuf.String())
+	}
+}
+
+// TestSysStartupLinux_OpenRCDispatch exercises sysStartupLinux's other
+// dispatch branch: a fake detectRuntime reporting "openrc" routes into
+// openrcStartupCmd rather than the systemd path. openrcStartupCmd's own
+// ensureRuntime gate matches on the same fake, so it proceeds to
+// checkWritable against the real config.OpenRCInitDir — as a non-root user
+// that fails with a permission error before anything is written, keeping
+// this side-effect-free. Skipped as root, where checkWritable's temp-file
+// probe would actually succeed against a real system directory.
+func TestSysStartupLinux_OpenRCDispatch(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root so checkWritable's probe against the real OpenRC init dir fails harmlessly")
+	}
+	c, _, errBuf := makeTestCmd(t)
+
+	err := sysStartupLinux(c, c, "/usr/local/bin", nil, false, false, fakeDetectRuntime("openrc"))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "checking destination file") {
+		t.Errorf("expected a destination-file-check error, got: %s", errBuf.String())
 	}
 }
 
@@ -1133,8 +1155,25 @@ func TestSystemInfoCommand(t *testing.T) {
 // sysRunStartup, exercising the real GOOS dispatch for the host this test
 // runs on. HOME is isolated to a tempdir so the darwin path's
 // ensureLaunchdDir (which creates the LaunchAgents dir) and the linux path's
-// systemd-dir check never touch real user state; declining the prompt keeps
-// it from writing anything either way.
+// systemd-dir check never touch real user state.
+//
+// The non-darwin assertion used to expect ensureRuntime to reject with "not
+// accessible", assuming the test host has no active systemd/OpenRC. That
+// assumption is false on real CI (GitHub Actions runners genuinely run
+// systemd as PID 1), where ensureRuntime correctly accepts it and
+// ensureSystemdUnitDir's os.MkdirAll then succeeds against the fresh tempdir,
+// so declining the prompt just returns nil instead of failing. To keep this
+// deterministic regardless of the host's real init system, "$HOME/.config/systemd"
+// is pre-created read-only (0555): PersistentPreRun's IsSystemdManaged only
+// stats the (nonexistent) unit file under it, which still resolves to a
+// harmless ENOENT since traversal only needs the execute bit, but
+// ensureSystemdUnitDir's os.MkdirAll needs to create the "user" dir inside
+// it, which the missing write bit turns into a real, deterministic
+// permission failure — independent of runtime detection. A plain file at
+// ".config" itself doesn't work: PersistentPreRun's own systemd-scope
+// resolution stats through that same path first and treats anything other
+// than ENOENT as fatal, so it exits the process before this test's target
+// code even runs.
 func TestSystemStartupCommand(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("requires non-root to exercise the user-scoped startup path")
@@ -1142,6 +1181,15 @@ func TestSystemStartupCommand(t *testing.T) {
 	cmd, outBuf, errBuf, _ := setupCmd(t)
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
+	if runtime.GOOS != "darwin" {
+		systemdDir := filepath.Join(tempHome, ".config", "systemd")
+		if err := os.MkdirAll(systemdDir, 0755); err != nil {
+			t.Fatalf("seeding systemd dir: %v", err)
+		}
+		if err := os.Chmod(systemdDir, 0555); err != nil {
+			t.Fatalf("making systemd dir read-only: %v", err)
+		}
+	}
 	setStdin(cmd, "n\n")
 	cmd.SetArgs([]string{"system", "startup"})
 
@@ -1158,8 +1206,8 @@ func TestSystemStartupCommand(t *testing.T) {
 		if !errors.Is(err, helpers.ErrCommandFailed) {
 			t.Fatalf("expected ErrCommandFailed, got: %v", err)
 		}
-		if !strings.Contains(errBuf.String(), "not accessible") {
-			t.Errorf("expected 'not accessible' error, got: %s", errBuf.String())
+		if !strings.Contains(errBuf.String(), "creating user systemd directory") {
+			t.Errorf("expected 'creating user systemd directory' error, got: %s", errBuf.String())
 		}
 	}
 }

@@ -811,7 +811,7 @@ func (hm *HealthMonitor) hmLinuxProcessAlive(pgid int) bool {
 
 // hmStatIndicatesAlive inspects the state field of a /proc/<pid>/stat blob
 // (the byte after the closing ')' of the comm field) and reports false only
-// when it is 'Z' (zombie). An unparseable blob is treated as alive, matching
+// when it is 'Z' (zombie). An unparsable blob is treated as alive, matching
 // isProcessAlive's prior fallthrough behavior.
 func hmStatIndicatesAlive(contents []byte) bool {
 	i := bytes.LastIndexByte(contents, ')')

@@ -335,7 +335,7 @@ func sysRunStartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
 	if runtime.GOOS == "darwin" {
 		return sysStartupDarwin(cmd, systemCmd, installDir, systemConfig.Daemon.Standalone, verbose, flagYes)
 	}
-	return sysStartupLinux(cmd, systemCmd, installDir, systemConfig.Daemon.Standalone, verbose, flagYes)
+	return sysStartupLinux(cmd, systemCmd, installDir, systemConfig.Daemon.Standalone, verbose, flagYes, detectActiveSystemRuntime)
 }
 
 // sysStartupDarwin handles "system startup" on macOS: resolve the launchd
@@ -358,9 +358,12 @@ func sysStartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, installDir s
 
 // sysStartupLinux handles "system startup" on non-macOS platforms: detect
 // the active init system and install an OpenRC init script or a systemd
-// unit (system-wide or the invoking user's, when unprivileged).
-func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir string, standalone *config.StandaloneDaemonConfig, verbose, flagYes bool) error {
-	runtimeName, err := detectActiveSystemRuntime()
+// unit (system-wide or the invoking user's, when unprivileged). detectRuntime
+// is injected (like startupCmd/openrcStartupCmd already do) so tests can
+// drive both dispatch branches deterministically instead of depending on the
+// real host's init system.
+func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir string, standalone *config.StandaloneDaemonConfig, verbose, flagYes bool, detectRuntime func() (string, error)) error {
+	runtimeName, err := detectRuntime()
 	if err != nil {
 		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return helpers.ErrCommandFailed
@@ -369,7 +372,7 @@ func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir st
 	if runtimeName == "openrc" {
 		return openrcStartupCmd(cmd.Context(), cmd, installDir, standalone,
 			config.OpenRCInitDir, config.OpenRCTargetFileName,
-			verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+			verbose, flagYes, detectRuntime, execRunCmd)
 	}
 
 	userUnit := os.Getuid() != 0
@@ -384,7 +387,7 @@ func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir st
 	}
 	return startupCmd(cmd.Context(), cmd, installDir, standalone,
 		systemdDir, config.SystemdTargetFileName,
-		userUnit, verbose, flagYes, detectActiveSystemRuntime, execRunCmd)
+		userUnit, verbose, flagYes, detectRuntime, execRunCmd)
 }
 
 // sysRunUnstartup backs the "system unstartup" subcommand's RunE: it
