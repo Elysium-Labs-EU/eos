@@ -32,7 +32,7 @@ else
 fi
 
 CHANGED_GO="$(git diff --name-only "$DIFF_BASE" HEAD -- '*.go' | grep -v '_test\.go$' || true)"
-if [ -z "$CHANGED_GO" ]; then
+if [[ -z "$CHANGED_GO" ]]; then
   echo "go-crap-gate: no non-test Go files changed vs $BASE; nothing to gate."
   exit 0
 fi

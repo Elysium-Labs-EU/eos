@@ -25,6 +25,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	testDaemonTempDirsMu sync.Mutex
+	testDaemonTempDirs   []string
+)
+
+// cleanupTestDaemonTempDirs removes every directory testDaemonConfig (below)
+// created via os.MkdirTemp during this test binary's run. testDaemonConfig
+// can't register its own t.Cleanup: it lives in this non-test file — reachable
+// but unused from the production binary via newTestRootCmd — which must never
+// import "testing". cmd/main_test.go's TestMain calls this explicitly instead.
+func cleanupTestDaemonTempDirs() {
+	testDaemonTempDirsMu.Lock()
+	dirs := testDaemonTempDirs
+	testDaemonTempDirs = nil
+	testDaemonTempDirsMu.Unlock()
+	for _, dir := range dirs {
+		_ = os.RemoveAll(dir)
+	}
+}
+
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "eos",
@@ -78,7 +98,16 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newInitCmd())
 
 	testDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
-		testBaseDir := os.TempDir()
+		// MkdirTemp (not TempDir+fixed names) so the pid/socket files live under a
+		// freshly created, randomly named, owner-only (0700) directory rather than a
+		// predictable path inside the shared, world-writable system temp dir.
+		testBaseDir, err := os.MkdirTemp("", "eos-test-*")
+		if err != nil {
+			return "", nil, userutil.Identity{}, err
+		}
+		testDaemonTempDirsMu.Lock()
+		testDaemonTempDirs = append(testDaemonTempDirs, testBaseDir)
+		testDaemonTempDirsMu.Unlock()
 		identity, err := userutil.ResolveIdentity()
 		if err != nil {
 			return "", nil, userutil.Identity{}, err

@@ -451,6 +451,15 @@ func TestReconcileOrphans_TerminalStateButAlive(t *testing.T) {
 			if hist.StoppedAt == nil {
 				t.Error("want StoppedAt set")
 			}
+			// SIGKILL delivery is asynchronous: reconcileOrphans returning only
+			// means the signal was sent, not that the kernel has finished tearing
+			// the process down yet. Poll briefly instead of checking once
+			// immediately, so a slow-scheduled kill under CPU contention doesn't
+			// flake the test.
+			deadline := time.Now().Add(time.Second)
+			for procutil.IsAlive(pgid) && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
 			if procutil.IsAlive(pgid) {
 				t.Error("process should have been killed")
 			}
