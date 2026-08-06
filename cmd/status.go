@@ -147,7 +147,7 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		cmd.PrintErrf("  %s %s %s\n",
 			ui.TextMuted.Render("run:"),
 			ui.TextCommand.Render("eos update <service-name> <new-path>"),
-			ui.TextMuted.Render("→ update the service"),
+			ui.TextMuted.Render("to update the service"),
 		)
 	}
 

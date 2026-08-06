@@ -30,7 +30,7 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			newProjectPath := args[1]
 			mgr := getManager()
 
-			cmd.Printf("%s %s → %s\n", ui.LabelInfo.Render("updating"), ui.TextBold.Render(serviceName), newProjectPath)
+			cmd.Printf("%s %s to %s\n", ui.LabelInfo.Render("updating"), ui.TextBold.Render(serviceName), newProjectPath)
 
 			exists, err := mgr.IsServiceRegistered(serviceName)
 			if err != nil {
@@ -42,12 +42,12 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("  %s %s %s\n",
 					ui.TextMuted.Render("run:"),
 					ui.TextCommand.Render("eos add <path>"),
-					ui.TextMuted.Render("→ register service"),
+					ui.TextMuted.Render("to register service"),
 				)
 				cmd.PrintErrf("  %s %s %s\n",
 					ui.TextMuted.Render("run:"),
 					ui.TextCommand.Render("eos status"),
-					ui.TextMuted.Render("→ view registered services"),
+					ui.TextMuted.Render("to view registered services"),
 				)
 				return helpers.ErrCommandFailed
 			}

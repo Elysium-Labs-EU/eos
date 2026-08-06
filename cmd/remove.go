@@ -45,7 +45,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			if history != nil && history.State != types.ProcessStateStopped && history.State != types.ProcessStateUnknown {
 				cmd.Printf("%s %s %s %s\n\n", ui.LabelWarning.Render("warning"), ui.TextBold.Render(serviceName), "is currently", string(history.State))
-				cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf("eos stop %s", serviceName)), ui.TextMuted.Render("→ stop it first"))
+				cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf("eos stop %s", serviceName)), ui.TextMuted.Render("to stop it first"))
 				if !helpers.PromptConfirm(cmd, "remove anyway? (y/n):") {
 					cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "remove aborted")
 					return helpers.ErrCommandFailed
@@ -85,7 +85,7 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			}
 
 			cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), "unregistered")
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos list"), ui.TextMuted.Render("→ view registered services"))
+			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos status"), ui.TextMuted.Render("to view registered services"))
 			return nil
 		},
 	}

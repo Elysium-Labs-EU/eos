@@ -251,7 +251,7 @@ func (hm *HealthMonitor) checkStartProcess(
 	}
 
 	activeRssMemoryKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
-	hm.logger.Debug("startup→running", "service", serviceName, "mem_kb", activeRssMemoryKb)
+	hm.logger.Debug("startup to running", "service", serviceName, "mem_kb", activeRssMemoryKb)
 	var rssPtr *int64
 	if sampled {
 		rssPtr = &activeRssMemoryKb
@@ -632,7 +632,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	updateString := string(fmt.Appendf(msgBuf[:0], "[%s] is running", serviceName))
 
 	hm.logger.Info(updateString)
-	hm.logger.Debug("state→Running", "service", serviceName, "pgid", pgid)
+	hm.logger.Debug("state to Running", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStdout(serviceName, updateString)
 	if err != nil {
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", err)
@@ -658,7 +658,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 
 func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, level slog.Level, errorString string) {
 	hm.logger.Log(ctx, level, errorString)
-	hm.logger.Debug("state→Failed", "service", serviceName, "pgid", pgid)
+	hm.logger.Debug("state to Failed", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 	if err != nil {
 		hm.logger.Error("failed to log service error output", "service", serviceName, "error", err)

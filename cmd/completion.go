@@ -142,13 +142,13 @@ func runInteractiveCompletion(cmd *cobra.Command, root *cobra.Command) error {
 		return fmt.Errorf("writing completion script: %w", err)
 	}
 
-	cmd.Printf("\n  %s %s\n", ui.LabelSuccess.Render("installed →"), ui.TextCommand.Render(targetPath))
+	cmd.Printf("\n  %s %s\n", ui.LabelSuccess.Render("installed to"), ui.TextCommand.Render(targetPath))
 
 	if shell == "zsh" {
 		if patched, patchErr := patchZshrc(filepath.Dir(targetPath)); patchErr != nil {
 			cmd.Printf("  %s %s\n", ui.LabelError.Render("could not patch ~/.zshrc:"), patchErr.Error())
 		} else if patched {
-			cmd.Printf("  %s %s\n", ui.LabelSuccess.Render("patched →"), ui.TextCommand.Render("~/.zshrc"))
+			cmd.Printf("  %s %s\n", ui.LabelSuccess.Render("patched to"), ui.TextCommand.Render("~/.zshrc"))
 		} else {
 			cmd.Printf("  %s\n", ui.TextMuted.Render("~/.zshrc already has fpath entry — no change"))
 		}

@@ -68,7 +68,7 @@ func newSnapshotSaveCmd(getManager func() manager.ServiceManager, getConfig func
 				cmd.Printf("  %s\n", ui.TextBold.Render(name))
 			}
 			cmd.Println()
-			cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot restore"), ui.TextMuted.Render("→ bring them all back later"))
+			cmd.Printf("%s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos snapshot restore"), ui.TextMuted.Render("to bring them all back later"))
 			return nil
 		},
 	}

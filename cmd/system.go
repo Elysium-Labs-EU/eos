@@ -1086,29 +1086,29 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, verbos
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", unitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" stopped")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), unitKind+" stopped")
 
 	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "disable", unit), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "disable", unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", unitKind, string(out)))
+		cmd.PrintErrf("%s %s\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", unitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), unitKind+" disabled")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), unitKind+" disabled")
 
 	if err = os.Remove(unitPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
+		cmd.PrintErrf("%s %s\n", ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "unit file removed")
+	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "unit file removed")
 
 	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "daemon-reload"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "daemon-reload")...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
+		cmd.PrintErrf("%s %s\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), unitKind+" startup removed")
+	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), unitKind+" startup removed")
 	return nil
 }
 
@@ -1143,7 +1143,7 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, daemonConfig config.S
 
 	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" to check daemon logs") + "\n")
 		return helpers.ErrCommandFailed
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
@@ -1478,7 +1478,7 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, daemonConfig c
 
 	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" to check daemon logs") + "\n")
 		return helpers.ErrCommandFailed
 	}
 	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
@@ -1572,7 +1572,7 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 
 	if err := validateDigest(expectedChecksum, binary); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" to retry the update") + "\n")
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}
@@ -1672,7 +1672,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 		if killErr != nil {
 			cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "the previous daemon process may still be alive — check with 'ps' and stop it manually, then run 'eos daemon start'")
 		}
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(" → check daemon logs") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(" to check daemon logs") + "\n")
 		return helpers.ErrCommandFailed
 	}
 
@@ -1681,7 +1681,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 	cmd.Printf("\n%s %s %s\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
 	if os.Getuid() == 0 {
 		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("this only restarted the invoking user's daemon — other users on this host may still be running the pre-update binary"))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" → check every user's daemon") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" to check every user's daemon") + "\n")
 	}
 	return nil
 }
@@ -1703,7 +1703,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, version string, installD
 		return nil
 	}
 
-	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(version), ui.TextBold.Render(result.LatestVersion))
+	cmd.Printf("%s %s to %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(version), ui.TextBold.Render(result.LatestVersion))
 	if !helpers.PromptConfirm(cmd, "upgrade? (y/n):") {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "update canceled")
 		return nil

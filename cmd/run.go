@@ -139,15 +139,15 @@ func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, err
 
 func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
 func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
@@ -201,9 +201,9 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				cmd.PrintErrf("  %s %s %s\n",
 					ui.TextMuted.Render("run:"),
 					ui.TextCommand.Render("eos run -f <path>"),
-					ui.TextMuted.Render("→ run from a service file"),
+					ui.TextMuted.Render("to run from a service file"),
 				)
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
+				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("to run a registered service by name"))
 				return helpers.ErrCommandFailed
 			}
 			if viaServiceName && viaServiceFile {
@@ -214,12 +214,12 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				cmd.PrintErrf("  %s %s %s\n",
 					ui.TextMuted.Render("use:"),
 					ui.TextCommand.Render("eos run -f <path>"),
-					ui.TextMuted.Render("→ to run from a file"),
+					ui.TextMuted.Render("to to run from a file"),
 				)
 				cmd.PrintErrf("  %s %s %s\n\n",
 					ui.TextMuted.Render("use:"),
 					ui.TextCommand.Render("eos run <name>"),
-					ui.TextMuted.Render("→ to run by name"),
+					ui.TextMuted.Render("to to run by name"),
 				)
 				return helpers.ErrCommandFailed
 			}
