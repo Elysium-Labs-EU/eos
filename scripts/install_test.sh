@@ -16,7 +16,7 @@ assert_eq() {
     local expected="$2"
     local desc="$3"
 
-    if [ "$actual" = "$expected" ]; then
+    if [[ "$actual" = "$expected" ]]; then
         echo "ok   - $desc"
     else
         echo "FAIL - $desc"
@@ -69,7 +69,7 @@ assert_eq "$REQUIRE_RELEASE_SIGNATURE" "true" "REQUIRE_RELEASE_SIGNATURE is enfo
 result=$(decide_missing_signature_action)
 assert_eq "$result" "refuse" "decide_missing_signature_action refuses install when a release has no sha256sums.txt.sig"
 
-if [ "$failures" -ne 0 ]; then
+if [[ "$failures" -ne 0 ]]; then
     echo ""
     echo "$failures assertion(s) failed"
     exit 1

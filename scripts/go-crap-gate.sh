@@ -32,7 +32,7 @@ else
 fi
 
 CHANGED_GO="$(git diff --name-only "$DIFF_BASE" HEAD -- '*.go' | grep -v '_test\.go$' || true)"
-if [ -z "$CHANGED_GO" ]; then
+if [[ -z "$CHANGED_GO" ]]; then
   echo "go-crap-gate: no non-test Go files changed vs $BASE; nothing to gate."
   exit 0
 fi
@@ -123,7 +123,7 @@ OS_INTEGRATION_EXEMPT = {
     ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
     ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 753),
     ("internal/ownership/ownership.go", "Align", 83),
-    ("cmd/system.go", "installUpdatedBinary", 1681),
+    ("cmd/system.go", "installUpdatedBinary", 1701),
     ("internal/process/daemon.go", "StartStandaloneDaemon", 67),
     ("internal/process/daemon.go", "bootService", 129),
     ("internal/process/daemon.go", "newStandaloneDaemon", 348),
