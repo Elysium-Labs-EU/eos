@@ -1,12 +1,18 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,7 +67,80 @@ func TestRemoveCommand(t *testing.T) {
 
 // TestRemoveCommandServiceNotRegistered, TestRemoveCommandMissingArgs, and
 // TestRemoveCommandWithActiveInstance_{Decline,Confirm} live in remove_gaps_test.go.
-//
-// TODO: func TestRemoveCommandIsRegisteredError (requires mock manager)
-// TODO: func TestRemoveCommandRemoveInstanceError (requires mock manager)
-// TODO: func TestRemoveCommandRemoveCatalogError (requires mock manager)
+
+func TestRemoveCommandIsRegisteredError(t *testing.T) {
+	mgr := &mockMgr{
+		isServiceRegistered: func(string) (bool, error) {
+			return false, fmt.Errorf("registry unavailable")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"remove", "svc"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "checking service") {
+		t.Errorf("expected 'checking service' error, got: %s", errBuf.String())
+	}
+}
+
+func TestRemoveCommandRemoveInstanceError(t *testing.T) {
+	mgr := &mockMgr{
+		isServiceRegistered: func(string) (bool, error) { return true, nil },
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return nil, manager.ErrProcessNotFound
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return &types.ServiceInstance{}, nil
+		},
+		removeInstance: func(string) (bool, error) {
+			return false, fmt.Errorf("instance remove failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"remove", "svc"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "removing service instance") {
+		t.Errorf("expected 'removing service instance' error, got: %s", errBuf.String())
+	}
+}
+
+func TestRemoveCommandRemoveCatalogError(t *testing.T) {
+	mgr := &mockMgr{
+		isServiceRegistered: func(string) (bool, error) { return true, nil },
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return nil, manager.ErrProcessNotFound
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, manager.ErrServiceNotRunning
+		},
+		removeCatalogEntry: func(string) (bool, error) {
+			return false, fmt.Errorf("catalog remove failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"remove", "svc"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "removing service:") {
+		t.Errorf("expected 'removing service:' error, got: %s", errBuf.String())
+	}
+}
