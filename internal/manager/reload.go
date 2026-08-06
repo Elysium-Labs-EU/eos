@@ -104,7 +104,7 @@ func (m *LocalManager) ReloadService(name string, probe ReadinessProbe, cfg Relo
 	}
 
 	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
-	newPGID, newStartedAtTicks, err := m.launchAndCapture(target.service, target.config, lio, target.resolvedSinks, &launchSuccess, "reload command")
+	newPGID, newStartedAtTicks, err := m.launchAndCapture(&target.service, target.config, lio, target.resolvedSinks, &launchSuccess, "reload command")
 	if err != nil {
 		return ReloadResult{}, err
 	}
