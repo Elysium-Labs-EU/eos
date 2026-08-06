@@ -224,7 +224,22 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
   - Run as root (sudo): installs a system unit at /etc/systemd/system/eos.service, a LaunchDaemon at /Library/LaunchDaemons/org.elysiumlabs.eos.plist on macOS, or a system-wide OpenRC init script at /etc/init.d/eos — one per host, daemon runs as the invoking user.
   - Run as a regular user: installs a user unit at ~/.config/systemd/user/eos.service, or a LaunchAgent at ~/Library/LaunchAgents/org.elysiumlabs.eos.plist on macOS — each user gets their own, no root required.
 
-For systemd user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
+A systemd user unit runs inside your personal --user systemd instance, which
+by default only exists while you are logged in: close the SSH session or log
+out of the desktop, and systemd tears down that instance along with every
+unit running in it — including eos. A system unit has no such dependency; it
+runs under the system-wide systemd instance, which starts at boot regardless
+of who (if anyone) is logged in.
+
+"linger" (loginctl enable-linger <username>) closes that gap by telling
+systemd to keep your user instance running with no one logged in, the way a
+system unit always does. This command offers to enable it right after
+installing a user unit, and it's what most single-user servers (VPS,
+homeserver) want — otherwise the service silently dies the moment you
+disconnect. Skip it only if you deliberately want eos to run solely while
+you're logged in (e.g. a desktop session). Installing as root/system unit
+never needs linger, since it isn't tied to a login session in the first
+place.
 
 On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
 		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)\n       eos system startup --yes  # skip confirmation (non-interactive)",
@@ -1011,6 +1026,50 @@ func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.Standalon
 	return nil
 }
 
+// lingerEnabled reports whether systemd linger is already enabled for username,
+// so the enable-linger prompt in startupCmd isn't repeated on every run once
+// accepted once. A loginctl failure (missing binary, older systemd, no
+// polkit) is treated as "not enabled" — worst case the user is prompted
+// again, never silently skipped.
+func lingerEnabled(ctx context.Context, username string, run runCmdFn) bool {
+	out, err := run(ctx, "loginctl", "show-user", username, "--property=Linger")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "Linger=yes"
+}
+
+// offerEnableLinger explains why a user unit needs linger to survive logout
+// and reboot, then offers to enable it right away — skipping the explanation
+// entirely if linger is already on. A failed `loginctl enable-linger` is
+// reported but non-fatal: startup still proceeds without it, same as if the
+// user had declined.
+func offerEnableLinger(ctx context.Context, cmd *cobra.Command, flagYes bool, username string, run runCmdFn) {
+	if lingerEnabled(ctx, username, run) {
+		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "linger already enabled — eos will also survive logout and reboot")
+		return
+	}
+
+	cmd.Printf("%s\n", ui.TextMuted.Render("note: a user unit stops when you log out (SSH disconnect, desktop logout) — unlike a"))
+	cmd.Printf("%s\n\n", ui.TextMuted.Render("system unit, it has no boot-time process to keep it alive once your session ends."))
+	cmd.Printf("%s\n\n", ui.TextMuted.Render("\"linger\" tells systemd to keep your user session running with no one logged in."))
+
+	declineMsg := fmt.Sprintf("linger not enabled — eos will stop when you log out; enable later with: %s",
+		ui.TextCommand.Render("loginctl enable-linger "+username))
+	if !confirmOrDecline(cmd, flagYes, "enable linger now so eos survives logout and reboot? (y/n):", declineMsg) {
+		return
+	}
+
+	lingerOut, lingerErr := run(ctx, "loginctl", "enable-linger", username)
+	if lingerErr != nil {
+		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(lingerOut)))
+		helpers.PrintSudoHint(cmd)
+		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("loginctl enable-linger "+username)))
+		return
+	}
+	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "linger enabled — eos will survive logout and reboot")
+}
+
 func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, systemdDir, systemdFile string, userUnit, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // systemdFile drives the systemctl unit name; varies in integration tests (excluded by build tag)
 	if err := ensureRuntime(cmd, verbose, detectRuntime, "systemd"); err != nil {
 		return err
@@ -1053,7 +1112,7 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daem
 
 	if userUnit {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user unit enabled, eos will start on login")
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("to also start at boot without login: %s", ui.TextCommand.Render("loginctl enable-linger "+effectiveUser.Username)))
+		offerEnableLinger(ctx, cmd, flagYes, effectiveUser.Username, run)
 	} else {
 		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
