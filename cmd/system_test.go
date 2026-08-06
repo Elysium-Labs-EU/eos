@@ -2148,6 +2148,7 @@ func (m *mockMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, err
 func (m *mockMgr) IsServiceRegistered(string) (bool, error)               { return false, nil }
 func (m *mockMgr) RemoveServiceCatalogEntry(string) (bool, error)         { return false, nil }
 func (m *mockMgr) UpdateServiceCatalogEntry(string, string, string) error { return nil }
+func (m *mockMgr) SetServiceEnabled(string, bool) error                   { return nil }
 func (m *mockMgr) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
 	if m.getMostRecentProcess != nil {
 		return m.getMostRecentProcess(name)

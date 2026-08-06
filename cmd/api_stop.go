@@ -57,6 +57,13 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
 			}
 
+			// Persist the stop as this service's desired boot state; see the
+			// identical call in newStopCmd for why this happens regardless of
+			// whether a process was actually still running (issue #172).
+			if err = mgr.SetServiceEnabled(serviceName, false); err != nil {
+				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting stopped state: %w", err))
+			}
+
 			if force {
 				forceResult, forceErr := mgr.ForceStopService(serviceName)
 				if forceErr != nil {

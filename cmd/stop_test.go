@@ -276,6 +276,54 @@ func TestStopCommandForceFlag(t *testing.T) {
 	}
 }
 
+// TestStopCommandPersistsDisabled proves issue #172's fix: "eos stop"
+// persists the service's desired boot state to disabled, regardless of
+// whether a running process was actually found to kill.
+func TestStopCommandPersistsDisabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime())
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	var outBuf strings.Builder
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&outBuf)
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Add command should not return an error, got : %v", err)
+	}
+
+	// Never started; StopService finds nothing to kill, but the desired boot
+	// state must still flip to disabled.
+	cmd.SetArgs([]string{"stop", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Stop command should not return an error, got : %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after 'eos stop'")
+	}
+}
+
 func TestStopCommandNotRegistered(t *testing.T) {
 	cmd, _, errBuf, _ := setupCmd(t)
 

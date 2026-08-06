@@ -1181,6 +1181,56 @@ func TestUpdateServiceCatalogEntry_unregisteredService(t *testing.T) {
 	}
 }
 
+// TestSetServiceEnabled proves the persisted desired-boot-state flag flips
+// both ways through LocalManager, backing issue #172's stop/run persistence.
+func TestSetServiceEnabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := db.RegisterService(t.Context(), "toggle-svc", tempDir, "service.yaml"); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry("toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Fatal("expected a freshly registered service to default Enabled=true")
+	}
+
+	if err = mgr.SetServiceEnabled("toggle-svc", false); err != nil {
+		t.Fatalf("SetServiceEnabled(false): %v", err)
+	}
+	entry, err = mgr.GetServiceCatalogEntry("toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after SetServiceEnabled(false)")
+	}
+
+	if err = mgr.SetServiceEnabled("toggle-svc", true); err != nil {
+		t.Fatalf("SetServiceEnabled(true): %v", err)
+	}
+	entry, err = mgr.GetServiceCatalogEntry("toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after SetServiceEnabled(true)")
+	}
+}
+
+func TestSetServiceEnabled_unregisteredService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := mgr.SetServiceEnabled("no-such-service", false); err == nil {
+		t.Fatal("expected error setting enabled state on an unregistered service")
+	}
+}
+
 func TestWaitPipes(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))

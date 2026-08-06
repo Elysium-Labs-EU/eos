@@ -209,6 +209,63 @@ func TestUpdateServiceCatalogEntry_NotFound(t *testing.T) {
 	}
 }
 
+// TestRegisterService_DefaultsEnabled proves a freshly registered service
+// defaults to Enabled=true, matching "eos add means auto-starts on every
+// future daemon boot" (issue #172).
+func TestRegisterService_DefaultsEnabled(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.RegisterService(t.Context(), "web-api", "/path", "config.yaml"); err != nil {
+		t.Fatalf("RegisterService failed: %v", err)
+	}
+
+	entry, err := db.GetServiceCatalogEntry(t.Context(), "web-api")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected a freshly registered service to default Enabled=true")
+	}
+}
+
+func TestSetServiceCatalogEnabled(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.RegisterService(t.Context(), "web-api", "/path", "config.yaml"); err != nil {
+		t.Fatalf("RegisterService failed: %v", err)
+	}
+
+	if err := db.SetServiceCatalogEnabled(t.Context(), "web-api", false); err != nil {
+		t.Fatalf("SetServiceCatalogEnabled(false) failed: %v", err)
+	}
+	entry, err := db.GetServiceCatalogEntry(t.Context(), "web-api")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after SetServiceCatalogEnabled(false)")
+	}
+
+	if err = db.SetServiceCatalogEnabled(t.Context(), "web-api", true); err != nil {
+		t.Fatalf("SetServiceCatalogEnabled(true) failed: %v", err)
+	}
+	entry, err = db.GetServiceCatalogEntry(t.Context(), "web-api")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry failed: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after SetServiceCatalogEnabled(true)")
+	}
+}
+
+func TestSetServiceCatalogEnabled_NotFound(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	if err := db.SetServiceCatalogEnabled(t.Context(), "ghost", false); err == nil {
+		t.Fatal("expected error when setting enabled state on a nonexistent entry")
+	}
+}
+
 func TestRemoveServiceCatalogEntry(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 
