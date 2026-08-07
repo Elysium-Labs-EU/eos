@@ -1306,3 +1306,56 @@ func TestHandleStoppingServices_RemoveInstanceError(t *testing.T) {
 		t.Errorf("expected cleanup error, got: %s", errBuf.String())
 	}
 }
+
+// --- correctUserRuntimeDir --------------------------------------------------
+
+// TestCorrectUserRuntimeDir covers the non-interactive auto-heal step
+// systemdMainPID delegates to: correcting XDG_RUNTIME_DIR without any
+// interactive prompt, for a caller whose own caller already silently skips
+// on an unresolved bus rather than surfacing a failure.
+func TestCorrectUserRuntimeDir(t *testing.T) {
+	t.Run("already valid: no env write needed", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+		checkDir := func(path string, uid int) bool { return path == "/run/user/1000" }
+
+		ok, err := correctUserRuntimeDir(1000, "/run/user/1000", checkDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Error("expected ok=true when the current dir already checks out")
+		}
+	})
+
+	t.Run("corrects to expected when current is invalid", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "/run/user/0")
+		checkDir := func(path string, uid int) bool { return path == "/run/user/1000" }
+
+		ok, err := correctUserRuntimeDir(1000, "/run/user/1000", checkDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Error("expected ok=true after correcting to the expected dir")
+		}
+		if got := os.Getenv("XDG_RUNTIME_DIR"); got != "/run/user/1000" {
+			t.Errorf("expected XDG_RUNTIME_DIR corrected to %q, got %q", "/run/user/1000", got)
+		}
+	})
+
+	t.Run("neither dir checks out", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "/run/user/0")
+		checkDir := func(string, int) bool { return false }
+
+		ok, err := correctUserRuntimeDir(1000, "/run/user/1000", checkDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Error("expected ok=false when neither the current nor expected dir is usable")
+		}
+		if got := os.Getenv("XDG_RUNTIME_DIR"); got != "/run/user/0" {
+			t.Errorf("expected XDG_RUNTIME_DIR left untouched, got %q", got)
+		}
+	})
+}

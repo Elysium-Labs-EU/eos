@@ -959,6 +959,27 @@ func isAccessibleDir(path string, uid int) bool {
 // environment a test wants to treat as "no bus available".
 type dirAccessCheckFn func(path string, uid int) bool
 
+// correctUserRuntimeDir silently corrects XDG_RUNTIME_DIR to expected when the current value
+// isn't valid for uid but expected is — the same non-interactive auto-heal ensureUserBusAvailable
+// performs before its interactive (prompt-for-linger) fallback, but with no *cobra.Command to print
+// through: for a caller like systemdMainPID, whose own caller already silently skips on an
+// unresolved bus rather than surfacing a failure, an interactive prompt would be inappropriate
+// anyway. Returns true once the env var is confirmed correct (already, or after correction); false
+// when neither the current nor expected dir is usable, in which case the caller is left to its own
+// existing (silent-skip) failure handling rather than this function ever prompting.
+func correctUserRuntimeDir(uid int, expected string, checkDir dirAccessCheckFn) (bool, error) {
+	if checkDir(os.Getenv("XDG_RUNTIME_DIR"), uid) {
+		return true, nil
+	}
+	if !checkDir(expected, uid) {
+		return false, nil
+	}
+	if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
+		return false, fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
+	}
+	return true, nil
+}
+
 // ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
 // condition that causes `systemctl --user ...` to fail with "Failed to connect to bus: Permission
 // denied". This happens when XDG_RUNTIME_DIR is unset/stale (fixable by correcting the env var) or
@@ -1891,7 +1912,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("old daemon did not confirm exit (%v) — attempting to start the new daemon anyway", killErr))
 	}
 
-	if err := ctrl.Start(ctx, true, false, false); err != nil {
+	if err := ctrl.Start(ctx, cmd, true, false, verbose); err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		if killErr != nil {
 			cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), "the previous daemon process may still be alive — check with 'ps' and stop it manually, then run 'eos daemon start'")

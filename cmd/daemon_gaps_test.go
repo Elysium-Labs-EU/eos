@@ -52,6 +52,7 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
 )
@@ -255,6 +256,200 @@ func TestSystemdDaemonController_Logs_StreamingAndShowing(t *testing.T) {
 				t.Errorf("expected journalctl output forwarded, got: %s", out.String())
 			}
 		})
+	}
+}
+
+// installFakeJournalctlScript puts a fake "journalctl" on PATH running the
+// given shell script body, for tests that need more control over its output
+// than installFakeJournalctl's fixed "echo and succeed" behavior.
+func installFakeJournalctlScript(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "journalctl"), []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
+		t.Fatalf("writing fake journalctl: %v", err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+// TestJournalHasEntries covers journalHasEntries' three branches: journalctl
+// unresolvable, non-empty stdout, and the "No journal files were found"
+// case — journalctl prints that to stderr and exits 0, so only stdout is a
+// reliable "has entries" signal.
+func TestJournalHasEntries(t *testing.T) {
+	t.Run("journalctl not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if journalHasEntries(context.Background(), true) {
+			t.Error("expected false when journalctl cannot be resolved")
+		}
+	})
+
+	t.Run("has entries", func(t *testing.T) {
+		installFakeJournalctlScript(t, "echo a log line")
+		if !journalHasEntries(context.Background(), true) {
+			t.Error("expected true when journalctl produces stdout")
+		}
+	})
+
+	t.Run("no journal files found", func(t *testing.T) {
+		installFakeJournalctlScript(t, "echo 'No journal files were found' >&2\nexit 0")
+		if journalHasEntries(context.Background(), true) {
+			t.Error("expected false when journalctl's stdout is empty, even on a clean exit")
+		}
+	})
+
+	t.Run("journalctl exits non-zero", func(t *testing.T) {
+		installFakeJournalctlScript(t, "echo boom >&2\nexit 1")
+		if journalHasEntries(context.Background(), true) {
+			t.Error("expected false when journalctl itself fails")
+		}
+	})
+}
+
+// TestSystemdDaemonController_Remove covers the systemd controller's Remove
+// wrapper (os.Remove of the unit file), success and error branches.
+func TestSystemdDaemonController_Remove(t *testing.T) {
+	t.Run("removes the unit file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		unitFile := filepath.Join(tempDir, "eos.service")
+		if err := os.WriteFile(unitFile, nil, 0644); err != nil {
+			t.Fatalf("writing unit file: %v", err)
+		}
+		c := systemdDaemonController{cfg: config.SystemdConfig{
+			SystemdTargetDir:      tempDir + "/",
+			SystemdTargetFileName: "eos.service",
+		}}
+		if err := c.Remove(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, err := os.Stat(unitFile); !os.IsNotExist(err) {
+			t.Error("expected unit file to be removed")
+		}
+	})
+
+	t.Run("missing unit file errors", func(t *testing.T) {
+		c := systemdDaemonController{cfg: config.SystemdConfig{
+			SystemdTargetDir:      t.TempDir() + "/",
+			SystemdTargetFileName: "eos.service",
+		}}
+		if err := c.Remove(); err == nil {
+			t.Fatal("expected error removing a nonexistent unit file")
+		}
+	})
+}
+
+// TestSystemdDaemonController_Info covers the systemd controller's Info
+// wrapper, which delegates to printSystemdDaemonDetails.
+func TestSystemdDaemonController_Info(t *testing.T) {
+	c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+	var out, errBuf bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetContext(context.Background())
+
+	c.Info(cmd)
+
+	combined := out.String() + errBuf.String()
+	if !strings.Contains(combined, "systemd managed") {
+		t.Errorf("expected 'systemd managed', got: %s", combined)
+	}
+}
+
+// TestSystemdDaemonController_LogsHint covers both unit-scope branches of the
+// systemd controller's LogsHint wrapper.
+func TestSystemdDaemonController_LogsHint(t *testing.T) {
+	userCtrl := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
+	if got := userCtrl.LogsHint(); got != "journalctl --user -u eos -f" {
+		t.Errorf("expected user-scoped hint, got %q", got)
+	}
+
+	systemCtrl := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: false}}
+	if got := systemCtrl.LogsHint(); got != "journalctl -u eos -f" {
+		t.Errorf("expected system-scoped hint, got %q", got)
+	}
+}
+
+// TestSystemdDaemonController_Logs_FallsBackWhenJournalEmpty covers Logs'
+// fallback to the daemon's own log file when journald has nothing for the
+// eos unit — a diagnosability gap where `eos daemon logs` silently reported
+// "No journal files were found" even though the daemon was healthy and
+// already writing ~/.eos/logs/daemon.log.
+func TestSystemdDaemonController_Logs_FallsBackWhenJournalEmpty(t *testing.T) {
+	// The fallback itself shells out to "tail" (see tailDaemonLogFile), so the
+	// fake journalctl is prepended to, rather than replacing, the real PATH —
+	// unlike installFakeJournalctlScript's other callers, which never reach
+	// that second exec.
+	binDir := t.TempDir()
+	script := "#!/bin/sh\necho 'No journal files were found' >&2\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "journalctl"), []byte(script), 0755); err != nil {
+		t.Fatalf("writing fake journalctl: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tempDir := t.TempDir()
+	logDir := manager.CreateLogDirPath(tempDir)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("creating log dir: %v", err)
+	}
+	logPath := filepath.Join(logDir, config.DaemonLogFileName)
+	if err := os.WriteFile(logPath, []byte("hello from the daemon's own log\n"), 0644); err != nil {
+		t.Fatalf("writing log file: %v", err)
+	}
+
+	c := systemdDaemonController{baseDir: tempDir}
+	var out bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetContext(context.Background())
+
+	c.Logs(cmd, 10, false)
+
+	got := out.String()
+	if !strings.Contains(got, "falling back to the daemon's own log file") {
+		t.Errorf("expected fallback warning, got: %s", got)
+	}
+	if !strings.Contains(got, "hello from the daemon's own log") {
+		t.Errorf("expected tailed log content, got: %s", got)
+	}
+}
+
+// --- waitUntilAlive / pollUntilTrue grace window ---
+
+func TestPollUntilTrue(t *testing.T) {
+	t.Run("succeeds before timeout", func(t *testing.T) {
+		calls := 0
+		ok := pollUntilTrue(time.Second, func() bool {
+			calls++
+			return calls >= 2
+		})
+		if !ok {
+			t.Error("expected pollUntilTrue to report true once check() succeeds")
+		}
+	})
+
+	t.Run("times out when check never succeeds", func(t *testing.T) {
+		if pollUntilTrue(10*time.Millisecond, func() bool { return false }) {
+			t.Error("expected pollUntilTrue to report false once the timeout elapses")
+		}
+	})
+}
+
+// TestWaitUntilAlive_SucceedsDuringGraceWindow proves the fix for this
+// false-negative timeout: a daemon that only becomes alive after the
+// primary deadline — but within the tolerant grace window — must still be
+// reported alive rather than declared dead. The primary timeout is kept tiny
+// so the test doesn't have to sleep out a full grace window to observe it.
+func TestWaitUntilAlive_SucceedsDuringGraceWindow(t *testing.T) {
+	becameAliveAt := time.Now().Add(20 * time.Millisecond)
+	alive := func() bool { return !time.Now().Before(becameAliveAt) }
+
+	start := time.Now()
+	if !waitUntilAlive(5*time.Millisecond, alive) {
+		t.Fatal("expected waitUntilAlive to succeed once the grace window observes alive()==true")
+	}
+	if elapsed := time.Since(start); elapsed >= forkReadinessGrace {
+		t.Errorf("expected the grace re-check to succeed well before the full %s grace window elapsed, took %s", forkReadinessGrace, elapsed)
 	}
 }
 

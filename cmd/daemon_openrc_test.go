@@ -126,7 +126,7 @@ func TestOpenRCDaemonController_Start_NonRoot(t *testing.T) {
 	}
 	rec := &recordingRun{}
 	c := openrcDaemonController{cfg: config.OpenRCConfig{InitFileName: "eos"}, run: rec.run}
-	if err := c.Start(context.Background(), true, false, false); err == nil {
+	if err := c.Start(context.Background(), nil, true, false, false); err == nil {
 		t.Fatal("expected 'requires root' error when non-root")
 	}
 	if rec.called {

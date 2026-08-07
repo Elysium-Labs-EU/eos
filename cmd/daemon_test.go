@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,7 +270,7 @@ type fakeDaemonController struct {
 	logsFollow   bool
 }
 
-func (f *fakeDaemonController) Start(_ context.Context, detach bool, _ bool, _ bool) error {
+func (f *fakeDaemonController) Start(_ context.Context, _ *cobra.Command, detach bool, _ bool, _ bool) error {
 	f.startCalled = true
 	f.detachArg = detach
 	return f.startErr
@@ -727,6 +728,24 @@ func TestWaitForForkPIDFileTimesOutOnDeadPID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out waiting for PID file") {
 		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+// TestWaitForForkSocketReadyReturnsNil is the fast-path companion to
+// TestWaitForForkSocketTimesOutWhenNothingListens: a socket already accepting
+// connections must succeed immediately. Uses shortTempSocketDir rather than
+// t.TempDir() because a real net.Listen("unix", ...) needs a short enough
+// path to fit the platform's sockaddr_un limit.
+func TestWaitForForkSocketReadyReturnsNil(t *testing.T) {
+	socketPath := filepath.Join(shortTempSocketDir(t), "eos.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("net.Listen unix: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	if err := waitForForkSocket(t.Context(), socketPath); err != nil {
+		t.Errorf("waitForForkSocket should return nil once the socket is listening, got %v", err)
 	}
 }
 
