@@ -76,7 +76,7 @@ Exit codes:
 			serviceName := args[0]
 			mgr := getManager()
 
-			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+			registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if errors.Is(err, manager.ErrServiceNotRegistered) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
 			}
@@ -90,20 +90,20 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("loading service config: %w", err))
 			}
 
-			serviceInstance, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting service instance: %w", err))
 			}
 
-			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			processEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting process history: %w", err))
 			}
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
+			logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, false)
 			if err != nil && serviceInstance != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting log path: %w", err))
 			}
-			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
+			errorLogPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, true)
 			if err != nil && serviceInstance != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting error log path: %w", err))
 			}

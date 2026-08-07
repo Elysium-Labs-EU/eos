@@ -38,7 +38,7 @@ service stays down until you bring it back with "eos run".`,
 				cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
 			}
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -53,7 +53,7 @@ service stays down until you bring it back with "eos run".`,
 			// whether a process was actually still running to kill below: the
 			// operator's intent is "don't bring this back", and bootPersistedServices
 			// reads this flag to skip it on the next daemon start/reboot (issue #172).
-			if err = mgr.SetServiceEnabled(serviceName, false); err != nil {
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting stopped state: %v", err))
 				return helpers.ErrCommandFailed
 			}
@@ -63,7 +63,7 @@ service stays down until you bring it back with "eos run".`,
 				return nil
 			}
 
-			stopResult, err := mgr.StopService(serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
+			stopResult, err := mgr.StopService(cmd.Context(), serviceName, cfg.Shutdown.GracePeriod, 200*time.Millisecond)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
 				return helpers.ErrCommandFailed
@@ -115,7 +115,7 @@ service stays down until you bring it back with "eos run".`,
 }
 
 func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
-	forceStopResult, err := mgr.ForceStopService(serviceName)
+	forceStopResult, err := mgr.ForceStopService(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("force stopping service: %v", err))
 		return
@@ -152,7 +152,7 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 }
 
 func cleanupServiceInstance(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) {
-	removed, err := mgr.RemoveServiceInstance(serviceName)
+	removed, err := mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", err))
 		return

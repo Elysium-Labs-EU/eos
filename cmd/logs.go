@@ -56,7 +56,7 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -67,7 +67,7 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 				return helpers.ErrCommandFailed
 			}
 
-			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+			processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 				return helpers.ErrCommandFailed
@@ -92,12 +92,12 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 			combined := !errorOnly && !outputOnly
 
 			if combined {
-				outPath, outErr := mgr.GetServiceLogFilePath(serviceName, false)
+				outPath, outErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, false)
 				if outErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
 					return helpers.ErrCommandFailed
 				}
-				errPath, errPathErr := mgr.GetServiceLogFilePath(serviceName, true)
+				errPath, errPathErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, true)
 				if errPathErr != nil {
 					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
 					return helpers.ErrCommandFailed
@@ -110,7 +110,7 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 				return nil
 			}
 
-			logPath, err := mgr.GetServiceLogFilePath(serviceName, errorOnly)
+			logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, errorOnly)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
 				return helpers.ErrCommandFailed

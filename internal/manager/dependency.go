@@ -60,7 +60,7 @@ const dependencyPollInterval = 250 * time.Millisecond
 // advances to Running once the process is up. Both LocalManager and
 // DaemonManager satisfy it, so the gate runs on either side of the socket.
 type dependencyReadinessProber interface {
-	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
+	GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error)
 }
 
 // ParseMaxWait resolves a service's configured max_wait to a duration, falling
@@ -115,7 +115,7 @@ func WaitForDependencies(ctx context.Context, prober dependencyReadinessProber, 
 	defer ticker.Stop()
 
 	for {
-		pending := pendingDependencies(prober, deps)
+		pending := pendingDependencies(ctx, prober, deps)
 		if len(pending) == 0 {
 			return nil
 		}
@@ -127,7 +127,7 @@ func WaitForDependencies(ctx context.Context, prober dependencyReadinessProber, 
 		case <-timer.C:
 			// One last read so the reported set reflects the deadline instant,
 			// not the tick before it.
-			pending = pendingDependencies(prober, deps)
+			pending = pendingDependencies(ctx, prober, deps)
 			if len(pending) == 0 {
 				return nil
 			}
@@ -143,18 +143,18 @@ func WaitForDependencies(ctx context.Context, prober dependencyReadinessProber, 
 // pendingDependencies returns the deps that are not yet ready, preserving input
 // order so the failure message reads deterministically. A dependency with no
 // process history yet (never started, or unregistered) counts as pending.
-func pendingDependencies(prober dependencyReadinessProber, deps []string) []string {
+func pendingDependencies(ctx context.Context, prober dependencyReadinessProber, deps []string) []string {
 	var pending []string
 	for _, dep := range deps {
-		if !dependencyReady(prober, dep) {
+		if !dependencyReady(ctx, prober, dep) {
 			pending = append(pending, dep)
 		}
 	}
 	return pending
 }
 
-func dependencyReady(prober dependencyReadinessProber, dep string) bool {
-	entry, err := prober.GetMostRecentProcessHistoryEntry(dep)
+func dependencyReady(ctx context.Context, prober dependencyReadinessProber, dep string) bool {
+	entry, err := prober.GetMostRecentProcessHistoryEntry(ctx, dep)
 	if err != nil || entry == nil {
 		return false
 	}
@@ -174,8 +174,8 @@ type DependencyWaitRecorder interface {
 	// absolute time this wait's own resolved max_wait would give up, computed
 	// once by RecordDependencyWait and passed unchanged on every call for the
 	// same wait (including narrowing updates) — see dependencyWaitIsStale.
-	SetDependencyWaitStatus(serviceName string, pending []string, deadline time.Time) error
-	ClearDependencyWaitStatus(serviceName string) error
+	SetDependencyWaitStatus(ctx context.Context, serviceName string, pending []string, deadline time.Time) error
+	ClearDependencyWaitStatus(ctx context.Context, serviceName string) error
 }
 
 // RecordDependencyWait calls WaitForDependencies, mirroring its live pending
@@ -196,9 +196,18 @@ func RecordDependencyWait(ctx context.Context, mgr any, prober dependencyReadine
 	if !ok || len(deps) == 0 {
 		return WaitForDependencies(ctx, prober, serviceName, deps, maxWait, nil)
 	}
+	// recorderCtx drops ctx's cancellation (keeping any values) for the two
+	// calls below: they're best-effort bookkeeping against mgr's own
+	// long-lived store, not part of the wait itself. WaitForDependencies still
+	// gets the real ctx, so Ctrl-C still aborts the wait promptly — but if
+	// ctx is already canceled by then, the deferred ClearDependencyWaitStatus
+	// must still be able to complete. Threading the same canceled ctx into it
+	// would fail the cleanup too, leaving a stale row until
+	// DependencyWaitStaleGrace expires instead of clearing it immediately.
+	recorderCtx := context.WithoutCancel(ctx)
 	deadline := time.Now().Add(resolveMaxWait(maxWait))
-	defer func() { _ = recorder.ClearDependencyWaitStatus(serviceName) }()
+	defer func() { _ = recorder.ClearDependencyWaitStatus(recorderCtx, serviceName) }()
 	return WaitForDependencies(ctx, prober, serviceName, deps, maxWait, func(pending []string) {
-		_ = recorder.SetDependencyWaitStatus(serviceName, pending, deadline)
+		_ = recorder.SetDependencyWaitStatus(recorderCtx, serviceName, pending, deadline)
 	})
 }

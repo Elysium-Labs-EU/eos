@@ -185,7 +185,7 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatalf("stop should not return an error, got: %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v", err)
 	}
 
-	entry, err = mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestRunWithFileAlreadyRegisteredKeepsOriginalConfig(t *testing.T) {
 		t.Fatalf("expected warning to suggest 'eos update', got: %v", errOutput)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry("cms")
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("failed to get catalog entry: %v", err)
 	}

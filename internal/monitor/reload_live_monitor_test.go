@@ -76,11 +76,11 @@ func TestReloadService_LiveMonitorCrashOnStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog entry: %v", err)
 	}
-	if addErr := mgr.AddServiceCatalogEntry(entry); addErr != nil {
+	if addErr := mgr.AddServiceCatalogEntry(t.Context(), entry); addErr != nil {
 		t.Fatalf("add catalog entry: %v", addErr)
 	}
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestReloadService_LiveMonitorCrashOnStart(t *testing.T) {
 		t.Fatalf("old instance pgid %d was bounced by the monitor after the reload returned", oldPGID)
 	}
 
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}

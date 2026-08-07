@@ -40,7 +40,7 @@ func fakeServer(t *testing.T, handler func(req types.DaemonRequest) types.Daemon
 		defer func() { _ = conn.Close() }()
 
 		var req types.DaemonRequest
-		if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+		if json.NewDecoder(conn).Decode(&req) != nil {
 			return
 		}
 		resp := handler(req)
@@ -63,12 +63,12 @@ func okResponse(data any) types.DaemonResponse {
 
 func newTestDM(t *testing.T, socketPath string) *DaemonManager {
 	t.Helper()
-	return &DaemonManager{ctx: t.Context(), socketPath: socketPath}
+	return &DaemonManager{socketPath: socketPath}
 }
 
 func TestSendRequest_connectionRefused(t *testing.T) {
-	dm := &DaemonManager{ctx: t.Context(), socketPath: "/nonexistent/socket.sock"}
-	_, err := dm.sendRequest(types.MethodGetAllServiceInstances, nil)
+	dm := &DaemonManager{socketPath: "/nonexistent/socket.sock"}
+	_, err := dm.sendRequest(t.Context(), types.MethodGetAllServiceInstances, nil)
 	if err == nil {
 		t.Fatal("expected error for connection refused")
 	}
@@ -79,7 +79,7 @@ func TestSendRequest_serverError(t *testing.T) {
 		return types.DaemonResponse{Success: false, Error: "something went wrong"}
 	})
 	dm := newTestDM(t, socketPath)
-	_, err := dm.sendRequest(types.MethodGetAllServiceInstances, nil)
+	_, err := dm.sendRequest(t.Context(), types.MethodGetAllServiceInstances, nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
 	}
@@ -94,7 +94,7 @@ func TestSendRequest_sentinelError(t *testing.T) {
 		}
 	})
 	dm := newTestDM(t, socketPath)
-	_, err := dm.sendRequest(types.MethodGetServiceInstance, nil)
+	_, err := dm.sendRequest(t.Context(), types.MethodGetServiceInstance, nil)
 	if !errors.Is(err, ErrServiceNotRunning) {
 		t.Errorf("expected ErrServiceNotRunning, got %v", err)
 	}
@@ -110,7 +110,7 @@ func TestDaemonManager_GetAllServiceInstances(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	instances, err := dm.GetAllServiceInstances()
+	instances, err := dm.GetAllServiceInstances(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestDaemonManager_GetVersion(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	version, err := dm.GetVersion()
+	version, err := dm.GetVersion(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDaemonManager_GetServiceInstance(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	inst, err := dm.GetServiceInstance("my-svc")
+	inst, err := dm.GetServiceInstance(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDaemonManager_RemoveServiceInstance(t *testing.T) {
 		return okResponse(map[string]bool{"removed": true})
 	})
 	dm := newTestDM(t, socketPath)
-	removed, err := dm.RemoveServiceInstance("svc")
+	removed, err := dm.RemoveServiceInstance(t.Context(), "svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestDaemonManager_StartService(t *testing.T) {
 		return okResponse(map[string]int{"pid": 1234})
 	})
 	dm := newTestDM(t, socketPath)
-	pid, err := dm.StartService("svc")
+	pid, err := dm.StartService(t.Context(), "svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestDaemonManager_SetServiceEnabled(t *testing.T) {
 		return types.DaemonResponse{Success: true}
 	})
 	dm := newTestDM(t, socketPath)
-	if err := dm.SetServiceEnabled("svc", false); err != nil {
+	if err := dm.SetServiceEnabled(t.Context(), "svc", false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestDaemonManager_RestartService(t *testing.T) {
 		return okResponse(map[string]int{"pid": 5678})
 	})
 	dm := newTestDM(t, socketPath)
-	pid, err := dm.RestartService("svc", 5*time.Second, 100*time.Millisecond)
+	pid, err := dm.RestartService(t.Context(), "svc", 5*time.Second, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestDaemonManager_StopService(t *testing.T) {
 		return okResponse(StopServiceResult{Stopped: map[int]bool{42: true}})
 	})
 	dm := newTestDM(t, socketPath)
-	result, err := dm.StopService("svc", 5*time.Second, 100*time.Millisecond)
+	result, err := dm.StopService(t.Context(), "svc", 5*time.Second, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestDaemonManager_ForceStopService(t *testing.T) {
 		return okResponse(StopServiceResult{Stopped: map[int]bool{99: true}})
 	})
 	dm := newTestDM(t, socketPath)
-	result, err := dm.ForceStopService("svc")
+	result, err := dm.ForceStopService(t.Context(), "svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestDaemonManager_AddServiceCatalogEntry(t *testing.T) {
 		return okResponse(nil)
 	})
 	dm := newTestDM(t, socketPath)
-	if err := dm.AddServiceCatalogEntry(&types.ServiceCatalogEntry{Name: "new-svc"}); err != nil {
+	if err := dm.AddServiceCatalogEntry(t.Context(), &types.ServiceCatalogEntry{Name: "new-svc"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -275,7 +275,7 @@ func TestDaemonManager_GetAllServiceCatalogEntries(t *testing.T) {
 		return okResponse([]types.ServiceCatalogEntry{{Name: "svc-a"}, {Name: "svc-b"}})
 	})
 	dm := newTestDM(t, socketPath)
-	entries, err := dm.GetAllServiceCatalogEntries()
+	entries, err := dm.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestDaemonManager_GetServiceCatalogEntry(t *testing.T) {
 		return okResponse(types.ServiceCatalogEntry{Name: "my-svc", DirectoryPath: "/opt/svc"})
 	})
 	dm := newTestDM(t, socketPath)
-	entry, err := dm.GetServiceCatalogEntry("my-svc")
+	entry, err := dm.GetServiceCatalogEntry(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestDaemonManager_IsServiceRegistered(t *testing.T) {
 		return okResponse(map[string]bool{"exists": true})
 	})
 	dm := newTestDM(t, socketPath)
-	registered, err := dm.IsServiceRegistered("my-svc")
+	registered, err := dm.IsServiceRegistered(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestDaemonManager_RemoveServiceCatalogEntry(t *testing.T) {
 		return okResponse(map[string]bool{"removed": true})
 	})
 	dm := newTestDM(t, socketPath)
-	removed, err := dm.RemoveServiceCatalogEntry("my-svc")
+	removed, err := dm.RemoveServiceCatalogEntry(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestDaemonManager_UpdateServiceCatalogEntry(t *testing.T) {
 		return okResponse(nil)
 	})
 	dm := newTestDM(t, socketPath)
-	if err := dm.UpdateServiceCatalogEntry("my-svc", "/new/path", "service.yaml"); err != nil {
+	if err := dm.UpdateServiceCatalogEntry(t.Context(), "my-svc", "/new/path", "service.yaml"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -346,7 +346,7 @@ func TestDaemonManager_GetMostRecentProcessHistoryEntry(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	entry, err := dm.GetMostRecentProcessHistoryEntry("my-svc")
+	entry, err := dm.GetMostRecentProcessHistoryEntry(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
 	})
 	dm := newTestDM(t, socketPath)
 	deadline := time.Now().Add(5 * time.Minute)
-	if err := dm.SetDependencyWaitStatus("web", []string{"db", "cache"}, deadline); err != nil {
+	if err := dm.SetDependencyWaitStatus(t.Context(), "web", []string{"db", "cache"}, deadline); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotArgs.ServiceName != "web" {
@@ -379,7 +379,7 @@ func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
 
 func TestDaemonManager_SetDependencyWaitStatus_requestError(t *testing.T) {
 	dm := newTestDM(t, "/nonexistent/socket.sock")
-	if err := dm.SetDependencyWaitStatus("web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
+	if err := dm.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
 		t.Fatal("expected an error when the daemon is unreachable")
 	}
 }
@@ -391,7 +391,7 @@ func TestDaemonManager_ClearDependencyWaitStatus(t *testing.T) {
 		return types.DaemonResponse{Success: true}
 	})
 	dm := newTestDM(t, socketPath)
-	if err := dm.ClearDependencyWaitStatus("web"); err != nil {
+	if err := dm.ClearDependencyWaitStatus(t.Context(), "web"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotArgs.ServiceName != "web" {
@@ -401,14 +401,14 @@ func TestDaemonManager_ClearDependencyWaitStatus(t *testing.T) {
 
 func TestDaemonManager_ClearDependencyWaitStatus_requestError(t *testing.T) {
 	dm := newTestDM(t, "/nonexistent/socket.sock")
-	if err := dm.ClearDependencyWaitStatus("web"); err == nil {
+	if err := dm.ClearDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected an error when the daemon is unreachable")
 	}
 }
 
 func TestDaemonManager_GetDependencyWaitStatus_requestError(t *testing.T) {
 	dm := newTestDM(t, "/nonexistent/socket.sock")
-	if _, _, err := dm.GetDependencyWaitStatus("web"); err == nil {
+	if _, _, err := dm.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected an error when the daemon is unreachable")
 	}
 }
@@ -425,7 +425,7 @@ func TestDaemonManager_GetDependencyWaitStatus_malformedResponse(t *testing.T) {
 		return types.DaemonResponse{Success: true, Data: []byte(`[1,2,3]`)}
 	})
 	dm := newTestDM(t, socketPath)
-	if _, _, err := dm.GetDependencyWaitStatus("web"); err == nil {
+	if _, _, err := dm.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected an error for a malformed response payload")
 	}
 }
@@ -441,7 +441,7 @@ func TestDaemonManager_GetDependencyWaitStatus_waiting(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	status, waiting, err := dm.GetDependencyWaitStatus("web")
+	status, waiting, err := dm.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestDaemonManager_GetDependencyWaitStatus_notWaiting(t *testing.T) {
 		return okResponse(types.GetDependencyWaitStatusResponse{Waiting: false})
 	})
 	dm := newTestDM(t, socketPath)
-	status, waiting, err := dm.GetDependencyWaitStatus("web")
+	status, waiting, err := dm.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestDaemonManager_NewServiceLogFiles(t *testing.T) {
 		})
 	})
 	dm := newTestDM(t, socketPath)
-	logPath, errLogPath, err := dm.NewServiceLogFiles("my-svc")
+	logPath, errLogPath, err := dm.NewServiceLogFiles(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestDaemonManager_GetServiceLogFilePath(t *testing.T) {
 		return okResponse(map[string]*string{"filepath": &path})
 	})
 	dm := newTestDM(t, socketPath)
-	result, err := dm.GetServiceLogFilePath("my-svc", false)
+	result, err := dm.GetServiceLogFilePath(t.Context(), "my-svc", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

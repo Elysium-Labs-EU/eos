@@ -70,7 +70,7 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 
-			registeredServices, err := mgr.GetAllServiceCatalogEntries()
+			registeredServices, err := mgr.GetAllServiceCatalogEntries(cmd.Context())
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting services: %w", err))
 			}
@@ -80,7 +80,7 @@ Exit codes:
 			for _, reg := range registeredServices {
 				entry := apiStatusService{Name: reg.Name}
 
-				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(reg.Name)
+				mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), reg.Name)
 				if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 					return helpers.WriteJSONErr(cmd, fmt.Errorf("getting process for %q: %w", reg.Name, err))
 				}
@@ -102,7 +102,7 @@ Exit codes:
 					entry.CPU = helpers.DetermineProcessCPUHuman(0, entry.Status)
 				}
 
-				serviceInstance, err := mgr.GetServiceInstance(reg.Name)
+				serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), reg.Name)
 				if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 					return helpers.WriteJSONErr(cmd, fmt.Errorf("getting instance for %q: %w", reg.Name, err))
 				}
@@ -115,7 +115,7 @@ Exit codes:
 				// above: a service blocked on depends_on has no process yet,
 				// so without this it's indistinguishable from one that was
 				// simply never started.
-				if pending := helpers.ResolveDependencyWaitStatus(mgr, reg.Name); len(pending) > 0 {
+				if pending := helpers.ResolveDependencyWaitStatus(cmd.Context(), mgr, reg.Name); len(pending) > 0 {
 					entry.Status = types.ServiceStatusWaitingForDeps
 					entry.WaitingFor = pending
 				}

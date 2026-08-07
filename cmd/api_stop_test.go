@@ -76,7 +76,7 @@ func TestAPIStopPersistsDisabled(t *testing.T) {
 		t.Fatalf("expected no error, got: %v\n%s", err, errBuf.String())
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(serviceName)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestAPIStopNonexistentService(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {

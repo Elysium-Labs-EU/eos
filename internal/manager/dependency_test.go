@@ -23,7 +23,7 @@ type fakeProber struct {
 	readyAfter int64
 }
 
-func (f *fakeProber) GetMostRecentProcessHistoryEntry(string) (*types.ProcessHistory, error) {
+func (f *fakeProber) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	n := f.reads.Add(1)
 	if f.err != nil {
 		return nil, f.err
@@ -43,7 +43,7 @@ type perDepProber struct {
 	mu     sync.Mutex
 }
 
-func (p *perDepProber) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
+func (p *perDepProber) GetMostRecentProcessHistoryEntry(_ context.Context, name string) (*types.ProcessHistory, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state, ok := p.states[name]
@@ -222,26 +222,30 @@ func TestParseMaxWait(t *testing.T) {
 // every Set's pending snapshot) so RecordDependencyWait's Set-before/
 // Clear-after contract, and the live narrowing of pending, can be asserted.
 type recorderSpy struct {
+	setDeadline  time.Time
 	setErr       error
 	clearErr     error
+	clearCtxErr  error
 	calls        []string
 	setPending   []string
-	setDeadline  time.Time
 	allSets      [][]string
 	allDeadlines []time.Time
+	setCtxErrs   []error
 }
 
-func (r *recorderSpy) SetDependencyWaitStatus(_ string, pending []string, deadline time.Time) error {
+func (r *recorderSpy) SetDependencyWaitStatus(ctx context.Context, _ string, pending []string, deadline time.Time) error {
 	r.calls = append(r.calls, "set")
 	r.setPending = pending
 	r.setDeadline = deadline
 	r.allSets = append(r.allSets, append([]string(nil), pending...))
 	r.allDeadlines = append(r.allDeadlines, deadline)
+	r.setCtxErrs = append(r.setCtxErrs, ctx.Err())
 	return r.setErr
 }
 
-func (r *recorderSpy) ClearDependencyWaitStatus(_ string) error {
+func (r *recorderSpy) ClearDependencyWaitStatus(ctx context.Context, _ string) error {
 	r.calls = append(r.calls, "clear")
+	r.clearCtxErr = ctx.Err()
 	return r.clearErr
 }
 
@@ -308,6 +312,36 @@ func TestRecordDependencyWait_clearsEvenOnError(t *testing.T) {
 	}
 }
 
+// TestRecordDependencyWait_cleanupSurvivesCallerCancellation is the direct
+// regression test for the review finding: if ctx is canceled (e.g. Ctrl-C),
+// the deferred ClearDependencyWaitStatus must still run against a live
+// context, not the same already-canceled one — otherwise the cleanup call
+// itself fails immediately, leaving a stale row until DependencyWaitStaleGrace
+// expires instead of clearing it right away.
+func TestRecordDependencyWait_cleanupSurvivesCallerCancellation(t *testing.T) {
+	spy := &recorderSpy{}
+	p := &fakeProber{readyAfter: 1 << 30} // never ready
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := RecordDependencyWait(ctx, spy, p, "web", []string{"db"}, time.Minute)
+	if err == nil {
+		t.Fatal("expected a cancellation error, got nil")
+	}
+
+	if len(spy.calls) == 0 || spy.calls[len(spy.calls)-1] != "clear" {
+		t.Fatalf("expected a final clear call even when ctx was canceled, got %v", spy.calls)
+	}
+	if spy.clearCtxErr != nil {
+		t.Errorf("expected ClearDependencyWaitStatus to receive a live context despite the caller's ctx being canceled, got ctx.Err() = %v", spy.clearCtxErr)
+	}
+	for i, ctxErr := range spy.setCtxErrs {
+		if ctxErr != nil {
+			t.Errorf("expected SetDependencyWaitStatus call %d to receive a live context, got ctx.Err() = %v", i, ctxErr)
+		}
+	}
+}
+
 // TestRecordDependencyWait_narrowsPendingAsDependenciesBecomeReady is the
 // direct regression test for the review finding: with depends_on [a, b], a
 // becomes ready quickly while b stays pending. The recorded status must
@@ -366,7 +400,7 @@ func TestRecordDependencyWait_realLocalManager(t *testing.T) {
 	var midCallWaiting bool
 	go func() {
 		time.Sleep(dependencyPollInterval)
-		midCallStatus, midCallWaiting, _ = m.GetDependencyWaitStatus("web")
+		midCallStatus, midCallWaiting, _ = m.GetDependencyWaitStatus(t.Context(), "web")
 		prober.markRunning("db")
 	}()
 
@@ -378,7 +412,7 @@ func TestRecordDependencyWait_realLocalManager(t *testing.T) {
 		t.Fatalf("expected a recorded wait for [db] during the wait, got %+v waiting=%v", midCallStatus, midCallWaiting)
 	}
 
-	after, waiting, err := m.GetDependencyWaitStatus("web")
+	after, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("GetDependencyWaitStatus after RecordDependencyWait: %v", err)
 	}

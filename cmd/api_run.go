@@ -64,13 +64,13 @@ Exit codes:
 				if err != nil {
 					return helpers.WriteJSONErr(cmd, err)
 				}
-				result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
+				result, err := registerServiceIfNeeded(cmd.Context(), mgr, parsed.YamlFile, parsed.Config.Name)
 				if err != nil {
 					return helpers.WriteJSONErr(cmd, err)
 				}
 				serviceName = result.Name
 			} else {
-				name, err := isServiceRegistered(mgr, args[0])
+				name, err := isServiceRegistered(cmd.Context(), mgr, args[0])
 				if err != nil {
 					return helpers.WriteJSONErr(cmd, err)
 				}
@@ -79,12 +79,12 @@ Exit codes:
 
 			// Persist the run as this service's desired boot state; see the
 			// identical call in newRunCmd for why (issue #172).
-			if err := mgr.SetServiceEnabled(serviceName, true); err != nil {
+			if err := mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting run state: %w", err))
 			}
 
 			if once {
-				running, err := isServiceRunning(mgr, serviceName)
+				running, err := isServiceRunning(cmd.Context(), mgr, serviceName)
 				if err != nil {
 					return helpers.WriteJSONErr(cmd, err)
 				}
@@ -93,12 +93,12 @@ Exit codes:
 				}
 			}
 
-			entry, err := mgr.GetServiceCatalogEntry(serviceName)
+			entry, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			startResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, &entry)
+			startResult, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, &entry)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}

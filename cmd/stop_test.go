@@ -316,7 +316,7 @@ func TestStopCommandPersistsDisabled(t *testing.T) {
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
