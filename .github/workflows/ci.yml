@@ -54,6 +54,18 @@ jobs:
       - name: Install ast-grep
         run: npm install -g @ast-grep/cli@0.45.0 --ignore-scripts
 
+      # ~/go/pkg/mod and ~/.cache/go-build are already cached by actions/setup-go;
+      # ~/go/bin (the installed tool binaries themselves) is not, and `make setup`
+      # was taking ~4.5min per run reinstalling golangci-lint/nilaway/go-crap/
+      # gitleaks/govulncheck from scratch every time.
+      - name: Cache dev tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin
+          key: devtools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            devtools-${{ runner.os }}-
+
       - name: Install dev tools
         run: make setup
 
@@ -87,7 +99,6 @@ jobs:
   verify-build:
     name: Verify Build
     runs-on: ubuntu-latest
-    needs: [ci]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
