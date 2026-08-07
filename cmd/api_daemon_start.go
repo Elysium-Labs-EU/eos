@@ -26,7 +26,7 @@ func newAPIDaemonStartCmdWithController(getCtrl func() (DaemonController, error)
 		Long: `Start the daemon process.
 
 If a systemd unit file is installed, delegates to "systemctl start eos" (requires root).
-Otherwise starts the daemon detached in the background; control returns once the PID file and socket are confirmed live (timeout: 5s). Unlike "eos daemon start", there is no --foreground option — the JSON contract requires the command to return once startup is confirmed, not block for the daemon's lifetime.
+Otherwise starts the daemon detached in the background; control returns once the PID file and socket are confirmed live (up to ~16s worst case: each of the two liveness checks allows a 5s primary wait plus a 3s tolerant grace window, and the checks run one after the other). Unlike "eos daemon start", there is no --foreground option — the JSON contract requires the command to return once startup is confirmed, not block for the daemon's lifetime.
 
 Idempotent: if the daemon is already running, returns "started": false with exit code 0 instead of erroring, matching "eos api daemon stop"'s idempotency contract.
 
@@ -54,7 +54,7 @@ Exit codes:
 			if ctrl.IsRunning(cmd.Context()) {
 				return helpers.WriteJSON(cmd, apiDaemonStartResult{Started: false})
 			}
-			if err := ctrl.Start(cmd.Context(), true, false, false); err != nil {
+			if err := ctrl.Start(cmd.Context(), cmd, true, false, false); err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("starting daemon: %w", err))
 			}
 			return helpers.WriteJSON(cmd, apiDaemonStartResult{Started: true})

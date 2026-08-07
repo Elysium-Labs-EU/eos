@@ -38,7 +38,7 @@ type diagnoseOptions struct {
 // diagnoseManifest is the top-level manifest.json entry in the bundle: what
 // was collected, what failed, and under which flags. Every field here is
 // allowlisted (version strings, a truncated host hash, OS/arch, per-step
-// ok/error) — nothing here can leak a secret or an absolute path.
+// captured/error) — nothing here can leak a secret or an absolute path.
 type diagnoseManifest struct {
 	GeneratedAt time.Time             `json:"generated_at"`
 	HostID      string                `json:"host_id"`
@@ -57,11 +57,15 @@ type diagnoseManifestFlags struct {
 
 // diagnoseStepResult records one independent collection step's outcome, so a
 // single failure (daemon down, one bad service.yaml, one unreadable log file)
-// never prevents the rest of the bundle from being produced.
+// never prevents the rest of the bundle from being produced. Captured means
+// "this collection step completed without an internal error" — not a health
+// signal about what it collected: e.g. a service step reports Captured=true
+// even when that service's own status is failed, because the collection
+// itself succeeded.
 type diagnoseStepResult struct {
-	Name  string `json:"name"`
-	Error string `json:"error,omitempty"`
-	OK    bool   `json:"ok"`
+	Name     string `json:"name"`
+	Error    string `json:"error,omitempty"`
+	Captured bool   `json:"captured"`
 }
 
 // diagnoseFile is one file's content staged for the output archive.
@@ -107,7 +111,7 @@ replaced with a truncated hash so a maintainer can recognize "same box,
 second report" without learning any identifying string.
 
 Every collection step (version, daemon status, each service's status, log
-tails) is recorded independently in the bundle's manifest.json as ok or
+tails) is recorded independently in the bundle's manifest.json as captured or
 failed; a daemon that's down, one bad service.yaml, or one unreadable log
 file never prevents a bundle from being produced. Only a failure to write
 the output file itself aborts the command.
@@ -181,7 +185,7 @@ func runDiagnose(cmd *cobra.Command, opts diagnoseOptions) error {
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("ok"), "wrote diagnostic bundle to", ui.TextBold.Render(outputPath))
 	failed := 0
 	for _, step := range manifest.Steps {
-		if !step.OK {
+		if !step.Captured {
 			failed++
 		}
 	}
@@ -211,7 +215,7 @@ func diagnoseCollect(ctx context.Context, mgr manager.ServiceManager, baseDir st
 	var files []diagnoseFile
 
 	versionInfo := diagnoseCollectVersion(ctx, daemon)
-	manifest.Steps = append(manifest.Steps, diagnoseStepResult{Name: "version", OK: true})
+	manifest.Steps = append(manifest.Steps, diagnoseStepResult{Name: "version", Captured: true})
 	files = append(files, diagnoseJSONFile("version.json", versionInfo))
 
 	daemonInfo, daemonStep := diagnoseCollectDaemonInfo(ctx, daemon)
@@ -292,16 +296,16 @@ func diagnoseCollectVersion(ctx context.Context, daemon *config.DaemonConfig) di
 // systemdMainPID never start anything. Never auto-starts a daemon.
 func diagnoseCollectDaemonInfo(ctx context.Context, daemon *config.DaemonConfig) (diagnoseDaemonInfo, diagnoseStepResult) {
 	if daemon == nil {
-		return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", OK: false, Error: "no daemon configuration available"}
+		return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", Captured: false, Error: "no daemon configuration available"}
 	}
 
 	switch {
 	case daemon.Standalone != nil:
 		status, err := process.StatusStandaloneDaemon(daemon.Standalone)
 		if err != nil {
-			return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", OK: false, Error: err.Error()}
+			return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", Captured: false, Error: err.Error()}
 		}
-		return diagnoseDaemonInfo{Mode: "standalone", Running: status.Running, Pid: status.Pid}, diagnoseStepResult{Name: "daemon", OK: true}
+		return diagnoseDaemonInfo{Mode: "standalone", Running: status.Running, Pid: status.Pid}, diagnoseStepResult{Name: "daemon", Captured: true}
 	case daemon.Systemd != nil:
 		info := diagnoseDaemonInfo{Mode: "systemd", Running: socketResponds(ctx, daemon.Systemd.SocketPath)}
 		if info.Running {
@@ -309,13 +313,13 @@ func diagnoseCollectDaemonInfo(ctx context.Context, daemon *config.DaemonConfig)
 				info.Pid = &pid
 			}
 		}
-		return info, diagnoseStepResult{Name: "daemon", OK: true}
+		return info, diagnoseStepResult{Name: "daemon", Captured: true}
 	case daemon.Launchd != nil:
-		return diagnoseDaemonInfo{Mode: "launchd"}, diagnoseStepResult{Name: "daemon", OK: true}
+		return diagnoseDaemonInfo{Mode: "launchd"}, diagnoseStepResult{Name: "daemon", Captured: true}
 	case daemon.OpenRC != nil:
-		return diagnoseDaemonInfo{Mode: "openrc"}, diagnoseStepResult{Name: "daemon", OK: true}
+		return diagnoseDaemonInfo{Mode: "openrc"}, diagnoseStepResult{Name: "daemon", Captured: true}
 	default:
-		return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", OK: false, Error: "invalid daemon config: no supervisor configured"}
+		return diagnoseDaemonInfo{}, diagnoseStepResult{Name: "daemon", Captured: false, Error: "invalid daemon config: no supervisor configured"}
 	}
 }
 
@@ -329,18 +333,18 @@ func diagnoseCollectDaemonInfo(ctx context.Context, daemon *config.DaemonConfig)
 func diagnoseCollectServices(ctx context.Context, mgr manager.ServiceManager) ([]types.ServiceCatalogEntry, []apiStatusService, []diagnoseStepResult) {
 	registeredServices, err := mgr.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
-		return nil, nil, []diagnoseStepResult{{Name: "services", OK: false, Error: err.Error()}}
+		return nil, nil, []diagnoseStepResult{{Name: "services", Captured: false, Error: err.Error()}}
 	}
 
 	services := make([]apiStatusService, 0, len(registeredServices))
 	steps := make([]diagnoseStepResult, 0, len(registeredServices)+1)
-	steps = append(steps, diagnoseStepResult{Name: "services", OK: true})
+	steps = append(steps, diagnoseStepResult{Name: "services", Captured: true})
 
 	for i := range registeredServices {
 		reg := &registeredServices[i]
 		entry, err := apiStatusBuildServiceEntry(ctx, mgr, reg)
 		if err != nil {
-			steps = append(steps, diagnoseStepResult{Name: "service:" + reg.Name, OK: false, Error: err.Error()})
+			steps = append(steps, diagnoseStepResult{Name: "service:" + reg.Name, Captured: false, Error: err.Error()})
 			continue
 		}
 		if entry.Error != nil {
@@ -348,7 +352,7 @@ func diagnoseCollectServices(ctx context.Context, mgr manager.ServiceManager) ([
 			entry.Error = &scrubbed
 		}
 		services = append(services, entry)
-		steps = append(steps, diagnoseStepResult{Name: "service:" + reg.Name, OK: true})
+		steps = append(steps, diagnoseStepResult{Name: "service:" + reg.Name, Captured: true})
 	}
 
 	return registeredServices, services, steps
@@ -360,13 +364,13 @@ func diagnoseCollectServices(ctx context.Context, mgr manager.ServiceManager) ([
 // (e.g. the daemon has never run yet) — never a fatal error.
 func diagnoseCollectDaemonLog(baseDir string, daemon *config.DaemonConfig, opts diagnoseOptions) (*diagnoseFile, diagnoseStepResult) {
 	if daemon == nil || daemon.Standalone == nil {
-		return nil, diagnoseStepResult{Name: "daemon-log", OK: false, Error: "daemon log unavailable: not managed as a standalone daemon (use journalctl/launchctl for this supervisor)"}
+		return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: "daemon log unavailable: not managed as a standalone daemon (use journalctl/launchctl for this supervisor)"}
 	}
 
 	logPath := filepath.Join(manager.CreateLogDirPath(baseDir), daemon.Standalone.Log.LogFileName)
 	data, err := os.ReadFile(filepath.Clean(logPath))
 	if err != nil {
-		return nil, diagnoseStepResult{Name: "daemon-log", OK: false, Error: err.Error()}
+		return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: err.Error()}
 	}
 
 	lines := diagnoseSplitLines(string(data))
@@ -380,7 +384,7 @@ func diagnoseCollectDaemonLog(baseDir string, daemon *config.DaemonConfig, opts 
 	if len(scrubbed) > 0 {
 		content = strings.Join(scrubbed, "\n") + "\n"
 	}
-	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", OK: true}
+	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", Captured: true}
 }
 
 // diagnoseCollectServiceLogs tails each registered service's stdout/stderr
@@ -403,12 +407,12 @@ func diagnoseCollectServiceLogs(ctx context.Context, mgr manager.ServiceManager,
 			stepName := fmt.Sprintf("service-log:%s:%s", name, stream.suffix)
 			logPath, err := mgr.GetServiceLogFilePath(ctx, name, stream.errorLog)
 			if err != nil || logPath == nil {
-				steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: diagnoseErrString(err, "log path unavailable")})
+				steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: diagnoseErrString(err, "log path unavailable")})
 				continue
 			}
 			tailed, err := tailLogLines(*logPath, opts.Lines)
 			if err != nil {
-				steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: err.Error()})
+				steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: err.Error()})
 				continue
 			}
 			scrubbed := diagnoseScrubLines(tailed)
@@ -417,7 +421,7 @@ func diagnoseCollectServiceLogs(ctx context.Context, mgr manager.ServiceManager,
 				content = strings.Join(scrubbed, "\n") + "\n"
 			}
 			files = append(files, diagnoseFile{Name: fmt.Sprintf("logs/%s-%s.log", name, stream.suffix), Data: []byte(content)})
-			steps = append(steps, diagnoseStepResult{Name: stepName, OK: true})
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: true})
 		}
 	}
 
@@ -437,16 +441,16 @@ func diagnoseCollectEnv(registeredServices []types.ServiceCatalogEntry) ([]diagn
 		configPath := filepath.Join(reg.DirectoryPath, reg.ConfigFileName)
 		svcConfig, err := manager.LoadServiceConfig(configPath)
 		if err != nil {
-			steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: err.Error()})
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: err.Error()})
 			continue
 		}
 		if svcConfig.EnvFile == "" {
-			steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: "no env_file configured"})
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: "no env_file configured"})
 			continue
 		}
 		envVars, err := manager.ParseEnvFile(svcConfig, reg.DirectoryPath)
 		if err != nil {
-			steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: err.Error()})
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: err.Error()})
 			continue
 		}
 		content := ""
@@ -454,7 +458,7 @@ func diagnoseCollectEnv(registeredServices []types.ServiceCatalogEntry) ([]diagn
 			content = strings.Join(envVars, "\n") + "\n"
 		}
 		files = append(files, diagnoseFile{Name: fmt.Sprintf("env/%s.env", reg.Name), Data: []byte(content)})
-		steps = append(steps, diagnoseStepResult{Name: stepName, OK: true})
+		steps = append(steps, diagnoseStepResult{Name: stepName, Captured: true})
 	}
 
 	return files, steps

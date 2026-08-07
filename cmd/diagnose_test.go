@@ -173,7 +173,7 @@ func TestDiagnoseCmd_WritesBundleForRegisteredServices(t *testing.T) {
 			t.Errorf("expected step %q in manifest, got: %+v", name, manifest.Steps)
 			continue
 		}
-		if !step.OK {
+		if !step.Captured {
 			t.Errorf("expected step %q to be ok, got error: %s", name, step.Error)
 		}
 	}
@@ -208,7 +208,7 @@ func TestDiagnoseCmd_WritesBundleForRegisteredServices(t *testing.T) {
 	// A service that has never run has no log file yet — that per-stream step
 	// must fail without blocking the rest of the bundle (see the command's
 	// never-fail-fast requirement).
-	if step, found := stepOK(t, &manifest, "service-log:svc-a:out"); !found || step.OK {
+	if step, found := stepOK(t, &manifest, "service-log:svc-a:out"); !found || step.Captured {
 		t.Errorf("expected service-log:svc-a:out to fail (no log file yet), got: %+v", step)
 	}
 }
@@ -225,7 +225,7 @@ func TestDiagnoseCmd_NoServicesRegistered(t *testing.T) {
 	files := readDiagnoseBundle(t, outputPath)
 	manifest := unmarshalOrFatal[diagnoseManifest](t, files["manifest.json"])
 	step, found := stepOK(t, &manifest, "services")
-	if !found || !step.OK {
+	if !found || !step.Captured {
 		t.Errorf("expected services step ok with an empty catalog, got: %+v", step)
 	}
 }
@@ -278,7 +278,7 @@ func TestDiagnoseCmd_LogsScrubbedAndTimeWindowed(t *testing.T) {
 	}
 
 	manifest := unmarshalOrFatal[diagnoseManifest](t, files["manifest.json"])
-	if step, found := stepOK(t, &manifest, "daemon-log"); !found || !step.OK {
+	if step, found := stepOK(t, &manifest, "daemon-log"); !found || !step.Captured {
 		t.Errorf("expected daemon-log step ok, got: %+v", step)
 	}
 }
@@ -329,7 +329,7 @@ func TestDiagnoseCmd_DaemonLogUnavailableUnderSystemd(t *testing.T) {
 	if daemonLogFile != nil {
 		t.Error("expected no daemon log file when daemon config is nil")
 	}
-	if step.OK {
+	if step.Captured {
 		t.Error("expected daemon-log step to fail when daemon config is nil")
 	}
 	if !strings.Contains(step.Error, "not managed as a standalone daemon") {
@@ -408,7 +408,7 @@ func TestDiagnoseCmd_BadServiceYAMLDoesNotBlockOthers(t *testing.T) {
 	manifest := unmarshalOrFatal[diagnoseManifest](t, files["manifest.json"])
 
 	step, found := stepOK(t, &manifest, "env:broken")
-	if !found || step.OK {
+	if !found || step.Captured {
 		t.Errorf("expected env:broken step to fail on the corrupted service.yaml, got: %+v", step)
 	}
 
@@ -681,7 +681,7 @@ func TestDiagnoseCollectServices_CatalogError(t *testing.T) {
 	if registered != nil || services != nil {
 		t.Errorf("expected nil results on catalog error, got registered=%v services=%v", registered, services)
 	}
-	if len(steps) != 1 || steps[0].Name != "services" || steps[0].OK || !strings.Contains(steps[0].Error, "boom") {
+	if len(steps) != 1 || steps[0].Name != "services" || steps[0].Captured || !strings.Contains(steps[0].Error, "boom") {
 		t.Errorf("expected a single failed 'services' step, got: %+v", steps)
 	}
 }
@@ -699,11 +699,11 @@ func TestDiagnoseCollectServices_PerServiceErrorDoesNotBlockCatalogStep(t *testi
 	}
 
 	catalogStep, found := stepOK(t, &diagnoseManifest{Steps: steps}, "services")
-	if !found || !catalogStep.OK {
+	if !found || !catalogStep.Captured {
 		t.Errorf("expected the top-level 'services' catalog step to stay ok, got: %+v", catalogStep)
 	}
 	svcStep, found := stepOK(t, &diagnoseManifest{Steps: steps}, "service:svc")
-	if !found || svcStep.OK || !strings.Contains(svcStep.Error, "boom") {
+	if !found || svcStep.Captured || !strings.Contains(svcStep.Error, "boom") {
 		t.Errorf("expected a failed 'service:svc' step, got: %+v", svcStep)
 	}
 }
@@ -721,7 +721,7 @@ func TestDiagnoseCollectVersion_NilDaemon(t *testing.T) {
 func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 	t.Run("nil daemon config", func(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), nil)
-		if step.OK {
+		if step.Captured {
 			t.Error("expected a failed step for a nil daemon config")
 		}
 		if info.Mode != "" {
@@ -731,7 +731,7 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 
 	t.Run("no supervisor configured", func(t *testing.T) {
 		_, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{})
-		if step.OK {
+		if step.Captured {
 			t.Error("expected a failed step when no supervisor is configured")
 		}
 	})
@@ -740,7 +740,7 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{
 			Standalone: &config.StandaloneDaemonConfig{PIDFile: filepath.Join(t.TempDir(), "eos.pid")},
 		})
-		if !step.OK {
+		if !step.Captured {
 			t.Errorf("expected an ok step for a missing pid file (not running, not an error), got: %+v", step)
 		}
 		if info.Mode != "standalone" || info.Running {
@@ -752,7 +752,7 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{
 			Systemd: &config.SystemdConfig{SocketPath: filepath.Join(shortTempSocketDir(t), "eos.sock")},
 		})
-		if !step.OK {
+		if !step.Captured {
 			t.Errorf("expected an ok step, got: %+v", step)
 		}
 		if info.Mode != "systemd" || info.Running {
@@ -773,7 +773,7 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{
 			Systemd: &config.SystemdConfig{SocketPath: sockPath},
 		})
-		if !step.OK {
+		if !step.Captured {
 			t.Errorf("expected an ok step, got: %+v", step)
 		}
 		if info.Mode != "systemd" || !info.Running {
@@ -786,14 +786,14 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 
 	t.Run("launchd", func(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{Launchd: &config.LaunchdConfig{}})
-		if !step.OK || info.Mode != "launchd" {
+		if !step.Captured || info.Mode != "launchd" {
 			t.Errorf("expected ok launchd mode, got info=%+v step=%+v", info, step)
 		}
 	})
 
 	t.Run("openrc", func(t *testing.T) {
 		info, step := diagnoseCollectDaemonInfo(t.Context(), &config.DaemonConfig{OpenRC: &config.OpenRCConfig{}})
-		if !step.OK || info.Mode != "openrc" {
+		if !step.Captured || info.Mode != "openrc" {
 			t.Errorf("expected ok openrc mode, got info=%+v step=%+v", info, step)
 		}
 	})

@@ -21,7 +21,7 @@ type fakeAPIDaemonController struct {
 	stopped   bool
 }
 
-func (f *fakeAPIDaemonController) Start(_ context.Context, _ bool, _ bool, _ bool) error {
+func (f *fakeAPIDaemonController) Start(_ context.Context, _ *cobra.Command, _ bool, _ bool, _ bool) error {
 	return f.startErr
 }
 

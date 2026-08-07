@@ -21,11 +21,17 @@ useDefault = true
 #     Content-based (not commit-SHA-keyed like a .gitleaksignore fingerprint
 #     would be), so it survives history rewrites, rebases, and squashes.
 #
+# gitleaks scans full git history across every locally-reachable branch/ref
+# by default, not just this branch's own tree — so this allowlist also
+# protects against the same known-fake literals resurfacing via a sibling
+# branch/PR that independently carries them, not only via this branch's own
+# commits.
+#
 # Deliberately not a path-based exemption for the whole test file: that would
 # risk silently masking a real secret accidentally added to it later. These
 # regexes match only the four known-fake literal values.
 [allowlist]
-description = "Fake credential fixtures in cmd/diagnose_test.go — not real secrets"
+description = "Known-fake credential-shaped test-fixture strings (cmd/diagnose_test.go and any sibling branch/PR reusing them) — not real secrets"
 regexes = [
   '''sk-abc123def456''',
   '''AKIAABCDEFGHIJKLMNOP''',
