@@ -852,8 +852,9 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 	}
 }
 
-// TODO: untested gap — process stays alive but its port becomes unreachable;
-// checkRunningProcess has no port-reachability check to catch this case.
+// Untested gap: process stays alive but its port becomes unreachable;
+// checkRunningProcess has no port-reachability check to catch this case
+// (see issue #162).
 
 func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 	tempDir := t.TempDir()

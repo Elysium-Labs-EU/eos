@@ -54,6 +54,10 @@ func (f *fakeRunMgr) StartService(string) (int, error) {
 	return f.startPGID, f.startErr
 }
 
+func (f *fakeRunMgr) SetServiceEnabled(string, bool) error {
+	return nil
+}
+
 // newRunCmdWithFakeMgr builds the "run" cobra.Command wired to mgr and a
 // minimal *config.SystemConfig (a nil Daemon is fine: warnDaemonDownBeforeStart
 // treats "no daemon configured" as not-confirmed-down and stays quiet).

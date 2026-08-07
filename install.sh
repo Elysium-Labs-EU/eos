@@ -99,16 +99,16 @@ confirm() {
 
 
     local response
-    
+
     if [[ "$default" = "y" ]]; then
         prompt="$prompt [Y/n]"
     else
         prompt="$prompt [y/N]"
     fi
-    
+
     echo -ne "${YELLOW}?${NC} $prompt "
     read -r response
-    
+
     response=${response:-$default}
     [[ "$response" =~ ^[Yy]$ ]]
 }
@@ -141,7 +141,7 @@ download_file() {
     local url="$1"
     local output="$2"
     local tool="$3"
-    
+
     if [[ "$tool" = "curl" ]]; then
         curl -fsSL -o "$output" "$url" 2>&1 | sed 's/^/  /'
     else
@@ -308,26 +308,26 @@ check_sqlite3() {
     if ! command -v sqlite3 &> /dev/null; then
         return 1
     fi
-    
+
     if ! sqlite3 --version &> /dev/null; then
         return 1
     fi
-    
+
     local test_db="/tmp/sqlite_test_$$.db"
     if ! sqlite3 "$test_db" "SELECT 1;" &> /dev/null; then
         rm -f "$test_db"
         return 1
     fi
     rm -f "$test_db"
-    
+
     return 0
 }
 
 install_sqlite3() {
     local pkg_manager="$1"
-    
+
     step "Installing SQLite3..."
-    
+
     case $pkg_manager in
         apt)
             if apt-get update -qq && apt-get install -y -qq sqlite3 > /dev/null 2>&1; then
@@ -383,7 +383,7 @@ install_sqlite3() {
             return 1
             ;;
     esac
-    
+
     error "Failed to install SQLite3"
     return 1
 }
@@ -471,10 +471,10 @@ refresh_completions() {
 
 setup_sqlite3() {
     local pkg_manager="$1"
-    
+
     echo ""
     step "Checking SQLite3..."
-    
+
     if check_sqlite3; then
         local version
         version=$(sqlite3 --version | cut -d' ' -f1)
@@ -482,11 +482,11 @@ setup_sqlite3() {
         dim "  Location: $(command -v sqlite3)"
         return 0
     fi
-    
+
     info "SQLite3 is not installed"
     dim "  SQLite3 is required for storing service state and configuration"
     echo ""
-    
+
     if [[ "$pkg_manager" = "unknown" ]]; then
         warn "Cannot install automatically (unknown package manager)"
         echo ""
@@ -496,7 +496,7 @@ setup_sqlite3() {
         fi
         return 1
     fi
-    
+
     if confirm "Install SQLite3 now?" "y"; then
         if install_sqlite3 "$pkg_manager"; then
             if check_sqlite3; then
@@ -524,7 +524,7 @@ setup_sqlite3() {
             *) ;;
         esac
         echo ""
-        
+
         if ! confirm "Continue without SQLite3? (not recommended)" "n"; then
             error "Installation cancelled"
             exit 1
@@ -577,14 +577,14 @@ main() {
     echo ""
     echo -e "${BOLD}eos installer${NC}"
     echo ""
-    
+
     info "Running pre-flight checks..."
     check_root
-    
+
     local download_tool
     download_tool=$(detect_download_tool)
     dim "  Download tool: $download_tool"
-    
+
     local os
     os=$(detect_os)
     dim "  OS: $os"
@@ -596,7 +596,7 @@ main() {
     local pkg_manager
     pkg_manager=$(detect_package_manager)
     dim "  Package manager: $pkg_manager"
-    
+
     if [[ "$INSTALL_DIR" != "/usr/local/bin" ]]; then
         dim "  Install directory: $INSTALL_DIR (custom)"
     fi
@@ -615,7 +615,7 @@ main() {
                 dim "  Set EOS_VERSION environment variable to specify manually"
                 exit 1
             fi
-            
+
             info "Latest version: ${BOLD}$version${NC}"
         else
             info "Using version: ${BOLD}$version${NC}"
@@ -623,9 +623,9 @@ main() {
     else
         info "Using local binary: ${BOLD}$local_binary${NC}"
     fi
-    
+
     echo ""
-    
+
     echo -e "${BOLD}Installation plan:${NC}"
     if [[ -n "$local_binary" ]]; then
         echo "  1. Use local binary: ${local_binary}"
@@ -636,12 +636,12 @@ main() {
     echo "  3. Install SQLite3 (if needed)"
     echo "  4. Create home directory at ${HOME_DIR}"
     echo ""
-    
+
     if ! confirm "Continue with installation?" "y"; then
         info "Installation cancelled"
         exit 0
     fi
-    
+
     local tmp_binary
     if [[ -n "$local_binary" ]]; then
         tmp_binary="$local_binary"
@@ -656,7 +656,7 @@ main() {
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
         trap 'rm -rf "${tmp_dir:-}"' EXIT
         tmp_binary="${tmp_dir}/${BINARY_NAME}"
-        
+
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
             error "Download failed"
             dim "  URL: $download_url"
@@ -734,7 +734,7 @@ main() {
 
         rm -f "$tmp_checksums"
     fi
-    
+
     stop_running_daemon
 
     step "Installing binary..."

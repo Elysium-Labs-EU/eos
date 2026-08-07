@@ -109,7 +109,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 			return nil, err
 		}
 		if _, err := os.Stat(errorLogPath); err != nil {
-			return nil, fmt.Errorf("describing error log file: %w", err)
+			return nil, fmt.Errorf("describing error log file (only exists once the service has run at least once): %w", err)
 		}
 
 		return &errorLogPath, nil
@@ -121,7 +121,7 @@ func (m *LocalManager) GetServiceLogFilePath(serviceName string, errorLog bool) 
 	}
 
 	if _, err := os.Stat(logPath); err != nil {
-		return nil, fmt.Errorf("describing the log file: %w", err)
+		return nil, fmt.Errorf("describing the log file (only exists once the service has run at least once): %w", err)
 	}
 
 	return &logPath, nil

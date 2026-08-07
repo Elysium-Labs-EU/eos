@@ -192,4 +192,11 @@ type ServiceCatalogEntry struct {
 	Name           string    `json:"name" yaml:"name"`
 	DirectoryPath  string    `json:"path" yaml:"path"`
 	ConfigFileName string    `json:"config_file" yaml:"config_file"`
+	// Enabled is the persisted desired state for this service: true means it
+	// should be (re)started on daemon boot, false means it was stopped by hand
+	// (eos stop) and must stay down across a daemon restart/reboot until
+	// re-enabled (eos run). Defaults to true on registration (see the
+	// service_catalog.enabled column default), matching "adding a service
+	// means it auto-starts on every future daemon boot".
+	Enabled bool `json:"enabled" yaml:"enabled"`
 }

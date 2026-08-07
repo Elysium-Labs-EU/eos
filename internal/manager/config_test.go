@@ -10,29 +10,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TODO: Rewrite: marshals a ServiceConfig then unmarshals it via LoadServiceConfig,
-// which mostly round-trips yaml.v3 rather than parsing a hand-written YAML file;
-// replace with a literal YAML fixture string.
+// TestLoadServiceConfig parses a hand-written YAML fixture (not a
+// yaml.Marshal round-trip) so it actually exercises LoadServiceConfig's YAML
+// parsing against the on-disk file format users write.
 func TestLoadServiceConfig(t *testing.T) {
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	expectedConfig := &types.ServiceConfig{
-		Name:    "cms",
-		Command: "/home/user/start-script.sh",
-		Port:    1337,
-		Runtime: runtime,
-	}
-
-	yamlData, err := yaml.Marshal(expectedConfig)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
+	const fixture = `
+name: cms
+command: /home/user/start-script.sh
+port: 1337
+runtime:
+  type: nodejs
+`
 	tempDir := t.TempDir()
 	configFile := filepath.Join(tempDir, "service.yaml")
 
-	err = os.WriteFile(configFile, yamlData, 0644)
-	if err != nil {
+	if err := os.WriteFile(configFile, []byte(fixture), 0644); err != nil {
 		t.Fatalf("writing test config file should not error: %v", err)
 	}
 
@@ -49,30 +41,33 @@ func TestLoadServiceConfig(t *testing.T) {
 	if config.Port != 1337 {
 		t.Errorf("Expected port 1337, got %d", config.Port)
 	}
+	if config.Runtime.Type != "nodejs" {
+		t.Errorf("Expected runtime type 'nodejs', got %s", config.Runtime.Type)
+	}
 }
 
-// TODO: Rewrite: name promises optional fields but only sets Name/Command/Port,
-// same as TestLoadServiceConfig; should exercise EnvFile, LogSinks, MemoryLimitMb instead.
+// TestLoadServiceConfigWithOptionalFields exercises the optional fields that
+// TestLoadServiceConfig doesn't cover: EnvFile, LogSinks (both a registry
+// name reference and an inline sink), and MemoryLimitMb.
 func TestLoadServiceConfigWithOptionalFields(t *testing.T) {
-	runtime := types.Runtime{
-		Type: "nodejs",
-	}
-	expectedConfig := &types.ServiceConfig{
-		Name:    "website",
-		Command: "pnpm start",
-		Port:    3000,
-		Runtime: runtime,
-	}
-	yamlData, err := yaml.Marshal(expectedConfig)
-	if err != nil {
-		t.Fatalf("Failed to marshal test config: %v", err)
-	}
-
+	const fixture = `
+name: website
+command: pnpm start
+port: 3000
+runtime:
+  type: nodejs
+env_file: .env.production
+memory_limit_mb: 512
+log_sinks:
+  - prod-loki
+  - type: file
+    mode: push
+    address: /var/log/eos/website.log
+`
 	tempDir := t.TempDir()
 	configFile := filepath.Join(tempDir, "service.yaml")
 
-	err = os.WriteFile(configFile, yamlData, 0644)
-	if err != nil {
+	if err := os.WriteFile(configFile, []byte(fixture), 0644); err != nil {
 		t.Fatalf("Failed to create test config file: %v", err)
 	}
 
@@ -82,6 +77,21 @@ func TestLoadServiceConfigWithOptionalFields(t *testing.T) {
 	}
 	if config.Port != 3000 {
 		t.Errorf("Expected port '3000' got '%d'", config.Port)
+	}
+	if config.EnvFile != ".env.production" {
+		t.Errorf("Expected env_file '.env.production', got %q", config.EnvFile)
+	}
+	if config.MemoryLimitMb != 512 {
+		t.Errorf("Expected memory_limit_mb 512, got %d", config.MemoryLimitMb)
+	}
+	if len(config.LogSinks) != 2 {
+		t.Fatalf("Expected 2 log sinks, got %d", len(config.LogSinks))
+	}
+	if config.LogSinks[0].Name != "prod-loki" || config.LogSinks[0].Inline != nil {
+		t.Errorf("entry 0: expected name reference 'prod-loki', got %+v", config.LogSinks[0])
+	}
+	if config.LogSinks[1].Inline == nil || config.LogSinks[1].Inline.Type != "file" {
+		t.Errorf("entry 1: expected inline file sink, got %+v", config.LogSinks[1])
 	}
 }
 
