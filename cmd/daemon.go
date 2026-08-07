@@ -22,7 +22,7 @@ import (
 )
 
 type DaemonController interface {
-	Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error
+	Start(ctx context.Context, cmd *cobra.Command, detach bool, logToFileAndConsole bool, verbose bool) error
 	Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error)
 	// IsRunning reports whether the daemon is currently running, without side
 	// effects — used to gate restart prompts before Stop() is ever called.
@@ -43,7 +43,7 @@ type standaloneDaemonController struct {
 	underSystemd bool
 }
 
-func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, logToFileAndConsole bool, verbose bool) error {
+func (c *standaloneDaemonController) Start(ctx context.Context, _ *cobra.Command, detach bool, logToFileAndConsole bool, verbose bool) error {
 	if detach && !c.underSystemd {
 		return forkDaemon(ctx, &c.cfg, verbose, c.identity)
 	}
@@ -182,16 +182,46 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 
 type systemdDaemonController struct {
 	// checkDir is isAccessibleDir in production (set by newDaemonController); tests inject a
-	// fake so Stop's user-bus check doesn't depend on what runtime dirs genuinely exist in the
+	// fake so the user-bus check doesn't depend on what runtime dirs genuinely exist in the
 	// environment running the test (e.g. a root-run CI job where /run/user/0 is real).
 	checkDir dirAccessCheckFn
-	cfg      config.SystemdConfig
+	// baseDir backs Logs' fallback to the daemon's own log file (see
+	// tailDaemonLogFile) when journald has no entries for the eos unit — a
+	// systemd --user unit commonly has no persistent journal storage at all.
+	baseDir string
+	cfg     config.SystemdConfig
 }
 
-func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
+// Start delegates to "systemctl start", first preparing the systemd user bus
+// for a --user unit (see ensureUserBusAvailable). That preparation can print
+// to cmd and, if the bus is unrecoverable without it, block on a
+// PromptConfirm — reachable through cmd's own Reader/Writer regardless of
+// which "eos ... daemon start" cobra command owns it, including
+// newAPIDaemonStartCmdWithController, whose Long help promises a pure-JSON
+// stdout contract with no interactive prompting. This mirrors Stop's
+// identical trade-off (already shipped for the API path), so it's accepted
+// parity rather than a new gap: fixing it for Start alone would leave Stop
+// inconsistent, and fixing both is a separate, larger change to how the API
+// commands surface (or refuse) an unrecoverable bus.
+func (c *systemdDaemonController) Start(ctx context.Context, cmd *cobra.Command, _ bool, _ bool, verbose bool) error {
 	if !c.cfg.UserUnit && os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
+
+	if c.cfg.UserUnit {
+		effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+		if effectiveUserErr != nil {
+			return fmt.Errorf("getting current user: %w", effectiveUserErr)
+		}
+		effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+		if credErr != nil {
+			return fmt.Errorf("getting current user credentials: %w", credErr)
+		}
+		if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), execRunCmd, c.checkDir); err != nil {
+			return fmt.Errorf("preparing user bus: %w", err)
+		}
+	}
+
 	systemctlPath, err := helpers.ResolveExecutable("systemctl")
 	if err != nil {
 		return err
@@ -203,7 +233,7 @@ func (c systemdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bo
 	return nil
 }
 
-func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
+func (c *systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
 	args := systemctlArgs(c.cfg.UserUnit, "stop", "eos")
 	scope := "system"
 	if c.cfg.UserUnit {
@@ -242,19 +272,19 @@ func (c systemdDaemonController) Stop(ctx context.Context, cmd *cobra.Command, v
 // IsRunning probes the base-dir-scoped socket the same way daemonIsDown() does,
 // not `systemctl is-active` — that check is host-global and would say "running"
 // for a unit supervising a different EOS_BASE_DIR entirely (issue #12).
-func (c systemdDaemonController) IsRunning(ctx context.Context) bool {
+func (c *systemdDaemonController) IsRunning(ctx context.Context) bool {
 	return socketResponds(ctx, c.cfg.SocketPath)
 }
 
-func (c systemdDaemonController) Remove() error {
+func (c *systemdDaemonController) Remove() error {
 	return os.Remove(c.cfg.SystemdTargetDir + c.cfg.SystemdTargetFileName)
 }
 
-func (c systemdDaemonController) Info(cmd *cobra.Command) {
+func (c *systemdDaemonController) Info(cmd *cobra.Command) {
 	printSystemdDaemonDetails(cmd, c.cfg)
 }
 
-func (c systemdDaemonController) LogsHint() string {
+func (c *systemdDaemonController) LogsHint() string {
 	if c.cfg.UserUnit {
 		return "journalctl --user -u eos -f"
 	}
@@ -300,9 +330,34 @@ func runJournalStream(cmd *cobra.Command, journalArgs []string) {
 	}
 }
 
-func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
+// journalHasEntries reports whether journalctl has any log entries for the eos
+// unit, scoped to the user bus when userUnit is set. A systemd --user unit
+// commonly has no persistent journal storage at all — journalctl then prints
+// "No journal files were found" on stderr and exits 0 rather than erroring,
+// so a would-be caller can't tell "no entries" from "real failure" just by
+// checking err. Only stdout is inspected here for exactly that reason.
+func journalHasEntries(ctx context.Context, userUnit bool) bool {
+	journalctlPath, err := helpers.ResolveExecutable("journalctl")
+	if err != nil {
+		return false
+	}
+	args := systemctlArgs(userUnit, "-u", "eos", "-n", "1", "--no-pager")
+	out, err := exec.CommandContext(ctx, journalctlPath, args...).Output() // #nosec G204 -- args are a fixed set built from a bool, not external input; journalctlPath resolved via LookPath
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+func (c *systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	if lines < 0 || lines > 10000 {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
+		return
+	}
+
+	if !journalHasEntries(cmd.Context(), c.cfg.UserUnit) {
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no journald entries found for the eos unit — falling back to the daemon's own log file")
+		tailDaemonLogFile(cmd, c.baseDir, config.DaemonLogFileName, lines, follow)
 		return
 	}
 
@@ -343,7 +398,7 @@ func (c launchdDaemonController) target() string {
 	return c.domain() + "/" + launchdLabel(c.cfg.LaunchdPlistFileName)
 }
 
-func (c launchdDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
+func (c launchdDaemonController) Start(ctx context.Context, _ *cobra.Command, _ bool, _ bool, _ bool) error {
 	if !c.cfg.UserAgent && os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
@@ -434,7 +489,7 @@ func (c openrcDaemonController) unit() string {
 	return config.OpenRCTargetFileName
 }
 
-func (c openrcDaemonController) Start(ctx context.Context, _ bool, _ bool, _ bool) error {
+func (c openrcDaemonController) Start(ctx context.Context, _ *cobra.Command, _ bool, _ bool, _ bool) error {
 	if os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
@@ -498,7 +553,7 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 		}, nil
 	}
 	if cfg.Systemd != nil {
-		return systemdDaemonController{cfg: *cfg.Systemd, checkDir: isAccessibleDir}, nil
+		return &systemdDaemonController{cfg: *cfg.Systemd, checkDir: isAccessibleDir, baseDir: baseDir}, nil
 	}
 	if cfg.Launchd != nil {
 		return launchdDaemonController{cfg: *cfg.Launchd, baseDir: baseDir}, nil
@@ -566,7 +621,7 @@ func daemonCmdRunStart(cmd *cobra.Command, getCtrl func() DaemonController) erro
 
 	daemonCmdPrintStarting(cmd, detach)
 
-	if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole, verbose); err != nil {
+	if err := ctrl.Start(cmd.Context(), cmd, detach, logToFileAndConsole, verbose); err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		return helpers.ErrCommandFailed
 	}
@@ -818,35 +873,66 @@ func buildForkCommand(ctx context.Context, exePath string, verbose bool, identit
 	return cmd, stderrFile, nil
 }
 
-// waitForForkPIDFile blocks until the forked daemon is confirmed alive via its
-// PID file, or the 5s deadline elapses. It re-checks process liveness (not
-// just file existence): a PID file can exist for an instant before the
-// process that wrote it dies.
-func waitForForkPIDFile(pidFile string) error {
-	deadline := time.Now().Add(5 * time.Second)
+// forkReadinessPollInterval is the poll cadence waitUntilAlive uses for both
+// the primary deadline and the grace window below.
+const forkReadinessPollInterval = 50 * time.Millisecond
+
+// forkReadinessGrace is a final, tolerant re-check window applied once the
+// primary deadline elapses: a daemon that finishes starting a few seconds
+// later than budgeted — a cold binary right after "eos system update" swaps
+// it, for example — would otherwise be declared dead by a hair despite
+// coming up correctly moments later.
+const forkReadinessGrace = 3 * time.Second
+
+// waitUntilAlive polls alive every forkReadinessPollInterval until it reports
+// true, timeout elapses, or — as one last, tolerant chance —
+// forkReadinessGrace beyond it also elapses.
+func waitUntilAlive(timeout time.Duration, alive func() bool) bool {
+	if pollUntilTrue(timeout, alive) {
+		return true
+	}
+	return pollUntilTrue(forkReadinessGrace, alive)
+}
+
+// pollUntilTrue polls check every forkReadinessPollInterval, for up to
+// timeout, returning true as soon as check reports true.
+func pollUntilTrue(timeout time.Duration, check func() bool) bool {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		status, err := process.StatusStandaloneDaemon(&config.StandaloneDaemonConfig{PIDFile: pidFile})
-		if err == nil && status.Running {
-			return nil
+		if check() {
+			return true
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(forkReadinessPollInterval)
+	}
+	return false
+}
+
+// waitForForkPIDFile blocks until the forked daemon is confirmed alive via its
+// PID file, or waitUntilAlive's deadline (plus its tolerant grace window)
+// elapses. It re-checks process liveness (not just file existence): a PID
+// file can exist for an instant before the process that wrote it dies.
+func waitForForkPIDFile(pidFile string) error {
+	alive := func() bool {
+		status, err := process.StatusStandaloneDaemon(&config.StandaloneDaemonConfig{PIDFile: pidFile})
+		return err == nil && status.Running
+	}
+	if waitUntilAlive(5*time.Second, alive) {
+		return nil
 	}
 	return fmt.Errorf("timed out waiting for PID file: %s", pidFile)
 }
 
 // waitForForkSocket blocks until the forked daemon's Unix socket accepts a
-// connection, or the 5s deadline elapses. A PID file can exist — and its
+// connection, or waitUntilAlive's deadline (plus its tolerant grace window)
+// elapses. A PID file can exist — and its
 // process still be alive — for a brief window before an unrelated startup
 // failure (e.g. a socket bind error) kills it moments later; confirming the
 // socket answers is what actually proves the daemon reached a running state,
 // not just that it forked (issue #156).
 func waitForForkSocket(ctx context.Context, socketPath string) error {
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if socketResponds(ctx, socketPath) {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
+	alive := func() bool { return socketResponds(ctx, socketPath) }
+	if waitUntilAlive(5*time.Second, alive) {
+		return nil
 	}
 	return fmt.Errorf("timed out waiting for daemon socket: %s", socketPath)
 }
@@ -1083,7 +1169,22 @@ func systemdUserBusReachable(uid int) bool {
 // "eos" unit for this user/system scope, with no base-dir awareness of its
 // own — the same host/user-global blind spot documented on
 // config.SystemdConfig.SocketPath (issue #12).
+//
+// For a user unit, it best-effort auto-heals a stale/unset XDG_RUNTIME_DIR
+// (the same non-interactive correction ensureUserBusAvailable performs)
+// before querying systemctl — this function has no *cobra.Command to prompt
+// through, and its callers already silently skip the version/PID line on any
+// error rather than surfacing a failure, so a fixable "Failed to connect to
+// bus" is worth healing quietly instead of just accepting the miss.
 func systemdMainPID(ctx context.Context, userUnit bool) (int, error) {
+	if userUnit {
+		if effectiveUser, userErr := userutil.EffectiveUser(); userErr == nil {
+			if uid, _, credErr := userutil.UserCredentials(effectiveUser); credErr == nil {
+				_, _ = correctUserRuntimeDir(int(uid), userRuntimeDir(int(uid)), isAccessibleDir)
+			}
+		}
+	}
+
 	systemctlPath, err := helpers.ResolveExecutable("systemctl")
 	if err != nil {
 		return 0, err

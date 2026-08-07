@@ -3068,15 +3068,17 @@ func TestSupportedPlatformsMatchCheckForUpdates(t *testing.T) {
 }
 
 type stubUpdateController struct {
-	stopErr    error
-	startErr   error
-	startCount int
-	killed     bool
-	running    bool
+	stopErr         error
+	startErr        error
+	startCount      int
+	startVerboseArg bool
+	killed          bool
+	running         bool
 }
 
-func (s *stubUpdateController) Start(_ context.Context, _, _, _ bool) error {
+func (s *stubUpdateController) Start(_ context.Context, _ *cobra.Command, _, _, verbose bool) error {
 	s.startCount++
+	s.startVerboseArg = verbose
 	return s.startErr
 }
 func (s *stubUpdateController) Stop(_ context.Context, _ *cobra.Command, _ bool) (bool, error) {
@@ -3231,6 +3233,23 @@ func TestRestartDaemonAfterUpdate(t *testing.T) {
 		}
 		if _, statErr := os.Stat(tempDir); !os.IsNotExist(statErr) {
 			t.Errorf("expected temp dir removed, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("forwards the real verbose flag to Start, matching Stop", func(t *testing.T) {
+		cmd, _, _, _ := setupCmd(t)
+		cmd.Flags().Bool("verbose", false, "")
+		if err := cmd.Flags().Set("verbose", "true"); err != nil {
+			t.Fatalf("setting verbose flag: %v", err)
+		}
+		setStdin(cmd, "y\n")
+		ctrl := &stubUpdateController{running: true, killed: true}
+
+		if err := restartDaemonAfterUpdate(t.Context(), cmd, ctrl, t.TempDir(), "v9.9.9"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if !ctrl.startVerboseArg {
+			t.Error("expected Start to be called with verbose=true when --verbose is set, matching Stop's forwarding")
 		}
 	})
 }

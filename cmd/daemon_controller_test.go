@@ -113,7 +113,7 @@ func TestStandaloneDaemonController_StartForeground(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 
-	if err := c.Start(ctx, false, false, false); err != nil {
+	if err := c.Start(ctx, nil, false, false, false); err != nil {
 		t.Errorf("expected Start to return nil once the context is done, got: %v", err)
 	}
 }
@@ -385,31 +385,79 @@ func TestSystemdMainPID_UnparsablePID(t *testing.T) {
 	}
 }
 
+// TestSystemdMainPID_UserUnit_BestEffortHealsRuntimeDir covers the userUnit
+// branch where systemdMainPID best-effort corrects XDG_RUNTIME_DIR before
+// querying systemctl. Whatever the real environment's
+// runtime dir looks like, the correction is silent and non-fatal either way,
+// so this just proves the branch doesn't break the normal resolve-and-query
+// path (unlike ensureUserBusAvailable, there is no cmd to prompt through, and
+// a stale bus here should never block resolving the PID).
+func TestSystemdMainPID_UserUnit_BestEffortHealsRuntimeDir(t *testing.T) {
+	stubPathExecutable(t, "systemctl", "echo 4242")
+	pid, err := systemdMainPID(t.Context(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pid != 4242 {
+		t.Errorf("expected pid 4242, got %d", pid)
+	}
+}
+
 func TestSystemdDaemonController_Start(t *testing.T) {
 	t.Run("resolves and runs systemctl", func(t *testing.T) {
 		stubPathExecutable(t, "systemctl", "exit 0")
-		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
-		if err := c.Start(t.Context(), false, false, false); err != nil {
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return true },
+		}
+		cmd, _, _ := makeTestCmd(t)
+		if err := c.Start(t.Context(), cmd, false, false, false); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
 	t.Run("systemctl not on PATH", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
-		if err := c.Start(t.Context(), false, false, false); err == nil {
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return true },
+		}
+		cmd, _, _ := makeTestCmd(t)
+		if err := c.Start(t.Context(), cmd, false, false, false); err == nil {
 			t.Fatal("expected error when systemctl cannot be resolved")
 		}
 	})
 
 	t.Run("systemctl failure surfaces output", func(t *testing.T) {
 		stubPathExecutable(t, "systemctl", "echo boom >&2; exit 1")
-		c := systemdDaemonController{cfg: config.SystemdConfig{UserUnit: true}}
-		err := c.Start(t.Context(), false, false, false)
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return true },
+		}
+		cmd, _, _ := makeTestCmd(t)
+		err := c.Start(t.Context(), cmd, false, false, false)
 		if err == nil || !strings.Contains(err.Error(), "boom") {
 			t.Fatalf("expected error containing systemctl output, got: %v", err)
 		}
 	})
+
+	t.Run("user unit prepares the bus before resolving systemctl", func(t *testing.T) {
+		// checkDir is faked to unconditionally report "not accessible" so this
+		// exercises the bus-preparation path deterministically, declining the
+		// enable-linger prompt, regardless of what /run/user/<uid> or
+		// XDG_RUNTIME_DIR genuinely look like on the machine running the test.
+		stubPathExecutable(t, "systemctl", "exit 0")
+		c := systemdDaemonController{
+			cfg:      config.SystemdConfig{UserUnit: true},
+			checkDir: func(string, int) bool { return false },
+		}
+		cmd, _, _ := makeTestCmd(t)
+		setStdin(cmd, "n\n")
+		if err := c.Start(t.Context(), cmd, false, false, false); err == nil {
+			t.Fatal("expected error when the user bus is unavailable and linger is declined")
+		}
+	})
+
 }
 
 func TestSystemdDaemonController_Stop(t *testing.T) {
@@ -460,7 +508,8 @@ func TestLaunchdDaemonController_Start(t *testing.T) {
 	t.Run("resolves and runs launchctl", func(t *testing.T) {
 		stubPathExecutable(t, "launchctl", "exit 0")
 		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
-		if err := c.Start(t.Context(), false, false, false); err != nil {
+		cmd, _, _ := makeTestCmd(t)
+		if err := c.Start(t.Context(), cmd, false, false, false); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -468,7 +517,8 @@ func TestLaunchdDaemonController_Start(t *testing.T) {
 	t.Run("launchctl not on PATH", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: true}}
-		if err := c.Start(t.Context(), false, false, false); err == nil {
+		cmd, _, _ := makeTestCmd(t)
+		if err := c.Start(t.Context(), cmd, false, false, false); err == nil {
 			t.Fatal("expected error when launchctl cannot be resolved")
 		}
 	})
@@ -478,7 +528,8 @@ func TestLaunchdDaemonController_Start(t *testing.T) {
 			t.Skip("skipping: test assumes a non-root process")
 		}
 		c := launchdDaemonController{cfg: config.LaunchdConfig{UserAgent: false}}
-		if err := c.Start(t.Context(), false, false, false); err == nil {
+		cmd, _, _ := makeTestCmd(t)
+		if err := c.Start(t.Context(), cmd, false, false, false); err == nil {
 			t.Fatal("expected error when starting a system daemon without root")
 		}
 	})
@@ -763,8 +814,8 @@ func TestNewDaemonController(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if _, ok := ctrl.(systemdDaemonController); !ok {
-			t.Errorf("expected systemdDaemonController, got %T", ctrl)
+		if _, ok := ctrl.(*systemdDaemonController); !ok {
+			t.Errorf("expected *systemdDaemonController, got %T", ctrl)
 		}
 	})
 
