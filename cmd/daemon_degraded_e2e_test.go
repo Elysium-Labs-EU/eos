@@ -112,7 +112,7 @@ func TestDaemonE2E_Degraded_StaleProcessHistory(t *testing.T) {
 		t.Fatalf("eos stop stalesvc: %v\n%s", err, out)
 	}
 
-	// Default health-check interval is 2s → stale threshold is 6s. Wait past it
+	// Default health-check interval is 2s to stale threshold is 6s. Wait past it
 	// with margin so the frozen row is unambiguously stale while livesvc keeps
 	// being refreshed.
 	time.Sleep(8 * time.Second)

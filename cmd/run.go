@@ -139,15 +139,15 @@ func isServiceRunning(ctx context.Context, mgr manager.ServiceManager, serviceNa
 
 func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
 func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
@@ -170,9 +170,9 @@ func runPrintNoServiceSpecifiedError(cmd *cobra.Command) {
 	cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 		ui.TextMuted.Render("run:"),
 		ui.TextCommand.Render("eos run -f <path>"),
-		ui.TextMuted.Render("→ run from a service file"),
+		ui.TextMuted.Render("to run from a service file"),
 	)
-	cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
+	cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("to run a registered service by name"))
 }
 
 func runPrintAmbiguousSelectorError(cmd *cobra.Command) {
@@ -183,12 +183,12 @@ func runPrintAmbiguousSelectorError(cmd *cobra.Command) {
 	cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 		ui.TextMuted.Render("use:"),
 		ui.TextCommand.Render("eos run -f <path>"),
-		ui.TextMuted.Render("→ to run from a file"),
+		ui.TextMuted.Render("to run from a file"),
 	)
 	cmd.PrintErrf(fmtIndentLabelTwoMsg,
 		ui.TextMuted.Render("use:"),
 		ui.TextCommand.Render("eos run <name>"),
-		ui.TextMuted.Render("→ to run by name"),
+		ui.TextMuted.Render("to run by name"),
 	)
 }
 

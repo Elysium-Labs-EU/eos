@@ -992,7 +992,7 @@ func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) 
 
 	if staleCount > 0 {
 		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("%d daemon(s) still running the pre-update binary", staleCount))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start") + ui.TextMuted.Render(" → restart each") + "\n\n")
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start") + ui.TextMuted.Render(" to restart each") + "\n\n")
 	}
 }
 
@@ -1001,12 +1001,13 @@ func printSystemdDaemonDetails(cmd *cobra.Command, cfg config.SystemdConfig) {
 	if cfg.UserUnit {
 		daemonCmdWarnSystemdUserBus(cmd)
 	}
-	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
 	daemonCmdPrintSystemdRunState(cmd, cfg)
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
 	daemonCmdPrintSystemdVersion(cmd, cfg)
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check systemd service status") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check systemd service status") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system unstartup") + ui.TextMuted.Render(" to disable systemd management") + "\n\n")
 	cmd.Printf(fmtHeading, ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" → check journalctl service logs") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" to check journalctl service logs") + "\n")
 	cmd.Println()
 }
 
@@ -1128,17 +1129,17 @@ func printLaunchdDaemonDetails(cmd *cobra.Command, userAgent bool) {
 		statusCmd = "launchctl print gui/$(id -u)/" + config.LaunchdLabel
 	}
 	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render(fmt.Sprintf("daemon is launchd managed (%s)", scope)))
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" → check launchd service status") + "\n")
-	cmd.Printf(fmtHeading, ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" → tail daemon log file") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check launchd service status") + "\n\n")
+	cmd.Printf("%s\n", ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" to tail daemon log file") + "\n")
 	cmd.Println()
 }
 
 func printOpenRCDaemonDetails(cmd *cobra.Command) {
 	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is OpenRC managed"))
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("rc-service eos status") + ui.TextMuted.Render(" → check OpenRC service status") + "\n")
-	cmd.Printf(fmtHeading, ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" → tail daemon log file") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("rc-service eos status") + ui.TextMuted.Render(" to check OpenRC service status") + "\n\n")
+	cmd.Printf("%s\n", ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" to tail daemon log file") + "\n")
 	cmd.Println()
 }
 

@@ -349,7 +349,7 @@ func TestReloadZeroDowntimeSOReusePort(t *testing.T) {
 	if !procutil.IsAlive(result.NewPGID) {
 		t.Errorf("new instance pgid %d should be serving after cutover", result.NewPGID)
 	}
-	t.Logf("reload served %d connections with zero drops (pgid %d → %d)", successes, oldPGID, result.NewPGID)
+	t.Logf("reload served %d connections with zero drops (pgid %d to %d)", successes, oldPGID, result.NewPGID)
 }
 
 func firstN(s []string, n int) []string {
@@ -360,7 +360,7 @@ func firstN(s []string, n int) []string {
 }
 
 // TestReloadDaemonDispatch drives the reload through the daemon's IPC dispatch
-// path (executeRequest → handleReloadService), the entry point the CLI reaches
+// path (executeRequest to handleReloadService), the entry point the CLI reaches
 // over the socket, proving the handler parses the durations, wires
 // monitor.ProbeReady as the gate, runs the real cutover, and reports the swapped
 // PGIDs back in the response.
