@@ -75,7 +75,7 @@ hand with "eos stop".`,
 			cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(config.Name), "registered")
 			cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("path:"), absPath)
 			cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("config:"), filepath.Base(yamlFile))
-			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", config.Name)), ui.TextMuted.Render("→ start the service"))
+			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", config.Name)), ui.TextMuted.Render("to start the service"))
 			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 			return nil
 		},

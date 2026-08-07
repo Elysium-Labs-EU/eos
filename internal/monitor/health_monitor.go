@@ -329,7 +329,7 @@ func hmStartupRunningMessage(serviceName string, configPort int) string {
 // startup-specific debug log distinct from the running-state one.
 func (hm *HealthMonitor) hmFinishStartupTransition(ctx context.Context, pgid int, serviceName string, priorPeakRssKb int64) {
 	activeRssMemoryKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
-	hm.logger.Debug("startup→running", "service", serviceName, "mem_kb", activeRssMemoryKb)
+	hm.logger.Debug("startup to running", "service", serviceName, "mem_kb", activeRssMemoryKb)
 
 	err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State:           new(types.ProcessStateRunning),
@@ -743,7 +743,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	updateString := string(fmt.Appendf(msgBuf[:0], "[%s] is running", serviceName))
 
 	hm.logger.Info(updateString)
-	hm.logger.Debug("state→Running", "service", serviceName, "pgid", pgid)
+	hm.logger.Debug("state to Running", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStdout(serviceName, updateString)
 	if err != nil {
 		hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", err)
@@ -769,7 +769,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 
 func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, level slog.Level, errorString string) {
 	hm.logger.Log(ctx, level, errorString)
-	hm.logger.Debug("state→Failed", "service", serviceName, "pgid", pgid)
+	hm.logger.Debug("state to Failed", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 	if err != nil {
 		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)

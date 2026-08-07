@@ -1312,32 +1312,32 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, u syst
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "stop", u.Unit), " "))
 	out, err := run(ctx, "systemctl", systemctlArgs(u.UserUnit, "stop", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", u.UnitKind, string(out)))
+		cmd.PrintErrf(fmtLabelMsgLn, ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), u.UnitKind+" stopped")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), u.UnitKind+" stopped")
 
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "disable", u.Unit), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "disable", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", u.UnitKind, string(out)))
+		cmd.PrintErrf(fmtLabelMsgLn, ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), u.UnitKind+" disabled")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), u.UnitKind+" disabled")
 
 	if err = os.Remove(u.UnitPath); err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
+		cmd.PrintErrf(fmtLabelMsgLn, ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "unit file removed")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "unit file removed")
 
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "daemon-reload"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "daemon-reload")...)
 	if err != nil {
-		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsgLn, ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), u.UnitKind+" startup removed")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("success"), u.UnitKind+" startup removed")
 	return nil
 }
 
@@ -1817,7 +1817,7 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 
 	if err := validateDigest(expectedChecksum, binary); err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" to retry the update") + "\n")
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}
@@ -1926,7 +1926,7 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 	cmd.Printf("\n%s %s %s\n", ui.LabelSuccess.Render("success"), msgEosUpdatedTo, ui.TextBold.Render(latestVersion))
 	if os.Getuid() == 0 {
 		cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("this only restarted the invoking user's daemon — other users on this host may still be running the pre-update binary"))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" → check every user's daemon") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" to check every user's daemon") + "\n")
 	}
 	return nil
 }
@@ -1959,7 +1959,7 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, p *updateCmdParams, fetc
 		return nil
 	}
 
-	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(p.Version), ui.TextBold.Render(result.LatestVersion))
+	cmd.Printf("%s %s to %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(p.Version), ui.TextBold.Render(result.LatestVersion))
 	if !helpers.PromptConfirm(cmd, "upgrade? (y/n):") {
 		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "update canceled")
 		return nil

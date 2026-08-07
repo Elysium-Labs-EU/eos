@@ -134,3 +134,4 @@ case <-t.C:
 | Deep embedding | obscures data origin |
 | Nil pointer as "empty" config | use zero value |
 | Ambient lookup (env, uid, time.Now) re-derived at multiple sites | each copy can silently diverge |
+| never use →, rely on words for actions | terminals dont always render this properly |

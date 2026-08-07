@@ -115,8 +115,8 @@ instance untouched.`,
 }
 
 func printReloadSuccessOutput(cmd *cobra.Command, serviceName string, result manager.ReloadResult) {
-	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("reloaded (PGID %d → %d)", result.OldPGID, result.NewPGID))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("reloaded (PGID %d to %d)", result.OldPGID, result.NewPGID))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }

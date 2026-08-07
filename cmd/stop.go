@@ -169,8 +169,8 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 		for erroredPGID, errored := range forceStopResult.Errored {
 			cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 		}
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("kill -9 <pgid>") + ui.TextMuted.Render(" → use a PGID listed above for manual kill") + "\n")
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)) + ui.TextMuted.Render(" → view service info") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("kill -9 <pgid>") + ui.TextMuted.Render(" to use a PGID listed above for manual kill") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)) + ui.TextMuted.Render(" to view service info") + "\n")
 		return
 	}
 
