@@ -22,7 +22,7 @@ const (
 	msgDaemonStartedBg      = "daemon started in background"
 	msgDaemonWasNotRunning  = "daemon was not running"
 	msgEosUpdatedTo         = "eos updated to"
-	msgCheckDaemonLogs      = " → check daemon logs"
+	msgCheckDaemonLogs      = " to check daemon logs"
 	flagDescSkipConfirm     = "skip all confirmation prompts (non-interactive mode)"
 	headerUserAgent         = "User-Agent"
 	systemctlDaemonReload   = "daemon-reload"
