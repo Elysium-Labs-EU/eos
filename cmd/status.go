@@ -151,13 +151,13 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		)
 	}
 
-	serviceInstance, err := mgr.GetServiceInstance(regServiceName)
+	serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), regServiceName)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
 		return statusServiceEntry{}, false
 	}
 
-	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
+	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), regServiceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
 		return statusServiceEntry{}, false
@@ -193,7 +193,7 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 	// service blocked on depends_on has no process yet, so without this it
 	// renders identically to one that was simply never started (see issue
 	// #136's "eos status ... distinct state rather than looking like a hang").
-	if pending := helpers.ResolveDependencyWaitStatus(mgr, regServiceName); len(pending) > 0 {
+	if pending := helpers.ResolveDependencyWaitStatus(cmd.Context(), mgr, regServiceName); len(pending) > 0 {
 		entry.Status = types.ServiceStatusWaitingForDeps
 		entry.Error = "waiting for: " + strings.Join(pending, ", ")
 	}
@@ -251,7 +251,7 @@ func statusTableStyleFunc(staleRows []bool) func(row, col int) lipgloss.Style {
 }
 
 func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInterval time.Duration) {
-	registeredServices, err := mgr.GetAllServiceCatalogEntries()
+	registeredServices, err := mgr.GetAllServiceCatalogEntries(cmd.Context())
 	if err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered services: %v", err))
 		return

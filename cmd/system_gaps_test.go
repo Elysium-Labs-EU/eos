@@ -427,11 +427,18 @@ func TestStartupCmd_WriteUnitFileError(t *testing.T) {
 	setStdin(c, "y\n")
 
 	var calls []string
-	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    false,
+		Verbose:     false,
+		FlagYes:     false,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if err == nil {
 		t.Fatal("expected error when the unit file target path is a directory")
@@ -451,11 +458,18 @@ func TestStartupCmd_SystemctlStartError(t *testing.T) {
 
 	var calls []string
 	run := runCmdErrorOnNth(t, &calls, 3) // 1: daemon-reload, 2: enable, 3: start -> fails
-	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false, false,
-		fakeDetectRuntime("systemd"), run)
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    false,
+		Verbose:     false,
+		FlagYes:     false,
+	}, fakeDetectRuntime("systemd"), run)
 
 	if err == nil {
 		t.Fatal("expected error when systemctl start fails")
@@ -475,7 +489,13 @@ func TestDisableAndRemoveSystemdUnit_StopError(t *testing.T) {
 	var calls []string
 	run := runCmdErrorOnNth(t, &calls, 1)
 
-	err := disableAndRemoveSystemdUnit(t.Context(), cmd, false, false, "system unit", "eos", "/nonexistent/eos.service", run)
+	err := disableAndRemoveSystemdUnit(t.Context(), cmd, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: "/nonexistent/eos.service",
+		Verbose:  false,
+		UserUnit: false,
+	}, run)
 	if err == nil {
 		t.Fatal("expected error when stop fails")
 	}
@@ -489,7 +509,13 @@ func TestDisableAndRemoveSystemdUnit_DisableError(t *testing.T) {
 	var calls []string
 	run := runCmdErrorOnNth(t, &calls, 2)
 
-	err := disableAndRemoveSystemdUnit(t.Context(), cmd, false, false, "system unit", "eos", "/nonexistent/eos.service", run)
+	err := disableAndRemoveSystemdUnit(t.Context(), cmd, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: "/nonexistent/eos.service",
+		Verbose:  false,
+		UserUnit: false,
+	}, run)
 	if err == nil {
 		t.Fatal("expected error when disable fails")
 	}
@@ -504,7 +530,13 @@ func TestDisableAndRemoveSystemdUnit_RemoveError(t *testing.T) {
 	run := recordingRunCmd(t, &calls)
 	unitPath := filepath.Join(t.TempDir(), "does-not-exist.service")
 
-	err := disableAndRemoveSystemdUnit(t.Context(), cmd, false, false, "system unit", "eos", unitPath, run)
+	err := disableAndRemoveSystemdUnit(t.Context(), cmd, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: unitPath,
+		Verbose:  false,
+		UserUnit: false,
+	}, run)
 	if err == nil {
 		t.Fatal("expected error removing a nonexistent unit file")
 	}
@@ -527,7 +559,13 @@ func TestDisableAndRemoveSystemdUnit_DaemonReloadError(t *testing.T) {
 	var calls []string
 	run := runCmdErrorOnNth(t, &calls, 3) // 1: stop, 2: disable succeed; 3: daemon-reload -> fails
 
-	err := disableAndRemoveSystemdUnit(t.Context(), cmd, false, false, "system unit", "eos", unitPath, run)
+	err := disableAndRemoveSystemdUnit(t.Context(), cmd, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: unitPath,
+		Verbose:  false,
+		UserUnit: false,
+	}, run)
 	if err == nil {
 		t.Fatal("expected error when the final daemon-reload fails")
 	}
@@ -558,10 +596,15 @@ func TestUnstartupCmd_UserUnitLingerHint(t *testing.T) {
 		t.Fatalf("resolving identity: %v", err)
 	}
 
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
-		SystemdTargetDir:      tempDir + "/",
-		SystemdTargetFileName: "eos.service",
-	}, true, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, systemdUnstartupParams{
+		DaemonConfig: config.SystemdConfig{
+			SystemdTargetDir:      tempDir + "/",
+			SystemdTargetFileName: "eos.service",
+		},
+		UserUnit: true,
+		Verbose:  false,
+		FlagYes:  false,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -680,10 +723,18 @@ func TestStartupCmdLaunchd_WritePlistFileError(t *testing.T) {
 	setStdin(c, "y\n")
 
 	var calls []string
-	err := startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", plistFileName, false, false, false, recordingRunCmd(t, &calls))
+	err := startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: plistFileName,
+		UserAgent:     false,
+		Verbose:       false,
+		FlagYes:       false,
+	}, recordingRunCmd(t, &calls))
 
 	if err == nil {
 		t.Fatal("expected error when the plist target path is a directory")
@@ -705,10 +756,18 @@ func TestStartupCmdLaunchd_UserAgentFullPath(t *testing.T) {
 
 	var calls []string
 	plistFileName := "org.elysiumlabs.eos-test.plist"
-	err := startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", plistFileName, true, false, false, recordingRunCmd(t, &calls))
+	err := startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: plistFileName,
+		UserAgent:     true,
+		Verbose:       false,
+		FlagYes:       false,
+	}, recordingRunCmd(t, &calls))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -731,10 +790,18 @@ func TestStartupCmdLaunchd_KickstartError(t *testing.T) {
 
 	var calls []string
 	run := runCmdErrorOnNth(t, &calls, 4) // bootout, bootstrap, enable succeed; kickstart fails
-	err := startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, run)
+	err := startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: "org.elysiumlabs.eos-test.plist",
+		UserAgent:     false,
+		Verbose:       false,
+		FlagYes:       false,
+	}, run)
 
 	if err == nil {
 		t.Fatal("expected error when kickstart fails")
@@ -760,10 +827,15 @@ func TestUnstartupCmdLaunchd_RemovePlistError(t *testing.T) {
 		t.Fatalf("resolving identity: %v", err)
 	}
 
-	unstartErr := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
-		LaunchdTargetDir:     tempDir + "/",
-		LaunchdPlistFileName: plistFileName,
-	}, false, false, false, recordingRunCmd(t, &calls), identity)
+	unstartErr := unstartupCmdLaunchd(t.Context(), c, launchdUnstartupParams{
+		DaemonConfig: config.LaunchdConfig{
+			LaunchdTargetDir:     tempDir + "/",
+			LaunchdPlistFileName: plistFileName,
+		},
+		UserAgent: false,
+		Verbose:   false,
+		FlagYes:   false,
+	}, recordingRunCmd(t, &calls), identity)
 
 	if unstartErr == nil {
 		t.Fatal("expected error removing a nonexistent plist file")
@@ -1072,7 +1144,14 @@ func TestUpdateCmd_DeclineUpgrade(t *testing.T) {
 
 	setStdin(cmd, "n\n")
 
-	err = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fetchChecksumForBinary)
+	err = updateCmd(t.Context(), cmd, &updateCmdParams{
+		Version:    buildinfo.GetVersionOnly(),
+		InstallDir: installDir,
+		Ctrl:       ctrl,
+		UserArch:   "arm64",
+		UserOS:     "linux",
+		IncludePre: false,
+	}, fakeFetchRelease, fakeDownloadBinary, fetchChecksumForBinary)
 	if err != nil {
 		t.Fatalf("unexpected error on decline: %v", err)
 	}

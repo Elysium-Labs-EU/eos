@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -316,7 +317,7 @@ func TestStopCommandPersistsDisabled(t *testing.T) {
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -465,6 +466,76 @@ func TestStopCommandForceQuitDeclined(t *testing.T) {
 	}
 	if !strings.Contains(outBuf.String(), "force stopped 1 process") {
 		t.Errorf("Expected cleanup force stop to show 'force stopped 1 process', got: %s", outBuf.String())
+	}
+}
+
+// stopCmdFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods stopCmd* helpers call, so the
+// force-quit confirm/decline branches can be exercised without a real
+// DB-backed manager.
+type stopCmdFakeManager struct {
+	forceStopResult manager.StopServiceResult
+	manager.ServiceManager
+	forceStopErr      error
+	removeInstanceErr error
+	removedInstance   bool
+}
+
+func (f *stopCmdFakeManager) ForceStopService(context.Context, string) (manager.StopServiceResult, error) {
+	return f.forceStopResult, f.forceStopErr
+}
+
+func (f *stopCmdFakeManager) RemoveServiceInstance(context.Context, string) (bool, error) {
+	return f.removedInstance, f.removeInstanceErr
+}
+
+func TestStopCmdConfirmForceQuitDeclined(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
+	cmd.SetIn(strings.NewReader("n\n"))
+
+	err := stopCmdConfirmForceQuit(cmd, "svc", &stopCmdFakeManager{}, map[int]string{123: "boom"})
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "force quit aborted") {
+		t.Errorf("expected 'force quit aborted', got: %s", outBuf.String())
+	}
+}
+
+func TestStopCmdConfirmForceQuitConfirmed(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
+	cmd.SetIn(strings.NewReader("y\n"))
+	fake := &stopCmdFakeManager{
+		forceStopResult: manager.StopServiceResult{Stopped: map[int]bool{123: true}},
+		removedInstance: true,
+	}
+
+	err := stopCmdConfirmForceQuit(cmd, "svc", fake, map[int]string{123: "boom"})
+
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	output := outBuf.String()
+	if !strings.Contains(output, "force stopped 1 process") {
+		t.Errorf("expected 'force stopped 1 process', got: %s", output)
+	}
+	if !strings.Contains(output, "service instance cleaned up") {
+		t.Errorf("expected 'service instance cleaned up', got: %s", output)
+	}
+}
+
+func TestStopCmdPrintStaleDataWarning(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+
+	stopCmdPrintStaleDataWarning(cmd, 0)
+	if errBuf.String() != "" {
+		t.Errorf("expected no warning for zero stale data, got: %s", errBuf.String())
+	}
+
+	stopCmdPrintStaleDataWarning(cmd, 2)
+	if !strings.Contains(errBuf.String(), "failed to update history for 2 process(es)") {
+		t.Errorf("expected stale data warning, got: %s", errBuf.String())
 	}
 }
 

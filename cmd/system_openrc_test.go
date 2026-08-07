@@ -32,8 +32,9 @@ func selectiveFailRunCmd(t *testing.T, calls *[]string, failName string, failErr
 func TestOpenrcStartupCmdNonOpenRCRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = openrcStartupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos", false, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	_ = openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: "/usr/local/bin", InitDir: "/tmp/", InitFile: "eos",
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls, got: %v", calls)
@@ -45,8 +46,9 @@ func TestOpenrcStartupCmdNonOpenRCRuntime(t *testing.T) {
 
 func TestOpenrcStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	_ = openrcStartupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos", false, false,
-		fakeDetectRuntimeErr(errors.New("no /run")), noopRunCmd)
+	_ = openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: "/usr/local/bin", InitDir: "/tmp/", InitFile: "eos",
+	}, fakeDetectRuntimeErr(errors.New("no /run")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
 		t.Errorf("expected runtime error in stderr, got: %s", errBuf.String())
@@ -59,11 +61,15 @@ func TestOpenrcStartupCmdDeclineInitScript(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = openrcStartupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos", false, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	_ = openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: "/usr/local/bin",
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		InitDir:  tempDir + "/",
+		InitFile: "eos",
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls when user declines, got: %v", calls)
@@ -80,11 +86,16 @@ func TestOpenrcStartupCmdWritesScriptAndEnablesWithoutRestart(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
-	_ = openrcStartupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos", true, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	_ = openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		InitDir:  tempDir + "/",
+		InitFile: "eos",
+		Verbose:  true,
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
 		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
@@ -116,11 +127,15 @@ func TestOpenrcStartupCmdFullRestartPath(t *testing.T) {
 	setStdin(c, "y\ny\n")
 
 	var calls []string
-	_ = openrcStartupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos", false, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	_ = openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		InitDir:  tempDir + "/",
+		InitFile: "eos",
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -139,7 +154,7 @@ func TestOpenrcUnstartupCmdNonOpenRCRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: "/tmp/", InitFile: "eos"}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls, got: %v", calls)
@@ -158,7 +173,7 @@ func TestOpenrcUnstartupCmdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = openrcUnstartupCmd(t.Context(), c, "/tmp/", "eos", false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	_ = openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: "/tmp/", InitFile: "eos"}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no rc-* calls when declined, got: %v", calls)
@@ -184,7 +199,7 @@ func TestOpenrcUnstartupCmdRemovesScriptAndDisables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	_ = openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: tempDir + "/", InitFile: "eos"}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -210,8 +225,14 @@ func TestOpenrcUnstartupCmdRemovesScriptAndDisables(t *testing.T) {
 func TestOpenrcStartupCmdCheckWritableFails(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	err := openrcStartupCmd(t.Context(), c, "/usr/local/bin", nil, "/nonexistent-eos-openrc-dir/", "eos", false, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	err := openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir:   "/usr/local/bin",
+		DaemonConfig: nil,
+		InitDir:      "/nonexistent-eos-openrc-dir/",
+		InitFile:     "eos",
+		Verbose:      false,
+		FlagYes:      false,
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
@@ -236,8 +257,14 @@ func TestOpenrcStartupCmdWriteInitScriptFails(t *testing.T) {
 	setStdin(c, "y\n")
 
 	var calls []string
-	err := openrcStartupCmd(t.Context(), c, filepath.Join(tempDir, "install"), nil, tempDir+"/", "eos", false, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	err := openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir:   filepath.Join(tempDir, "install"),
+		DaemonConfig: nil,
+		InitDir:      tempDir + "/",
+		InitFile:     "eos",
+		Verbose:      false,
+		FlagYes:      false,
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
@@ -259,8 +286,14 @@ func TestOpenrcStartupCmdRcUpdateAddFails(t *testing.T) {
 
 	var calls []string
 	run := selectiveFailRunCmd(t, &calls, "rc-update", errors.New("rc-update: openrc is not running"))
-	err := openrcStartupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), nil, tempDir+"/", "eos", false, false,
-		fakeDetectRuntime("openrc"), run)
+	err := openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir:   filepath.Join(tempDir, "eos"),
+		DaemonConfig: nil,
+		InitDir:      tempDir + "/",
+		InitFile:     "eos",
+		Verbose:      false,
+		FlagYes:      false,
+	}, fakeDetectRuntime("openrc"), run)
 
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
@@ -284,11 +317,17 @@ func TestOpenrcStartupCmdRcServiceStartFails(t *testing.T) {
 
 	var calls []string
 	run := selectiveFailRunCmd(t, &calls, rcServiceCmdName, errors.New("rc-service: eos: does not exist"))
-	err := openrcStartupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos", false, false,
-		fakeDetectRuntime("openrc"), run)
+	err := openrcStartupCmd(t.Context(), c, openrcStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		InitDir:  tempDir + "/",
+		InitFile: "eos",
+		Verbose:  false,
+		FlagYes:  false,
+	}, fakeDetectRuntime("openrc"), run)
 
 	if !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
@@ -319,7 +358,7 @@ func TestOpenrcUnstartupCmdRcServiceStopFails(t *testing.T) {
 	}
 	var calls []string
 	run := selectiveFailRunCmd(t, &calls, rcServiceCmdName, errors.New("rc-service: eos: does not exist"))
-	unstartupErr := openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, false, fakeDetectRuntime("openrc"), run, identity)
+	unstartupErr := openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: tempDir + "/", InitFile: "eos", Verbose: false, FlagYes: false}, fakeDetectRuntime("openrc"), run, identity)
 
 	if !errors.Is(unstartupErr, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", unstartupErr)
@@ -354,7 +393,7 @@ func TestOpenrcUnstartupCmdRcUpdateDelFails(t *testing.T) {
 	}
 	var calls []string
 	run := selectiveFailRunCmd(t, &calls, "rc-update", errors.New("rc-update: openrc is not running"))
-	unstartupErr := openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, false, fakeDetectRuntime("openrc"), run, identity)
+	unstartupErr := openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: tempDir + "/", InitFile: "eos", Verbose: false, FlagYes: false}, fakeDetectRuntime("openrc"), run, identity)
 
 	if !errors.Is(unstartupErr, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", unstartupErr)
@@ -384,7 +423,7 @@ func TestOpenrcUnstartupCmdRemoveInitScriptFails(t *testing.T) {
 		t.Fatalf("resolving identity: %v", err)
 	}
 	var calls []string
-	unstartupErr := openrcUnstartupCmd(t.Context(), c, tempDir+"/", "eos", false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	unstartupErr := openrcUnstartupCmd(t.Context(), c, openrcUnstartupParams{InitDir: tempDir + "/", InitFile: "eos", Verbose: false, FlagYes: false}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if !errors.Is(unstartupErr, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", unstartupErr)

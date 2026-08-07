@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -338,6 +340,95 @@ func TestInfoConfigLoadError(t *testing.T) {
 	}
 }
 
+// infoFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods needed to force error branches
+// that are impractical to reach through a real DB-backed manager.
+type infoFakeManager struct {
+	manager.ServiceManager
+
+	instance    *types.ServiceInstance
+	instanceErr error
+
+	processEntry *types.ProcessHistory
+	processErr   error
+}
+
+func (f *infoFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
+	return f.instance, f.instanceErr
+}
+
+func (f *infoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
+	return f.processEntry, f.processErr
+}
+
+func infoNewTestCmd() (*cobra.Command, *bytes.Buffer) {
+	cmd := &cobra.Command{}
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	return cmd, &errBuf
+}
+
+func TestInfoFetchServiceInstanceGenericError(t *testing.T) {
+	cmd, errBuf := infoNewTestCmd()
+	wantErr := errors.New("boom")
+
+	instance := infoFetchServiceInstance(cmd, t.Context(), &infoFakeManager{instanceErr: wantErr}, "svc")
+
+	if instance != nil {
+		t.Errorf("expected nil instance on error, got: %+v", instance)
+	}
+	if !strings.Contains(errBuf.String(), "getting service instance") {
+		t.Errorf("expected 'getting service instance' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoFetchProcessEntryGenericError(t *testing.T) {
+	cmd, errBuf := infoNewTestCmd()
+	wantErr := errors.New("boom")
+
+	entry := infoFetchProcessEntry(cmd, t.Context(), &infoFakeManager{processErr: wantErr}, "svc")
+
+	if entry != nil {
+		t.Errorf("expected nil process entry on error, got: %+v", entry)
+	}
+	if !strings.Contains(errBuf.String(), "getting process history") {
+		t.Errorf("expected 'getting process history' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoWithRegistryLogSinkRef(t *testing.T) {
+	cmd, outBuf, errBuf, tempDir := setupCmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithLogSinkRefs("prod-loki"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err := os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	cmd.SetArgs([]string{"add", fullPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add command should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	}
+
+	cmd.SetArgs([]string{"info", "cms"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("info command should not return an error, got: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, "sink 1") || !strings.Contains(output, "prod-loki") || !strings.Contains(output, "registry") {
+		t.Errorf("expected sink 1 to reference registry sink 'prod-loki', got: %s", output)
+	}
+}
+
 func TestInfoWithRunningServiceState(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -401,19 +492,19 @@ type fakeInfoMgr struct {
 	catalogEntry types.ServiceCatalogEntry
 }
 
-func (f *fakeInfoMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
+func (f *fakeInfoMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return f.catalogEntry, f.catalogErr
 }
 
-func (f *fakeInfoMgr) GetServiceInstance(string) (*types.ServiceInstance, error) {
+func (f *fakeInfoMgr) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return nil, f.instanceErr
 }
 
-func (f *fakeInfoMgr) GetMostRecentProcessHistoryEntry(string) (*types.ProcessHistory, error) {
+func (f *fakeInfoMgr) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return nil, f.historyErr
 }
 
-func (f *fakeInfoMgr) GetServiceLogFilePath(string, bool) (*string, error) {
+func (f *fakeInfoMgr) GetServiceLogFilePath(context.Context, string, bool) (*string, error) {
 	return nil, nil //nolint:nilnil // mirrors LocalManager's "no log file yet" contract, which info.go's callers already handle
 }
 

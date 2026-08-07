@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -19,7 +20,7 @@ import (
 // the short-lived CLI, so reload deliberately requires the daemon and errors out
 // otherwise rather than pretending to swap.
 type serviceReloader interface {
-	ReloadService(name string, cfg manager.ReloadConfig) (manager.ReloadResult, error)
+	ReloadService(ctx context.Context, name string, cfg manager.ReloadConfig) (manager.ReloadResult, error)
 }
 
 const (
@@ -65,8 +66,15 @@ instance untouched.`,
 
 			cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "reloading", ui.TextBold.Render(serviceName))
 
-			if err := ensureServiceRegistered(cmd, mgr, serviceName); err != nil {
-				return err
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
+			if err != nil {
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				return helpers.ErrCommandFailed
+			}
+			if !exists {
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				return helpers.ErrCommandFailed
 			}
 
 			reloader, ok := mgr.(serviceReloader)
@@ -76,7 +84,7 @@ instance untouched.`,
 				return helpers.ErrCommandFailed
 			}
 
-			result, err := reloader.ReloadService(serviceName, manager.ReloadConfig{
+			result, err := reloader.ReloadService(cmd.Context(), serviceName, manager.ReloadConfig{
 				GracePeriod:      cfg.Shutdown.GracePeriod,
 				TickerPeriod:     reloadTickerPeriod,
 				ReadinessTimeout: reloadReadinessTimeout,

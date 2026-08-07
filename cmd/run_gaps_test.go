@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -34,27 +35,27 @@ type fakeRunMgr struct {
 	isRegistered       bool
 }
 
-func (f *fakeRunMgr) AddServiceCatalogEntry(*types.ServiceCatalogEntry) error {
+func (f *fakeRunMgr) AddServiceCatalogEntry(context.Context, *types.ServiceCatalogEntry) error {
 	return f.addCatalogErr
 }
 
-func (f *fakeRunMgr) IsServiceRegistered(string) (bool, error) {
+func (f *fakeRunMgr) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.isRegistered, f.isRegisteredErr
 }
 
-func (f *fakeRunMgr) GetServiceInstance(string) (*types.ServiceInstance, error) {
+func (f *fakeRunMgr) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return nil, f.serviceInstanceErr
 }
 
-func (f *fakeRunMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
+func (f *fakeRunMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return f.catalogEntry, f.catalogEntryErr
 }
 
-func (f *fakeRunMgr) StartService(string) (int, error) {
+func (f *fakeRunMgr) StartService(context.Context, string) (int, error) {
 	return f.startPGID, f.startErr
 }
 
-func (f *fakeRunMgr) SetServiceEnabled(string, bool) error {
+func (f *fakeRunMgr) SetServiceEnabled(context.Context, string, bool) error {
 	return nil
 }
 

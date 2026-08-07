@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -70,11 +71,11 @@ type fakeUpdateMgr struct {
 	isRegistered    bool
 }
 
-func (f *fakeUpdateMgr) IsServiceRegistered(string) (bool, error) {
+func (f *fakeUpdateMgr) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.isRegistered, f.isRegisteredErr
 }
 
-func (f *fakeUpdateMgr) UpdateServiceCatalogEntry(string, string, string) error {
+func (f *fakeUpdateMgr) UpdateServiceCatalogEntry(context.Context, string, string, string) error {
 	return f.updateErr
 }
 

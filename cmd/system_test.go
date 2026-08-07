@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -97,8 +98,9 @@ func noopRunCmd(_ context.Context, _ string, _ ...string) ([]byte, error) {
 func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
 	var calls []string
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
-		fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
+	_ = startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: "/usr/local/bin", SystemdDir: "/tmp/", SystemdFile: "eos.service",
+	}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -110,8 +112,9 @@ func TestStartupCmdNonSystemdRuntime(t *testing.T) {
 
 func TestStartupCmdRuntimeDetectionError(t *testing.T) {
 	c, _, errBuf := makeTestCmd(t)
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", nil, "/tmp/", "eos.service", false, false, false,
-		fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
+	_ = startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: "/usr/local/bin", SystemdDir: "/tmp/", SystemdFile: "eos.service",
+	}, fakeDetectRuntimeErr(fmt.Errorf("no /proc")), noopRunCmd)
 
 	if !strings.Contains(errBuf.String(), "getting system command") {
 		t.Errorf("expected runtime error in stderr, got: %s", errBuf.String())
@@ -124,11 +127,15 @@ func TestStartupCmdDeclineUnitFile(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = startupCmd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	_ = startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: "/usr/local/bin",
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when user declines, got: %v", calls)
@@ -145,11 +152,16 @@ func TestStartupCmdWritesUnitFileAndEnablesWithoutRestart(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	var calls []string
-	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, true, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	_ = startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		Verbose:     true,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
 		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
@@ -177,11 +189,15 @@ func TestStartupCmdFullRestartPath(t *testing.T) {
 	setStdin(c, "y\ny\n")
 
 	var calls []string
-	_ = startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	_ = startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -203,11 +219,16 @@ func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
 	c, _, _ := makeTestCmd(t)
 
 	var calls []string
-	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", false, false, true,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		FlagYes:     true,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -238,11 +259,16 @@ func TestStartupCmdUserUnitFullPath(t *testing.T) {
 	setStdin(c, "y\ny\n")
 
 	var calls []string
-	err := startupCmd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "eos.service", true, false, false,
-		fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    true,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -291,7 +317,7 @@ func TestUnstartupCmdNonSystemdRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, systemdUnstartupParams{}, fakeDetectRuntime("openrc"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls, got: %v", calls)
@@ -310,7 +336,7 @@ func TestUnstartupCmdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, systemdUnstartupParams{}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no systemctl calls when declined, got: %v", calls)
@@ -336,10 +362,12 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmd(t.Context(), c, config.SystemdConfig{
-		SystemdTargetDir:      tempDir + "/",
-		SystemdTargetFileName: "eos.service",
-	}, false, false, false, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmd(t.Context(), c, systemdUnstartupParams{
+		DaemonConfig: config.SystemdConfig{
+			SystemdTargetDir:      tempDir + "/",
+			SystemdTargetFileName: "eos.service",
+		},
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -356,6 +384,388 @@ func TestUnstartupCmdRemovesUnitAndReloads(t *testing.T) {
 
 	if !strings.Contains(outBuf.String(), "system unit startup removed") {
 		t.Errorf("expected success message, got: %s", outBuf.String())
+	}
+}
+
+// TestSysStartupDarwin_UserAgentDeclinePlist exercises sysStartupDarwin's
+// user-agent branch (HOME is isolated to a tempdir so ensureLaunchdDir's
+// os.MkdirAll and the writability check never touch the real
+// ~/Library/LaunchAgents) declining the plist creation prompt so nothing is
+// ever written.
+func TestSysStartupDarwin_UserAgentDeclinePlist(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root to exercise the user-agent branch")
+	}
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	c, outBuf, _ := makeTestCmd(t)
+	setStdin(c, "n\n")
+
+	err := sysStartupDarwin(c, c, filepath.Join(tempHome, "eos"), &config.StandaloneDaemonConfig{
+		PIDFile:    filepath.Join(tempHome, "eos.pid"),
+		SocketPath: filepath.Join(tempHome, "eos.sock"),
+	}, false, false)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "launch agent file creation canceled") {
+		t.Errorf("expected cancelation message, got: %s", outBuf.String())
+	}
+}
+
+// TestSysStartupLinux_SystemdDirNotAccessible exercises sysStartupLinux's
+// non-openrc dispatch into startupCmd, and startupCmd's ensureRuntime gate:
+// when the detected runtime isn't "systemd", it rejects before touching any
+// directory. This used to call the real, non-injectable
+// detectActiveSystemRuntime — that made the test depend on the host's actual
+// init system rather than being deterministic, and it broke on GitHub Actions
+// runners, which really do run systemd as PID 1: runtime detection returned
+// "systemd" there, so the confirmation prompt declined instead of
+// ensureRuntime ever rejecting. sysStartupLinux now takes an injected
+// detectRuntime (like startupCmd/openrcStartupCmd already did), so a fake
+// makes both the dispatch decision and the rejection deterministic on every
+// host.
+func TestSysStartupLinux_SystemdDirNotAccessible(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+
+	err := sysStartupLinux(c, c, "/usr/local/bin", nil, false, false, fakeDetectRuntime("unknown"))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "not supported for this runtime") {
+		t.Errorf("expected 'not supported for this runtime' error, got: %s", errBuf.String())
+	}
+}
+
+// TestSysStartupLinux_OpenRCDispatch exercises sysStartupLinux's other
+// dispatch branch: a fake detectRuntime reporting "openrc" routes into
+// openrcStartupCmd rather than the systemd path. openrcStartupCmd's own
+// ensureRuntime gate matches on the same fake, so it proceeds to
+// checkWritable against the real config.OpenRCInitDir — as a non-root user
+// that fails with a permission error before anything is written, keeping
+// this side-effect-free. Skipped as root, where checkWritable's temp-file
+// probe would actually succeed against a real system directory.
+func TestSysStartupLinux_OpenRCDispatch(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root so checkWritable's probe against the real OpenRC init dir fails harmlessly")
+	}
+	c, _, errBuf := makeTestCmd(t)
+
+	err := sysStartupLinux(c, c, "/usr/local/bin", nil, false, false, fakeDetectRuntime("openrc"))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "checking destination file") {
+		t.Errorf("expected a destination-file-check error, got: %s", errBuf.String())
+	}
+}
+
+// TestSysUnstartupDarwin_NoLaunchdConfigured exercises sysUnstartupDarwin's
+// guard clause when no launchd startup has ever been installed — a pure
+// in-memory check, no filesystem access at all.
+func TestSysUnstartupDarwin_NoLaunchdConfigured(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+
+	err := sysUnstartupDarwin(c, c, config.DaemonConfig{}, false, false, userutil.Identity{})
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "no launchd startup configured") {
+		t.Errorf("expected 'no launchd startup configured' error, got: %s", errBuf.String())
+	}
+}
+
+// TestSysUnstartupDarwin_DeclineRemoval exercises sysUnstartupDarwin's
+// call-through to unstartupCmdLaunchd when a launchd config is present, using
+// an explicit tempdir (not resolved via HOME) so no real path is touched.
+func TestSysUnstartupDarwin_DeclineRemoval(t *testing.T) {
+	tempDir := t.TempDir()
+	c, outBuf, _ := makeTestCmd(t)
+	setStdin(c, "n\n")
+	identity, err := userutil.ResolveIdentity()
+	if err != nil {
+		t.Fatalf("resolving identity: %v", err)
+	}
+
+	runErr := sysUnstartupDarwin(c, c, config.DaemonConfig{
+		Launchd: &config.LaunchdConfig{
+			LaunchdTargetDir:     tempDir + "/",
+			LaunchdPlistFileName: "org.elysiumlabs.eos-test.plist",
+		},
+	}, false, false, identity)
+
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
+	}
+	if !strings.Contains(outBuf.String(), "canceled") {
+		t.Errorf("expected cancelation message, got: %s", outBuf.String())
+	}
+}
+
+// TestSysUnstartupLinux_SystemdNilConfigured exercises sysUnstartupLinux's
+// guard clause when no systemd startup has ever been installed. Runs the
+// real detectActiveSystemRuntime, which never returns "openrc" on a machine
+// without /sbin/openrc, so this deterministically reaches the guard clause.
+func TestSysUnstartupLinux_SystemdNilConfigured(t *testing.T) {
+	if _, err := os.Stat("/sbin/openrc"); err == nil {
+		t.Skip("host runs OpenRC, guard clause under test is unreachable")
+	}
+	c, _, errBuf := makeTestCmd(t)
+
+	err := sysUnstartupLinux(c, c, config.DaemonConfig{}, false, false, userutil.Identity{})
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "no systemd startup configured") {
+		t.Errorf("expected 'no systemd startup configured' error, got: %s", errBuf.String())
+	}
+}
+
+func TestSysCombineCloseErr(t *testing.T) {
+	sentinel := errors.New("boom")
+
+	tests := []struct {
+		closeErr error
+		err      error
+		name     string
+		wantNil  bool
+		wantSame bool
+	}{
+		{name: "no close error, no prior error", closeErr: nil, err: nil, wantNil: true},
+		{name: "no close error, keeps prior error", closeErr: nil, err: sentinel, wantSame: true},
+		{name: "close error, no prior error, wraps it", closeErr: errors.New("close failed"), err: nil},
+		{name: "close error, prior error wins", closeErr: errors.New("close failed"), err: sentinel, wantSame: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sysCombineCloseErr(tt.closeErr, tt.err)
+			switch {
+			case tt.wantNil:
+				if got != nil {
+					t.Errorf("expected nil, got: %v", got)
+				}
+			case tt.wantSame:
+				if !errors.Is(got, sentinel) {
+					t.Errorf("expected wrapped sentinel, got: %v", got)
+				}
+			default:
+				if got == nil || !strings.Contains(got.Error(), "closing response body") {
+					t.Errorf("expected wrapped close error, got: %v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestSysCombineCleanupErr(t *testing.T) {
+	sentinel := errors.New("boom")
+	cleanupErr := errors.New("cleanup failed")
+
+	tests := []struct {
+		err        error
+		cleanUpErr error
+		check      func(t *testing.T, got error)
+		name       string
+	}{
+		{
+			name: "no cleanup error keeps original error untouched",
+			err:  sentinel, cleanUpErr: nil,
+			check: func(t *testing.T, got error) {
+				if !errors.Is(got, sentinel) {
+					t.Errorf("expected original error unchanged, got: %v", got)
+				}
+			},
+		},
+		{
+			name: "cleanup error with no prior error",
+			err:  nil, cleanUpErr: cleanupErr,
+			check: func(t *testing.T, got error) {
+				if got == nil || !strings.Contains(got.Error(), "cleaning up temporary directory") {
+					t.Errorf("expected cleanup error, got: %v", got)
+				}
+			},
+		},
+		{
+			name: "cleanup error combined with prior error",
+			err:  sentinel, cleanUpErr: cleanupErr,
+			check: func(t *testing.T, got error) {
+				if got == nil || !errors.Is(got, sentinel) || !errors.Is(got, cleanupErr) {
+					t.Errorf("expected combined error wrapping both, got: %v", got)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.check(t, sysCombineCleanupErr(tt.err, tt.cleanUpErr))
+		})
+	}
+}
+
+func TestSysUpdateEnvOverrides(t *testing.T) {
+	noOverrides := func(string) string { return "" }
+
+	t.Run("no overrides uses build info and runtime", func(t *testing.T) {
+		version, userArch, userOS := sysUpdateEnvOverrides(noOverrides)
+		if version != buildinfo.GetVersionOnly() {
+			t.Errorf("expected build version, got: %s", version)
+		}
+		if userArch != runtime.GOARCH {
+			t.Errorf("expected runtime.GOARCH, got: %s", userArch)
+		}
+		if userOS != runtime.GOOS {
+			t.Errorf("expected runtime.GOOS, got: %s", userOS)
+		}
+	})
+
+	t.Run("overrides take precedence", func(t *testing.T) {
+		env := map[string]string{
+			"EOS_VERSION": "v9.9.9",
+			"USER_ARCH":   "riscv64",
+			"USER_OS":     "plan9",
+		}
+		version, userArch, userOS := sysUpdateEnvOverrides(func(key string) string { return env[key] })
+		if version != "v9.9.9" {
+			t.Errorf("expected override version, got: %s", version)
+		}
+		if userArch != "riscv64" {
+			t.Errorf("expected override arch, got: %s", userArch)
+		}
+		if userOS != "plan9" {
+			t.Errorf("expected override OS, got: %s", userOS)
+		}
+	})
+}
+
+// failingRunCmd returns a runCmdFn that errors on its failOnCall'th call
+// (1-indexed) and succeeds on every other call.
+func failingRunCmd(t *testing.T, calls *[]string, failOnCall int) runCmdFn {
+	t.Helper()
+	n := 0
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		n++
+		*calls = append(*calls, strings.Join(append([]string{name}, args...), " "))
+		if n == failOnCall {
+			return []byte("boom"), errors.New("command failed")
+		}
+		return []byte("ok"), nil
+	}
+}
+
+func TestDisableAndRemoveSystemdUnit_StopFails(t *testing.T) {
+	c, _, errBuf := makeTestCmd(t)
+	var calls []string
+
+	err := disableAndRemoveSystemdUnit(t.Context(), c, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: filepath.Join(t.TempDir(), "eos.service"),
+	}, failingRunCmd(t, &calls, 1))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "stopping system unit") {
+		t.Errorf("expected stop error message, got: %s", errBuf.String())
+	}
+	if len(calls) != 1 {
+		t.Errorf("expected only the stop call to run, got: %v", calls)
+	}
+}
+
+func TestDisableAndRemoveSystemdUnit_DisableFails(t *testing.T) {
+	c, outBuf, errBuf := makeTestCmd(t)
+	var calls []string
+
+	err := disableAndRemoveSystemdUnit(t.Context(), c, systemdUnitRemoval{
+		UnitKind: "system unit",
+		Unit:     "eos",
+		UnitPath: filepath.Join(t.TempDir(), "eos.service"),
+	}, failingRunCmd(t, &calls, 2))
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "disabling system unit") {
+		t.Errorf("expected disable error message, got: %s", errBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "system unit stopped") {
+		t.Errorf("expected the stop step to have succeeded first, got: %s", outBuf.String())
+	}
+	want := []string{"systemctl stop eos", "systemctl disable eos"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+	}
+}
+
+// TestSystemStartupCmd_SystemdBranchDeclined drives `eos system startup`
+// through the top-level RunE closure (cmd.ExecuteContext, not the lower
+// startupCmd helper other tests call directly) so the systemd wiring branch
+// itself — building systemdStartupParams and calling startupCmd — actually
+// executes. Declining the "create unit file?" prompt makes startupCmd return
+// before it ever calls the real execRunCmd, so this never touches the host's
+// actual systemd state.
+func TestSystemStartupCmd_SystemdBranchDeclined(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd startup wiring branch is linux-only")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("skipping: the root path targets /etc/systemd/system, unsafe for a unit test")
+	}
+
+	cmd, _, _, tempDir := setupCmd(t)
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "startup"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected startup to return nil when the unit-file prompt is declined, got: %v", err)
+	}
+}
+
+// TestSystemUnstartupCmd_SystemdBranchDeclined mirrors
+// TestSystemStartupCmd_SystemdBranchDeclined for `eos system unstartup`.
+// EOS_SYSTEMD_TARGET_DIR is pointed at a sandboxed directory pre-seeded with
+// a fake unit file so newSystemConfig resolves Daemon.Systemd as managed —
+// otherwise the RunE closure short-circuits on "no systemd startup
+// configured" before ever reaching the wiring lines this test targets.
+// Declining the removal prompt returns before any real systemctl call.
+func TestSystemUnstartupCmd_SystemdBranchDeclined(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd unstartup wiring branch is linux-only")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("skipping: the root path targets /etc/systemd/system, unsafe for a unit test")
+	}
+
+	cmd, outBuf, errBuf, tempDir := setupCmd(t)
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+
+	// Unset regardless of the runner's own process ancestry: config.IsUnderSystemd
+	// checks INVOCATION_ID, which systemd propagates to every descendant of a
+	// systemd-supervised process — including this test binary, when CI's own
+	// runner agent happens to run as a systemd unit. Left set, newDaemonConfig's
+	// "isSystemdManaged && !underSystemd" check flips to the standalone branch
+	// and Daemon.Systemd resolves nil regardless of the fake unit file below,
+	// short-circuiting this test before it ever reaches the wiring it targets.
+	t.Setenv("INVOCATION_ID", "")
+
+	systemdDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(systemdDir, "eos.service"), []byte("[Unit]"), 0644); err != nil {
+		t.Fatalf("seeding fake unit file: %v", err)
+	}
+	t.Setenv("EOS_SYSTEMD_TARGET_DIR", systemdDir+"/")
+
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "unstartup"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected unstartup to return nil when the removal prompt is declined, got: %v\nstdout:\n%s\nstderr:\n%s", err, outBuf.String(), errBuf.String())
 	}
 }
 
@@ -414,10 +824,15 @@ func TestStartupCmdLaunchdDeclinePlist(t *testing.T) {
 	setStdin(c, "n\n")
 
 	var calls []string
-	_ = startupCmdLaunchd(t.Context(), c, "/usr/local/bin", &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
+	_ = startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: "/usr/local/bin",
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: "org.elysiumlabs.eos-test.plist",
+	}, recordingRunCmd(t, &calls))
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when user declines, got: %v", calls)
@@ -435,10 +850,16 @@ func TestStartupCmdLaunchdWritesPlistAndEnablesWithoutRestart(t *testing.T) {
 
 	var calls []string
 	plistFileName := "org.elysiumlabs.eos-test.plist"
-	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", plistFileName, false, true, false, recordingRunCmd(t, &calls))
+	_ = startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: plistFileName,
+		Verbose:       true,
+	}, recordingRunCmd(t, &calls))
 
 	if !strings.Contains(errBuf.String(), "debug") {
 		t.Errorf("expected debug output in stderr with verbose=true, got: %s", errBuf.String())
@@ -474,10 +895,15 @@ func TestStartupCmdLaunchdFullRestartPath(t *testing.T) {
 	setStdin(c, "y\ny\n")
 
 	var calls []string
-	_ = startupCmdLaunchd(t.Context(), c, filepath.Join(tempDir, "eos"), &config.StandaloneDaemonConfig{
-		PIDFile:    filepath.Join(tempDir, "eos.pid"),
-		SocketPath: filepath.Join(tempDir, "eos.sock"),
-	}, tempDir+"/", "org.elysiumlabs.eos-test.plist", false, false, false, recordingRunCmd(t, &calls))
+	_ = startupCmdLaunchd(t.Context(), c, launchdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		LaunchdDir:    tempDir + "/",
+		PlistFileName: "org.elysiumlabs.eos-test.plist",
+	}, recordingRunCmd(t, &calls))
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -500,7 +926,7 @@ func TestUnstartupCmdLaunchdDeclineConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{}, false, false, false, recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmdLaunchd(t.Context(), c, launchdUnstartupParams{}, recordingRunCmd(t, &calls), identity)
 
 	if len(calls) != 0 {
 		t.Errorf("expected no launchctl calls when declined, got: %v", calls)
@@ -527,10 +953,12 @@ func TestUnstartupCmdLaunchdRemovesPlistAndBootsOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving identity: %v", err)
 	}
-	_ = unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
-		LaunchdTargetDir:     tempDir + "/",
-		LaunchdPlistFileName: plistFileName,
-	}, false, false, false, recordingRunCmd(t, &calls), identity)
+	_ = unstartupCmdLaunchd(t.Context(), c, launchdUnstartupParams{
+		DaemonConfig: config.LaunchdConfig{
+			LaunchdTargetDir:     tempDir + "/",
+			LaunchdPlistFileName: plistFileName,
+		},
+	}, recordingRunCmd(t, &calls), identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr: %s", errBuf.String())
@@ -570,10 +998,12 @@ func TestUnstartupCmdLaunchdToleratesJobNotLoaded(t *testing.T) {
 	if identityErr != nil {
 		t.Fatalf("resolving identity: %v", identityErr)
 	}
-	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
-		LaunchdTargetDir:     tempDir + "/",
-		LaunchdPlistFileName: plistFileName,
-	}, false, false, false, exitCodeRunCmd(t, &calls, 3), identity)
+	err := unstartupCmdLaunchd(t.Context(), c, launchdUnstartupParams{
+		DaemonConfig: config.LaunchdConfig{
+			LaunchdTargetDir:     tempDir + "/",
+			LaunchdPlistFileName: plistFileName,
+		},
+	}, exitCodeRunCmd(t, &calls, 3), identity)
 
 	if err != nil {
 		t.Errorf("expected exit code 3 to be tolerated, got error: %v", err)
@@ -610,10 +1040,12 @@ func TestUnstartupCmdLaunchdOtherErrorsAreFatal(t *testing.T) {
 	if identityErr != nil {
 		t.Fatalf("resolving identity: %v", identityErr)
 	}
-	err := unstartupCmdLaunchd(t.Context(), c, config.LaunchdConfig{
-		LaunchdTargetDir:     tempDir + "/",
-		LaunchdPlistFileName: plistFileName,
-	}, false, false, false, exitCodeRunCmd(t, &calls, 1), identity)
+	err := unstartupCmdLaunchd(t.Context(), c, launchdUnstartupParams{
+		DaemonConfig: config.LaunchdConfig{
+			LaunchdTargetDir:     tempDir + "/",
+			LaunchdPlistFileName: plistFileName,
+		},
+	}, exitCodeRunCmd(t, &calls, 1), identity)
 
 	if err == nil {
 		t.Fatal("expected a non-3 exit code to be a fatal error")
@@ -895,6 +1327,119 @@ func TestSystemInfoCommand(t *testing.T) {
 	}
 }
 
+// TestSystemStartupCommand drives "system startup" end-to-end through
+// sysRunStartup, exercising the real GOOS dispatch for the host this test
+// runs on. HOME is isolated to a tempdir so the darwin path's
+// ensureLaunchdDir (which creates the LaunchAgents dir) and the linux path's
+// systemd-dir check never touch real user state.
+//
+// The non-darwin assertion used to expect ensureRuntime to reject with "not
+// accessible", assuming the test host has no active systemd/OpenRC. That
+// assumption is false on real CI (GitHub Actions runners genuinely run
+// systemd as PID 1), where ensureRuntime correctly accepts it and
+// ensureSystemdUnitDir's os.MkdirAll then succeeds against the fresh tempdir,
+// so declining the prompt just returns nil instead of failing. To keep this
+// deterministic regardless of the host's real init system, "$HOME/.config/systemd"
+// is pre-created read-only (0555): PersistentPreRun's IsSystemdManaged only
+// stats the (nonexistent) unit file under it, which still resolves to a
+// harmless ENOENT since traversal only needs the execute bit, but
+// ensureSystemdUnitDir's os.MkdirAll needs to create the "user" dir inside
+// it, which the missing write bit turns into a real, deterministic
+// permission failure — independent of runtime detection. A plain file at
+// ".config" itself doesn't work: PersistentPreRun's own systemd-scope
+// resolution stats through that same path first and treats anything other
+// than ENOENT as fatal, so it exits the process before this test's target
+// code even runs.
+func TestSystemStartupCommand(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root to exercise the user-scoped startup path")
+	}
+	cmd, outBuf, errBuf, _ := setupCmd(t)
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	if runtime.GOOS != "darwin" {
+		systemdDir := filepath.Join(tempHome, ".config", "systemd")
+		if err := os.MkdirAll(systemdDir, 0755); err != nil {
+			t.Fatalf("seeding systemd dir: %v", err)
+		}
+		if err := os.Chmod(systemdDir, 0555); err != nil {
+			t.Fatalf("making systemd dir read-only: %v", err)
+		}
+	}
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "startup"})
+
+	err := cmd.ExecuteContext(t.Context())
+
+	if runtime.GOOS == "darwin" {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(outBuf.String(), "creation canceled") {
+			t.Errorf("expected cancelation message, got: %s", outBuf.String())
+		}
+	} else {
+		if !errors.Is(err, helpers.ErrCommandFailed) {
+			t.Fatalf("expected ErrCommandFailed, got: %v", err)
+		}
+		if !strings.Contains(errBuf.String(), "creating user systemd directory") {
+			t.Errorf("expected 'creating user systemd directory' error, got: %s", errBuf.String())
+		}
+	}
+}
+
+// TestSystemUnstartupCommand drives "system unstartup" end-to-end through
+// sysRunUnstartup. A freshly-provisioned test config has no startup method
+// configured, so both the darwin and linux dispatch land on their guard
+// clause — deterministic and side-effect-free regardless of host.
+func TestSystemUnstartupCommand(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	cmd.SetArgs([]string{"system", "unstartup"})
+
+	err := cmd.ExecuteContext(t.Context())
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "startup configured") {
+		t.Errorf("expected 'no ... startup configured' error, got: %s", errBuf.String())
+	}
+}
+
+// TestSystemUninstallCommand_Decline drives "system uninstall" end-to-end
+// through sysRunUninstall's decline path.
+func TestSystemUninstallCommand_Decline(t *testing.T) {
+	cmd, outBuf, _, _ := setupCmd(t)
+	setStdin(cmd, "n\n")
+	cmd.SetArgs([]string{"system", "uninstall"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "uninstall canceled") {
+		t.Errorf("expected cancelation message, got: %s", outBuf.String())
+	}
+}
+
+// TestSystemUninstallCommand_Confirmed drives "system uninstall --yes"
+// end-to-end through sysRunUninstall's call-through to uninstallCmd. Every
+// directory involved (base dir, install dir) is test-isolated by setupCmd
+// and the EOS_INSTALL_DIR override, so this never touches real system state.
+func TestSystemUninstallCommand_Confirmed(t *testing.T) {
+	cmd, outBuf, _, tempDir := setupCmd(t)
+	t.Setenv("EOS_INSTALL_DIR", tempDir)
+	cmd.SetArgs([]string{"system", "uninstall", "--yes"})
+
+	err := cmd.ExecuteContext(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "uninstall complete") {
+		t.Errorf("expected completion message, got: %s", outBuf.String())
+	}
+}
+
 func TestSystemUpdateCommand(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupCmd(t)
 
@@ -1029,7 +1574,13 @@ func TestSystemUpdateWithInvalidOSArchCombinationCommand(t *testing.T) {
 		}, nil
 	}
 
-	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "darwin", false, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
+	_ = updateCmd(t.Context(), cmd, &updateCmdParams{
+		Version:    buildinfo.GetVersionOnly(),
+		InstallDir: installDir,
+		Ctrl:       ctrl,
+		UserArch:   "arm64",
+		UserOS:     "darwin",
+	}, fakeFetchRelease, handleDownloadBinary, fetchChecksumForBinary)
 
 	output := errBuf.String()
 
@@ -1100,7 +1651,13 @@ func TestSystemUpdateWithLowerVersionCommand(t *testing.T) {
 
 	setStdin(cmd, "y\ny\n")
 
-	_ = updateCmd(t.Context(), cmd, buildinfo.GetVersionOnly(), installDir, ctrl, "arm64", "linux", false, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
+	_ = updateCmd(t.Context(), cmd, &updateCmdParams{
+		Version:    buildinfo.GetVersionOnly(),
+		InstallDir: installDir,
+		Ctrl:       ctrl,
+		UserArch:   "arm64",
+		UserOS:     "linux",
+	}, fakeFetchRelease, fakeDownloadBinary, fakeGetChecksum)
 
 	output := outBuf.String()
 
@@ -1550,7 +2107,7 @@ func TestResolveStandaloneDaemonVersion_runningSuccess(t *testing.T) {
 		}
 		defer func() { _ = conn.Close() }()
 		var req types.DaemonRequest
-		if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+		if json.NewDecoder(conn).Decode(&req) != nil {
 			return
 		}
 		data, _ := json.Marshal(types.GetVersionResponse{Version: "v9.9.9"})
@@ -1694,7 +2251,7 @@ func TestPrintVersionDrift_fullDrift(t *testing.T) {
 		}
 		defer func() { _ = conn.Close() }()
 		var req types.DaemonRequest
-		if decErr := json.NewDecoder(conn).Decode(&req); decErr != nil {
+		if json.NewDecoder(conn).Decode(&req) != nil {
 			return
 		}
 		data, _ := json.Marshal(types.GetVersionResponse{Version: "v0.9.0"})
@@ -2105,64 +2662,74 @@ type mockMgr struct {
 	getMostRecentProcess func(string) (*types.ProcessHistory, error)
 }
 
-func (m *mockMgr) GetAllServiceInstances() ([]types.ServiceInstance, error) {
+func (m *mockMgr) GetAllServiceInstances(context.Context) ([]types.ServiceInstance, error) {
 	if m.getAllInstances != nil {
 		return m.getAllInstances()
 	}
 	return nil, nil
 }
-func (m *mockMgr) StopService(name string, gp, tp time.Duration) (manager.StopServiceResult, error) {
+func (m *mockMgr) StopService(_ context.Context, name string, gp, tp time.Duration) (manager.StopServiceResult, error) {
 	if m.stopSvc != nil {
 		return m.stopSvc(name, gp, tp)
 	}
 	return manager.StopServiceResult{}, nil
 }
-func (m *mockMgr) ForceStopService(name string) (manager.StopServiceResult, error) {
+func (m *mockMgr) ForceStopService(_ context.Context, name string) (manager.StopServiceResult, error) {
 	if m.forceStop != nil {
 		return m.forceStop(name)
 	}
 	return manager.StopServiceResult{}, nil
 }
-func (m *mockMgr) RemoveServiceInstance(name string) (bool, error) {
+func (m *mockMgr) RemoveServiceInstance(_ context.Context, name string) (bool, error) {
 	if m.removeInstance != nil {
 		return m.removeInstance(name)
 	}
 	return true, nil
 }
-func (m *mockMgr) GetServiceInstance(name string) (*types.ServiceInstance, error) {
+func (m *mockMgr) GetServiceInstance(_ context.Context, name string) (*types.ServiceInstance, error) {
 	if m.getServiceInstance != nil {
 		return m.getServiceInstance(name)
 	}
 	return &types.ServiceInstance{}, nil
 }
-func (m *mockMgr) AddServiceCatalogEntry(*types.ServiceCatalogEntry) error { return nil }
-func (m *mockMgr) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
+func (m *mockMgr) AddServiceCatalogEntry(context.Context, *types.ServiceCatalogEntry) error {
+	return nil
+}
+func (m *mockMgr) GetAllServiceCatalogEntries(context.Context) ([]types.ServiceCatalogEntry, error) {
 	if m.getAllCatalogEntries != nil {
 		return m.getAllCatalogEntries()
 	}
 	return nil, nil
 }
-func (m *mockMgr) GetServiceCatalogEntry(string) (types.ServiceCatalogEntry, error) {
+func (m *mockMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return types.ServiceCatalogEntry{}, nil
 }
-func (m *mockMgr) IsServiceRegistered(string) (bool, error)               { return false, nil }
-func (m *mockMgr) RemoveServiceCatalogEntry(string) (bool, error)         { return false, nil }
-func (m *mockMgr) UpdateServiceCatalogEntry(string, string, string) error { return nil }
-func (m *mockMgr) SetServiceEnabled(string, bool) error                   { return nil }
-func (m *mockMgr) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
+func (m *mockMgr) IsServiceRegistered(context.Context, string) (bool, error) { return false, nil }
+func (m *mockMgr) RemoveServiceCatalogEntry(context.Context, string) (bool, error) {
+	return false, nil
+}
+func (m *mockMgr) UpdateServiceCatalogEntry(context.Context, string, string, string) error {
+	return nil
+}
+func (m *mockMgr) SetServiceEnabled(context.Context, string, bool) error { return nil }
+func (m *mockMgr) GetMostRecentProcessHistoryEntry(_ context.Context, name string) (*types.ProcessHistory, error) {
 	if m.getMostRecentProcess != nil {
 		return m.getMostRecentProcess(name)
 	}
 	return &types.ProcessHistory{}, nil
 }
-func (m *mockMgr) NewServiceLogFiles(string) (string, string, error) { return "", "", nil }
-func (m *mockMgr) GetServiceLogFilePath(string, bool) (*string, error) {
+func (m *mockMgr) NewServiceLogFiles(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
+func (m *mockMgr) GetServiceLogFilePath(context.Context, string, bool) (*string, error) {
 	s := ""
 	return &s, nil
 }
-func (m *mockMgr) RestartService(string, time.Duration, time.Duration) (int, error) { return 0, nil }
-func (m *mockMgr) StartService(string) (int, error)                                 { return 0, nil }
-func (m *mockMgr) GetVersion() (types.GetVersionResponse, error) {
+func (m *mockMgr) RestartService(context.Context, string, time.Duration, time.Duration) (int, error) {
+	return 0, nil
+}
+func (m *mockMgr) StartService(context.Context, string) (int, error) { return 0, nil }
+func (m *mockMgr) GetVersion(context.Context) (types.GetVersionResponse, error) {
 	return types.GetVersionResponse{}, nil
 }
 
@@ -2175,7 +2742,7 @@ func TestStopServices_allSuccess(t *testing.T) {
 	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
 	cfg := &config.SystemConfig{Shutdown: config.ShutdownConfig{GracePeriod: time.Second}}
 
-	stopped, errored := stopServices(mgr, cfg, instances)
+	stopped, errored := stopServices(t.Context(), mgr, cfg, instances)
 	if len(stopped) != 2 {
 		t.Errorf("expected 2 stopped, got %d", len(stopped))
 	}
@@ -2196,7 +2763,7 @@ func TestStopServices_withError(t *testing.T) {
 	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
 	cfg := &config.SystemConfig{Shutdown: config.ShutdownConfig{GracePeriod: time.Second}}
 
-	stopped, errored := stopServices(mgr, cfg, instances)
+	stopped, errored := stopServices(t.Context(), mgr, cfg, instances)
 	if len(stopped) != 1 {
 		t.Errorf("expected 1 stopped, got %d", len(stopped))
 	}
@@ -2213,7 +2780,7 @@ func TestForceStopServices_allSuccess(t *testing.T) {
 	}
 	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
 
-	errored := forceStopServices(mgr, instances)
+	errored := forceStopServices(t.Context(), mgr, instances)
 	if len(errored) != 0 {
 		t.Errorf("expected 0 errored, got %d: %v", len(errored), errored)
 	}
@@ -2230,7 +2797,7 @@ func TestForceStopServices_withError(t *testing.T) {
 	}
 	instances := []types.ServiceInstance{{Name: "svc1"}, {Name: "svc2"}}
 
-	errored := forceStopServices(mgr, instances)
+	errored := forceStopServices(t.Context(), mgr, instances)
 	if len(errored) != 1 {
 		t.Errorf("expected 1 errored, got %d", len(errored))
 	}

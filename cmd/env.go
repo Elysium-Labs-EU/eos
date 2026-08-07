@@ -34,11 +34,18 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 			serviceName := args[0]
 			mgr := getManager()
 
-			if err := ensureServiceRegistered(cmd, mgr, serviceName); err != nil {
-				return err
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
+			if err != nil {
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				return helpers.ErrCommandFailed
+			}
+			if !exists {
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				return helpers.ErrCommandFailed
 			}
 
-			registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+			registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 				return helpers.ErrCommandFailed
