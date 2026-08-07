@@ -93,11 +93,11 @@ func warnDaemonDownBeforeStart(cmd *cobra.Command, daemon *config.DaemonConfig) 
 // no health checks, metrics, or log forwarding — and names the fix command, so
 // the operator knows the start "succeeded" but is unsupervised.
 func printDaemonDownStartWarning(cmd *cobra.Command) {
-	cmd.PrintErrf("%s %s\n",
+	cmd.PrintErrf(fmtLabelMsgLn,
 		ui.LabelWarning.Render("warning:"),
 		"eos daemon is not running - service will stay in 'starting' with no health checks, metrics, or log forwarding",
 	)
-	cmd.PrintErrf("  %s %s\n\n",
+	cmd.PrintErrf(fmtIndentLabelMsg,
 		ui.TextMuted.Render("start the daemon with:"),
 		ui.TextCommand.Render("eos daemon start"),
 	)
@@ -115,17 +115,17 @@ func printDaemonDownStartWarning(cmd *cobra.Command) {
 // daemon that is about to come up, but no manual action is required.
 func printDaemonDownBanner(cmd *cobra.Command, daemon *config.DaemonConfig) {
 	if daemon != nil && daemon.Standalone != nil {
-		cmd.PrintErrf("%s %s\n\n",
+		cmd.PrintErrf(fmtLabelMsg,
 			ui.LabelWarning.Render("warning:"),
 			"eos daemon is not running - state below is last-known and may be stale; a standalone instance will be started automatically to serve this request",
 		)
 		return
 	}
-	cmd.PrintErrf("%s %s\n",
+	cmd.PrintErrf(fmtLabelMsgLn,
 		ui.LabelWarning.Render("warning:"),
 		"eos daemon is not running - state below is last-known and may be stale",
 	)
-	cmd.PrintErrf("  %s %s\n\n",
+	cmd.PrintErrf(fmtIndentLabelMsg,
 		ui.TextMuted.Render("start it with:"),
 		ui.TextCommand.Render("eos daemon start"),
 	)

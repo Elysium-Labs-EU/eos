@@ -116,6 +116,9 @@ func apiLogsFetchLines(ctx context.Context, mgr manager.ServiceManager, serviceN
 	if err != nil {
 		return "", nil, fmt.Errorf("getting log file path: %w", err)
 	}
+	if logPath == nil {
+		return "", nil, fmt.Errorf("log file path unavailable for %q", serviceName)
+	}
 
 	tailedLines, err := tailLogLines(*logPath, lines)
 	if err != nil {

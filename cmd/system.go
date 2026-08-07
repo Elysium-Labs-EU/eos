@@ -148,7 +148,7 @@ func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result Upda
 		if requireReleaseSignature {
 			return fmt.Errorf("release %s has no sha256sums.txt.sig", result.LatestVersion)
 		}
-		cmd.Printf("%s %s\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("release %s has no signature (sha256sums.txt.sig) — checksum-only integrity", result.LatestVersion))
+		cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("warning"), fmt.Sprintf("release %s has no signature (sha256sums.txt.sig) — checksum-only integrity", result.LatestVersion))
 		return nil
 	}
 
@@ -165,7 +165,7 @@ func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result Upda
 	if verifyErr := verifyChecksumsSignature(checksumsData, sigData); verifyErr != nil {
 		return fmt.Errorf("signature verification failed for %s: %w — refusing to install", result.LatestVersion, verifyErr)
 	}
-	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("success"), "signature verified")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("success"), "signature verified")
 	return nil
 }
 
@@ -174,6 +174,25 @@ func verifyReleaseSignature(ctx context.Context, cmd *cobra.Command, result Upda
 var supportedPlatforms = []string{
 	"linux-amd64",
 	"linux-arm64",
+}
+
+// loadSystemConfigAndFlags loads the system config and resolves the shared
+// verbose/--yes flags used by the startup/unstartup commands, printing to
+// printCmd and returning helpers.ErrCommandFailed on failure so callers only
+// need to check err != nil.
+func loadSystemConfigAndFlags(cmd *cobra.Command, printCmd *cobra.Command) (installDir string, systemConfig *config.SystemConfig, identity userutil.Identity, verbose, flagYes bool, err error) {
+	installDir, _, systemConfig, identity, err = newSystemConfig()
+	if err != nil {
+		printCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		return installDir, systemConfig, identity, verbose, flagYes, helpers.ErrCommandFailed
+	}
+	verbose, _ = cmd.Flags().GetBool("verbose")
+	flagYes, err = cmd.Flags().GetBool("yes")
+	if err != nil {
+		printCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return installDir, systemConfig, identity, verbose, flagYes, helpers.ErrCommandFailed
+	}
+	return installDir, systemConfig, identity, verbose, flagYes, nil
 }
 
 func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
@@ -239,7 +258,7 @@ itself.`,
 			return sysRunStartup(cmd, systemCmd)
 		},
 	}
-	startupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
+	startupCmdDef.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	unstartupCmdDef := &cobra.Command{
 		Use:   "unstartup",
@@ -258,7 +277,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 			return sysRunUnstartup(cmd, systemCmd)
 		},
 	}
-	unstartupCmdDef.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
+	unstartupCmdDef.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	updateCmd := &cobra.Command{
 		Use:           "update",
@@ -285,7 +304,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 			return sysRunUninstall(cmd, systemCmd, getManager, getConfig, ctrl)
 		},
 	}
-	uninstallCmd.Flags().BoolP("yes", "y", false, "skip all confirmation prompts (non-interactive mode)")
+	uninstallCmd.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	versionCmd := &cobra.Command{
 		Use:     "version",
@@ -315,12 +334,12 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 func sysResolveDaemonController(cmd *cobra.Command) DaemonController {
 	_, baseDir, systemConfig, identity, err := newSystemConfig()
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
 		os.Exit(1)
 	}
 	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
 		os.Exit(1)
 	}
 	return ctrl
@@ -330,7 +349,7 @@ func sysResolveDaemonController(cmd *cobra.Command) DaemonController {
 func sysRunInfo(cmd *cobra.Command, systemCmd *cobra.Command) error {
 	installDir, baseDir, cfg, _, err := newSystemConfig()
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	infoCmd(cmd, installDir, baseDir, cfg)
@@ -340,16 +359,9 @@ func sysRunInfo(cmd *cobra.Command, systemCmd *cobra.Command) error {
 // sysRunStartup backs the "system startup" subcommand's RunE: it resolves
 // shared config/flags, then dispatches to the darwin or systemd/OpenRC path.
 func sysRunStartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
-	installDir, _, systemConfig, _, err := newSystemConfig()
+	installDir, systemConfig, _, verbose, flagYes, err := loadSystemConfigAndFlags(cmd, systemCmd)
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-		return helpers.ErrCommandFailed
-	}
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	flagYes, err := cmd.Flags().GetBool("yes")
-	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-		return helpers.ErrCommandFailed
+		return err
 	}
 
 	if runtime.GOOS == "darwin" {
@@ -368,7 +380,7 @@ func sysStartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, installDir s
 		var err error
 		launchdDir, err = config.UserLaunchAgentsDir()
 		if err != nil {
-			systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user launch agents dir: %v", err))
+			systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving user launch agents dir: %v", err))
 			return helpers.ErrCommandFailed
 		}
 	}
@@ -392,7 +404,7 @@ func sysStartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, installDir s
 func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir string, standalone *config.StandaloneDaemonConfig, verbose, flagYes bool, detectRuntime func() (string, error)) error {
 	runtimeName, err := detectRuntime()
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -413,7 +425,7 @@ func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir st
 		var err error
 		systemdDir, err = config.UserSystemdDir()
 		if err != nil {
-			systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving user systemd dir: %v", err))
+			systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving user systemd dir: %v", err))
 			return helpers.ErrCommandFailed
 		}
 	}
@@ -432,16 +444,9 @@ func sysStartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, installDir st
 // resolves shared config/flags, then dispatches to the darwin or
 // systemd/OpenRC path.
 func sysRunUnstartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
-	_, _, systemConfig, identity, err := newSystemConfig()
+	_, systemConfig, identity, verbose, flagYes, err := loadSystemConfigAndFlags(cmd, systemCmd)
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
-		return helpers.ErrCommandFailed
-	}
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	flagYes, err := cmd.Flags().GetBool("yes")
-	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-		return helpers.ErrCommandFailed
+		return err
 	}
 
 	if runtime.GOOS == "darwin" {
@@ -454,7 +459,7 @@ func sysRunUnstartup(cmd *cobra.Command, systemCmd *cobra.Command) error {
 // installed launchd plist, if any is configured.
 func sysUnstartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, daemon config.DaemonConfig, verbose, flagYes bool, identity userutil.Identity) error {
 	if daemon.Launchd == nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no launchd startup configured for this user — nothing to remove")
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no launchd startup configured for this user — nothing to remove")
 		return helpers.ErrCommandFailed
 	}
 	userAgent := os.Getuid() != 0
@@ -472,7 +477,7 @@ func sysUnstartupDarwin(cmd *cobra.Command, systemCmd *cobra.Command, daemon con
 func sysUnstartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, daemon config.DaemonConfig, verbose, flagYes bool, identity userutil.Identity) error {
 	runtimeName, err := detectActiveSystemRuntime()
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -486,7 +491,7 @@ func sysUnstartupLinux(cmd *cobra.Command, systemCmd *cobra.Command, daemon conf
 	}
 
 	if daemon.Systemd == nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no systemd startup configured for this user — nothing to remove")
 		return helpers.ErrCommandFailed
 	}
 	userUnit := os.Getuid() != 0
@@ -521,12 +526,12 @@ func sysUpdateEnvOverrides(getenv func(string) string) (version, userArch, userO
 func sysRunUpdate(cmd *cobra.Command, systemCmd *cobra.Command, ctrl DaemonController) error {
 	installDir, _, _, _, err := newSystemConfig()
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	includePre, err := cmd.Flags().GetBool("pre")
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -545,20 +550,20 @@ func sysRunUpdate(cmd *cobra.Command, systemCmd *cobra.Command, ctrl DaemonContr
 func sysRunUninstall(cmd *cobra.Command, systemCmd *cobra.Command, getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, ctrl DaemonController) error {
 	installDir, baseDir, _, _, err := newSystemConfig()
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
 	flagYes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
-		systemCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
 	if !flagYes {
 		confirmed := helpers.PromptConfirm(cmd, "uninstall eos? (y/n):")
 		if !confirmed {
-			systemCmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
+			systemCmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "uninstall canceled")
 			return nil
 		}
 	}
@@ -577,38 +582,38 @@ func sysRunVersion(cmd *cobra.Command) {
 
 func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *config.SystemConfig) {
 	cmd.Println()
-	cmd.Printf("%s\n\n", ui.TextBold.Render("System Config"))
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("install dir:"), installDir)
-	cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("base dir:"), baseDir)
-	cmd.Printf("%s\n\n", ui.TextBold.Render("Daemon"))
+	cmd.Printf(fmtHeading, ui.TextBold.Render("System Config"))
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("install dir:"), installDir)
+	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("base dir:"), baseDir)
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Daemon"))
 	if config.Daemon.Standalone != nil {
-		cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("systemd managed:"), false)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("pid file:"), config.Daemon.Standalone.PIDFile)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket:"), config.Daemon.Standalone.SocketPath)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket timeout:"), config.Daemon.Standalone.SocketTimeout)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), config.Daemon.Standalone.Log.LogDir)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), config.Daemon.Standalone.Log.LogFileName)
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), false)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("pid file:"), config.Daemon.Standalone.PIDFile)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), config.Daemon.Standalone.SocketPath)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket timeout:"), config.Daemon.Standalone.SocketTimeout)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log dir:"), config.Daemon.Standalone.Log.LogDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log file:"), config.Daemon.Standalone.Log.LogFileName)
 		cmd.Printf("  %s %d\n", ui.TextMuted.Render("log max files:"), config.Daemon.Standalone.Log.LogMaxFiles)
 		cmd.Printf("  %s %d\n\n", ui.TextMuted.Render("log size limit:"), config.Daemon.Standalone.Log.LogFileSizeLimit)
 	} else {
-		cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("systemd managed:"), true)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("systemd target directory:"), config.Daemon.Systemd.SystemdTargetDir)
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("systemd target filename:"), config.Daemon.Systemd.SystemdTargetFileName)
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), true)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target directory:"), config.Daemon.Systemd.SystemdTargetDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target filename:"), config.Daemon.Systemd.SystemdTargetFileName)
 	}
-	cmd.Printf("%s\n\n", ui.TextBold.Render("Health Check"))
-	cmd.Printf("  %s %v\n", ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Health Check"))
+	cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
-		cmd.Printf("  %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit)
+		cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit)
 	} else {
-		cmd.Printf("  %s %s %s\n\n", ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit, ui.TextMuted.Render("(not active)"))
+		cmd.Printf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("timeout limit:"), config.Health.Timeout.Limit, ui.TextMuted.Render("(not active)"))
 	}
-	cmd.Printf("%s\n\n", ui.TextBold.Render("Shutdown"))
-	cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
-	cmd.Printf("%s\n\n", ui.TextBold.Render("Telemetry"))
-	cmd.Printf("  %s %v\n", ui.TextMuted.Render("enabled:"), config.Telemetry.Enable)
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Shutdown"))
+	cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("grace period:"), config.Shutdown.GracePeriod)
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Telemetry"))
+	cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("enabled:"), config.Telemetry.Enable)
 	if config.Telemetry.Enable {
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
-		cmd.Printf("  %s %v\n", ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
+		cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
 	}
 }
 
@@ -886,11 +891,11 @@ func unitName(systemdFile string) string {
 func prepareSystemUnitDir(cmd *cobra.Command, systemdDir, fullTargetName string) bool {
 	fileInfo, err := os.Stat(systemdDir)
 	if err != nil || !fileInfo.IsDir() {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", systemdDir))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", systemdDir))
 		return false
 	}
 	if err = checkWritable(cmd, systemdDir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return false
 	}
@@ -903,10 +908,10 @@ func prepareSystemUnitDir(cmd *cobra.Command, systemdDir, fullTargetName string)
 		return true
 	}
 	if existingUser == effectiveUser.Username {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("system unit file already exists for user %q, re-running will overwrite and re-enable it", existingUser))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("system unit file already exists for user %q, re-running will overwrite and re-enable it", existingUser))
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("system unit file already configured for user %q, overwriting will transfer daemon ownership to %q and break their setup", existingUser, effectiveUser.Username))
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s to remove the current startup config first, or ask user %q to do so", ui.TextCommand.Render("eos system unstartup"), existingUser))
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("system unit file already configured for user %q, overwriting will transfer daemon ownership to %q and break their setup", existingUser, effectiveUser.Username))
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s to remove the current startup config first, or ask user %q to do so", ui.TextCommand.Render("eos system unstartup"), existingUser))
 	}
 	return true
 }
@@ -980,8 +985,8 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 		return nil
 	}
 
-	cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no active systemd user session found — user bus is not running")
-	cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "this happens when the account has no login session and linger is not enabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no active systemd user session found — user bus is not running")
+	cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), "this happens when the account has no login session and linger is not enabled")
 
 	confirmed := helpers.PromptConfirm(cmd, fmt.Sprintf("enable linger for %q to start a user bus now? (y/n):", username))
 	if !confirmed {
@@ -990,9 +995,9 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 
 	out, err := run(ctx, "loginctl", "enable-linger", username)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(out)))
 		helpers.PrintSudoHint(cmd)
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("sudo loginctl enable-linger "+username)))
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("sudo loginctl enable-linger "+username)))
 		return fmt.Errorf("enabling linger: %w", err)
 	}
 	helpers.Debugf(cmd, verbose, "loginctl enable-linger %s succeeded", username)
@@ -1003,7 +1008,7 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 			if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 				return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
 			}
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user bus is now available")
+			cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "user bus is now available")
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -1018,12 +1023,12 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 func ensureRuntime(cmd *cobra.Command, verbose bool, detectRuntime func() (string, error), want string) error {
 	runtime, err := detectRuntime()
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system command: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "detected runtime: %s", runtime)
 	if runtime != want {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("managing startup file not supported for this runtime: %v", runtime))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -1037,7 +1042,7 @@ func confirmOrDecline(cmd *cobra.Command, flagYes bool, prompt, declineMsg strin
 		return true
 	}
 	if declineMsg != "" {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), declineMsg)
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), declineMsg)
 	}
 	return false
 }
@@ -1047,14 +1052,14 @@ func confirmOrDecline(cmd *cobra.Command, flagYes bool, prompt, declineMsg strin
 func resolveSystemdUnitFile(cmd *cobra.Command, verbose bool, installDir string, userUnit bool) (*user.User, string, error) {
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return nil, "", helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
 
 	unitFile, err := renderUnitFile(installDir, effectiveUser.Username, userUnit)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering unit file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("rendering unit file: %v", err))
 		return nil, "", helpers.ErrCommandFailed
 	}
 	return effectiveUser, unitFile, nil
@@ -1068,7 +1073,7 @@ func prepareUserBusIfNeeded(ctx context.Context, cmd *cobra.Command, verbose, us
 	}
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return helpers.ErrCommandFailed
 	}
 	return prepareUserBus(ctx, cmd, verbose, effectiveUser, run)
@@ -1079,7 +1084,7 @@ func prepareUserBusIfNeeded(ctx context.Context, cmd *cobra.Command, verbose, us
 func ensureSystemdUnitDir(cmd *cobra.Command, verbose, userUnit bool, systemdDir, fullTargetName string) error {
 	if userUnit {
 		if err := os.MkdirAll(strings.TrimSuffix(systemdDir, "/"), 0750); err != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating user systemd directory: %v", err))
+			cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("creating user systemd directory: %v", err))
 			return helpers.ErrCommandFailed
 		}
 		helpers.Debugf(cmd, verbose, "ensured user systemd directory: %s", systemdDir)
@@ -1096,11 +1101,11 @@ func ensureSystemdUnitDir(cmd *cobra.Command, verbose, userUnit bool, systemdDir
 func prepareUserBus(ctx context.Context, cmd *cobra.Command, verbose bool, effectiveUser *user.User, run runCmdFn) error {
 	effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
 	if credErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
 		return helpers.ErrCommandFailed
 	}
 	if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run, isAccessibleDir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -1108,18 +1113,18 @@ func prepareUserBus(ctx context.Context, cmd *cobra.Command, verbose bool, effec
 
 // enableSystemdUnit runs daemon-reload then enable for the given unit scope.
 func enableSystemdUnit(ctx context.Context, cmd *cobra.Command, verbose, userUnit bool, unit string, run runCmdFn) error {
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "daemon-reload"), " "))
-	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, "daemon-reload")...)
+	helpers.Debugf(cmd, verbose, logRunningSystemctl, strings.Join(systemctlArgs(userUnit, systemctlDaemonReload), " "))
+	out, err := run(ctx, "systemctl", systemctlArgs(userUnit, systemctlDaemonReload)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "daemon-reload output: %s", strings.TrimSpace(string(out)))
 
-	helpers.Debugf(cmd, verbose, "running: systemctl %s", strings.Join(systemctlArgs(userUnit, "enable", unit), " "))
+	helpers.Debugf(cmd, verbose, logRunningSystemctl, strings.Join(systemctlArgs(userUnit, "enable", unit), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(userUnit, "enable", unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "enable output: %s", strings.TrimSpace(string(out)))
@@ -1130,21 +1135,21 @@ func enableSystemdUnit(ctx context.Context, cmd *cobra.Command, verbose, userUni
 // to the init system, printing progress. Returns ErrCommandFailed on a stop
 // error; a not-running daemon is not an error.
 func stopStandaloneForRestart(cmd *cobra.Command, daemonConfig *config.StandaloneDaemonConfig) error {
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "stopping daemon...")
 	if daemonConfig == nil {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(msgDaemonWasNotRunning))
 		return nil
 	}
 	killed, killErr := process.StopStandaloneDaemon(daemonConfig.PIDFile, daemonConfig.SocketPath)
 	if killErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
 		return helpers.ErrCommandFailed
 	}
 	if !killed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(msgDaemonWasNotRunning))
 		return nil
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "daemon stopped")
 	return nil
 }
 
@@ -1168,13 +1173,13 @@ func lingerEnabled(ctx context.Context, username string, run runCmdFn) bool {
 // user had declined.
 func offerEnableLinger(ctx context.Context, cmd *cobra.Command, flagYes bool, username string, run runCmdFn) {
 	if lingerEnabled(ctx, username, run) {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "linger already enabled — eos will also survive logout and reboot")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "linger already enabled — eos will also survive logout and reboot")
 		return
 	}
 
 	cmd.Printf("%s\n", ui.TextMuted.Render("note: a user unit stops when you log out (SSH disconnect, desktop logout) — unlike a"))
-	cmd.Printf("%s\n\n", ui.TextMuted.Render("system unit, it has no boot-time process to keep it alive once your session ends."))
-	cmd.Printf("%s\n\n", ui.TextMuted.Render("\"linger\" tells systemd to keep your user session running with no one logged in."))
+	cmd.Printf(fmtHeading, ui.TextMuted.Render("system unit, it has no boot-time process to keep it alive once your session ends."))
+	cmd.Printf(fmtHeading, ui.TextMuted.Render("\"linger\" tells systemd to keep your user session running with no one logged in."))
 
 	declineMsg := fmt.Sprintf("linger not enabled — eos will stop when you log out; enable later with: %s",
 		ui.TextCommand.Render("loginctl enable-linger "+username))
@@ -1184,12 +1189,12 @@ func offerEnableLinger(ctx context.Context, cmd *cobra.Command, flagYes bool, us
 
 	lingerOut, lingerErr := run(ctx, "loginctl", "enable-linger", username)
 	if lingerErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(lingerOut)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enable-linger: %v", string(lingerOut)))
 		helpers.PrintSudoHint(cmd)
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("loginctl enable-linger "+username)))
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run manually: %s", ui.TextCommand.Render("loginctl enable-linger "+username)))
 		return
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "linger enabled — eos will survive logout and reboot")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "linger enabled — eos will survive logout and reboot")
 }
 
 // systemdStartupParams bundles the plain-value parameters startupCmd needs to
@@ -1228,10 +1233,10 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, p systemdStartupParams,
 	}
 
 	if err = os.WriteFile(fullTargetName, []byte(unitFile), 0644); err != nil { // #nosec G306 -- unit files should be readable by other users/tools
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing unit file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing unit file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(unitKind+" created, at:"), fullTargetName)
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(unitKind+" created, at:"), fullTargetName)
 
 	if p.UserUnit {
 		if busErr := prepareUserBus(ctx, cmd, p.Verbose, effectiveUser, run); busErr != nil {
@@ -1245,10 +1250,10 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, p systemdStartupParams,
 	}
 
 	if p.UserUnit {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "user unit enabled, eos will start on login")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "user unit enabled, eos will start on login")
 		offerEnableLinger(ctx, cmd, p.FlagYes, effectiveUser.Username, run)
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "system unit enabled, eos will start on boot")
 	}
 
 	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by systemd on next start") {
@@ -1262,11 +1267,11 @@ func startupCmd(ctx context.Context, cmd *cobra.Command, p systemdStartupParams,
 	helpers.Debugf(cmd, p.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(p.UserUnit, "start", unit), " "))
 	out, err := run(ctx, "systemctl", systemctlArgs(p.UserUnit, "start", unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting systemd daemon: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, p.Verbose, "start output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
 
@@ -1286,32 +1291,32 @@ func disableAndRemoveSystemdUnit(ctx context.Context, cmd *cobra.Command, u syst
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "stop", u.Unit), " "))
 	out, err := run(ctx, "systemctl", systemctlArgs(u.UserUnit, "stop", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", u.UnitKind, string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), u.UnitKind+" stopped")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), u.UnitKind+" stopped")
 
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "disable", u.Unit), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "disable", u.Unit)...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", u.UnitKind, string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("disabling %s: %v", u.UnitKind, string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), u.UnitKind+" disabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), u.UnitKind+" disabled")
 
 	if err = os.Remove(u.UnitPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing unit file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "unit file removed")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "unit file removed")
 
 	helpers.Debugf(cmd, u.Verbose, "running: systemctl %s", strings.Join(systemctlArgs(u.UserUnit, "daemon-reload"), " "))
 	out, err = run(ctx, "systemctl", systemctlArgs(u.UserUnit, "daemon-reload")...)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("daemon-reload: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), u.UnitKind+" startup removed")
+	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), u.UnitKind+" startup removed")
 	return nil
 }
 
@@ -1352,20 +1357,10 @@ func unstartupCmd(ctx context.Context, cmd *cobra.Command, p systemdUnstartupPar
 	}
 
 	if p.UserUnit {
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), "if you enabled linger, also run: loginctl disable-linger <username>")
 	}
 
-	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, p.FlagYes, identity)
 }
 
 type plistData struct {
@@ -1474,11 +1469,11 @@ func launchdScope(userAgent bool) string {
 func prepareLaunchdTargetDir(cmd *cobra.Command, dir string) bool {
 	fileInfo, err := os.Stat(dir)
 	if err != nil || !fileInfo.IsDir() {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", dir))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", dir))
 		return false
 	}
 	if err = checkWritable(cmd, dir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return false
 	}
@@ -1495,7 +1490,7 @@ func prepareLaunchdTargetDir(cmd *cobra.Command, dir string) bool {
 func ensureLaunchdDir(cmd *cobra.Command, verbose, userAgent bool, launchdDir string) error {
 	if userAgent {
 		if err := os.MkdirAll(strings.TrimSuffix(launchdDir, "/"), 0750); err != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating LaunchAgents directory: %v", err))
+			cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("creating LaunchAgents directory: %v", err))
 			return helpers.ErrCommandFailed
 		}
 		helpers.Debugf(cmd, verbose, "ensured LaunchAgents directory: %s", launchdDir)
@@ -1515,7 +1510,7 @@ func resolveLaunchdUID(cmd *cobra.Command, userAgent bool, effectiveUser *user.U
 	}
 	effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
 	if credErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
 		return 0, helpers.ErrCommandFailed
 	}
 	return int(effectiveUID), nil
@@ -1529,7 +1524,7 @@ func resolveUnstartupLaunchdUID(cmd *cobra.Command, userAgent bool) (int, error)
 	}
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return 0, helpers.ErrCommandFailed
 	}
 	return resolveLaunchdUID(cmd, userAgent, effectiveUser)
@@ -1540,14 +1535,14 @@ func resolveUnstartupLaunchdUID(cmd *cobra.Command, userAgent bool) (int, error)
 func resolveLaunchdPlistFile(cmd *cobra.Command, verbose bool, installDir, label string, userAgent bool) (*user.User, string, error) {
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return nil, "", helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
 
 	plistFile, err := renderPlistFile(installDir, effectiveUser.Username, label, userAgent)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering plist file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("rendering plist file: %v", err))
 		return nil, "", helpers.ErrCommandFailed
 	}
 	return effectiveUser, plistFile, nil
@@ -1563,16 +1558,16 @@ func launchdBootout(ctx context.Context, cmd *cobra.Command, verbose bool, scope
 	helpers.Debugf(cmd, verbose, "running: launchctl bootout %s", target)
 	out, err := run(ctx, "launchctl", "bootout", target)
 	if err == nil {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), scopeKind+" stopped and unloaded")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), scopeKind+" stopped and unloaded")
 		return nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
 		helpers.Debugf(cmd, verbose, "launchctl bootout: job was not loaded")
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(scopeKind+" was not loaded"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(scopeKind+" was not loaded"))
 		return nil
 	}
-	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", scopeKind, string(out)))
+	cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping %s: %v", scopeKind, string(out)))
 	return helpers.ErrCommandFailed
 }
 
@@ -1585,14 +1580,14 @@ func bootstrapLaunchdJob(ctx context.Context, cmd *cobra.Command, verbose bool, 
 	helpers.Debugf(cmd, verbose, "running: launchctl bootstrap %s %s", domain, fullTargetName)
 	out, err := run(ctx, "launchctl", "bootstrap", domain, fullTargetName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("bootstrap: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("bootstrap: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "bootstrap output: %s", strings.TrimSpace(string(out)))
 
 	out, err = run(ctx, "launchctl", "enable", target)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, verbose, "enable output: %s", strings.TrimSpace(string(out)))
@@ -1632,10 +1627,10 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdStartup
 	}
 
 	if err = os.WriteFile(fullTargetName, []byte(plistFile), 0644); err != nil { // #nosec G306 -- plist files should be readable by other users/tools
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing plist file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing plist file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(plistKind+" created, at:"), fullTargetName)
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(plistKind+" created, at:"), fullTargetName)
 
 	uid, err := resolveLaunchdUID(cmd, p.UserAgent, effectiveUser)
 	if err != nil {
@@ -1649,9 +1644,9 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdStartup
 	}
 
 	if p.UserAgent {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch agent enabled, eos will start on login")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "launch agent enabled, eos will start on login")
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "launch daemon enabled, eos will start on boot")
 	}
 
 	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by launchd on next start") {
@@ -1665,11 +1660,11 @@ func startupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdStartup
 	helpers.Debugf(cmd, p.Verbose, "running: launchctl kickstart -k %s", target)
 	out, err := run(ctx, "launchctl", "kickstart", "-k", target)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting launchd daemon: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting launchd daemon: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, p.Verbose, "kickstart output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
 
@@ -1706,29 +1701,19 @@ func unstartupCmdLaunchd(ctx context.Context, cmd *cobra.Command, p launchdUnsta
 	}
 
 	if err := os.Remove(filepath.Join(p.DaemonConfig.LaunchdTargetDir, p.DaemonConfig.LaunchdPlistFileName)); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing plist file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing plist file: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
+	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), scopeKind+" startup removed")
 
-	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, p.FlagYes, identity)
 }
 
 // cleanupTempDir removes a download temp dir, printing a manual-removal hint if
 // removal fails. Used across update failure and success paths.
 func cleanupTempDir(cmd *cobra.Command, tempDir string) {
 	if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil { // #nosec G703 -- tempDir is an internally-created os.MkdirTemp path, not user input
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("cleanup of %s failed, manual removal advised: %v", tempDir, cleanupErr))
 	}
 }
 
@@ -1737,30 +1722,30 @@ func cleanupTempDir(cmd *cobra.Command, tempDir string) {
 func validateUpdatePreconditions(cmd *cobra.Command, installDir, version string) error {
 	fileInfo, err := os.Stat(installDir)
 	if err != nil || !fileInfo.IsDir() {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", installDir))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("directory %q is not accessible", installDir))
 		return helpers.ErrCommandFailed
 	}
 
 	if err := checkWritable(cmd, installDir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return helpers.ErrCommandFailed
 	}
 
 	if version == "dev" {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "updating not supported for dev builds")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "updating not supported for dev builds")
 		cmd.PrintErr(ui.TextMuted.Render("  this binary has no version stamped in it, so eos can't tell what to update from") + "\n")
 		cmd.PrintErr(ui.TextMuted.Render("  download the latest release manually: ") + ui.TextCommand.Render("https://github.com/Elysium-Labs-EU/eos/releases/latest") + "\n\n")
 		return helpers.ErrCommandFailed
 	}
 
 	if !strings.HasPrefix(version, "v") {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid version tag, must start with 'v'")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "invalid version tag, must start with 'v'")
 		return helpers.ErrCommandFailed
 	}
 
 	if !semver.IsValid(version) {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid semantic version")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "invalid semantic version")
 		return helpers.ErrCommandFailed
 	}
 
@@ -1773,19 +1758,19 @@ func validateUpdatePreconditions(cmd *cobra.Command, installDir, version string)
 func resolveUpdateTarget(ctx context.Context, cmd *cobra.Command, fetchRelease func(context.Context, bool) (*Release, error), version, userArch, userOS string, includePre bool) (result UpdateResult, proceed bool, err error) {
 	release, err := fetchRelease(ctx, includePre)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching latest release: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("fetching latest release: %v", err))
 		return UpdateResult{}, false, helpers.ErrCommandFailed
 	}
 
 	result, err = checkForUpdates(release, version, userArch, userOS)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("no compatible asset found for %s-%s", userOS, userArch))
-		cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("supported platforms:"), strings.Join(supportedPlatforms, ", "))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("no compatible asset found for %s-%s", userOS, userArch))
+		cmd.PrintErrf(fmtIndentLabelMsg, ui.TextMuted.Render("supported platforms:"), strings.Join(supportedPlatforms, ", "))
 		return UpdateResult{}, false, helpers.ErrCommandFailed
 	}
 
 	if result.LatestVersion == "" {
-		cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), "already on the latest version", ui.TextMuted.Render(fmt.Sprintf("(%s)", version)))
+		cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), "already on the latest version", ui.TextMuted.Render(fmt.Sprintf("(%s)", version)))
 		return UpdateResult{}, false, nil
 	}
 
@@ -1797,29 +1782,29 @@ func resolveUpdateTarget(ctx context.Context, cmd *cobra.Command, fetchRelease f
 func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result UpdateResult, downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) (*os.File, string, error) {
 	binary, tempDir, err := downloadBinary(ctx, result.Asset)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("downloading binary: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("downloading binary: %v", err))
 		return nil, "", helpers.ErrCommandFailed
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "validating checksums...")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "validating checksums...")
 	expectedChecksum, err := getChecksum(ctx, result.ChecksumsAsset, result.Asset.Name)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("fetching checksums: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("fetching checksums: %v", err))
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}
 
 	if err := validateDigest(expectedChecksum, binary); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" → retry the update") + "\n")
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "checksums match")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "checksums match")
 
 	if err := verifyReleaseSignature(ctx, cmd, result); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), err.Error())
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), err.Error())
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}
@@ -1848,11 +1833,11 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 
 	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, time.Now().Format("20060102_150405"))
 	if err := createDestinationFile(backupPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating destination file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("creating destination file: %v", err))
 	}
 
 	if err := copyFile(binaryPath, backupPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("backing up current binary: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("backing up current binary: %v", err))
 		cleanupTempDir(cmd, tempDir)
 		return helpers.ErrCommandFailed
 	}
@@ -1860,12 +1845,12 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("info"), "backup created at", ui.TextMuted.Render(backupPath))
 
 	if err := replaceBinary(binary.Name(), binaryPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("installing new binary: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("installing new binary: %v", err))
 		cleanupTempDir(cmd, tempDir)
 		return helpers.ErrCommandFailed
 	}
 	if err := os.Chmod(binaryPath, perm); err != nil { // #nosec G302 -- perm is capped at 0755 by installExecutablePerm, never wider than the binary's own previous mode
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -1876,25 +1861,25 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 // removes the temp dir, and prints the final success summary.
 func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl DaemonController, tempDir, latestVersion string) error {
 	if !ctrl.IsRunning(ctx) {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
-		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(msgDaemonWasNotRunning))
+		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), msgEosUpdatedTo, ui.TextBold.Render(latestVersion))
 		return nil
 	}
 
 	if !helpers.PromptConfirm(cmd, "restart daemon? (y/n):") {
-		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "manual daemon restart required")
-		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "manual daemon restart required")
+		cmd.Printf("\n%s %s %s\n\n", ui.LabelSuccess.Render("success"), msgEosUpdatedTo, ui.TextBold.Render(latestVersion))
 		return nil
 	}
 
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	killed, killErr := ctrl.Stop(ctx, cmd, verbose)
 	if killErr != nil && !killed {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", killErr))
 		return helpers.ErrCommandFailed
 	}
 	if !killed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render(msgDaemonWasNotRunning))
 		return nil
 	}
 	if killErr != nil {
@@ -1903,24 +1888,24 @@ func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, ctrl Daem
 		// would reproduce the original symptom (binary updated, no
 		// daemon running, nothing attempted to fix it) — so still try Start()
 		// rather than giving up outright.
-		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("old daemon did not confirm exit (%v) — attempting to start the new daemon anyway", killErr))
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("old daemon did not confirm exit (%v) — attempting to start the new daemon anyway", killErr))
 	}
 
 	if err := ctrl.Start(ctx, true, false, false); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
 		if killErr != nil {
-			cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), "the previous daemon process may still be alive — check with 'ps' and stop it manually, then run 'eos daemon start'")
+			cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), "the previous daemon process may still be alive — check with 'ps' and stop it manually, then run 'eos daemon start'")
 		}
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(" → check daemon logs") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(ctrl.LogsHint()) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
 		return helpers.ErrCommandFailed
 	}
 
 	cleanupTempDir(cmd, tempDir)
 
-	cmd.Printf("\n%s %s %s\n", ui.LabelSuccess.Render("success"), "eos updated to", ui.TextBold.Render(latestVersion))
+	cmd.Printf("\n%s %s %s\n", ui.LabelSuccess.Render("success"), msgEosUpdatedTo, ui.TextBold.Render(latestVersion))
 	if os.Getuid() == 0 {
-		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("this only restarted the invoking user's daemon — other users on this host may still be running the pre-update binary"))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" → check every user's daemon") + "\n")
+		cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("this only restarted the invoking user's daemon — other users on this host may still be running the pre-update binary"))
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos daemon info --all") + ui.TextMuted.Render(" → check every user's daemon") + "\n")
 	}
 	return nil
 }
@@ -1939,7 +1924,7 @@ type updateCmdParams struct {
 func updateCmd(ctx context.Context, cmd *cobra.Command, p *updateCmdParams, fetchRelease func(context.Context, bool) (*Release, error), downloadBinary func(context.Context, *Asset) (*os.File, string, error), getChecksum func(context.Context, *Asset, string) (string, error)) error {
 	binaryPath := filepath.Join(p.InstallDir, "eos")
 
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for updates...")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "checking for updates...")
 
 	if err := validateUpdatePreconditions(cmd, p.InstallDir, p.Version); err != nil {
 		return err
@@ -1955,11 +1940,11 @@ func updateCmd(ctx context.Context, cmd *cobra.Command, p *updateCmdParams, fetc
 
 	cmd.Printf("%s %s → %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(p.Version), ui.TextBold.Render(result.LatestVersion))
 	if !helpers.PromptConfirm(cmd, "upgrade? (y/n):") {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "update canceled")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "update canceled")
 		return nil
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", result.LatestVersion, p.UserOS, p.UserArch))
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), fmt.Sprintf("downloading eos %s for %s-%s...", result.LatestVersion, p.UserOS, p.UserArch))
 	binary, tempDir, err := downloadAndVerifyBinary(ctx, cmd, result, downloadBinary, getChecksum)
 	if err != nil {
 		return err
@@ -2030,7 +2015,7 @@ func fetchGitHubAPI(ctx context.Context, url string) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
-	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set(headerUserAgent, updateUserAgent)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
@@ -2166,7 +2151,7 @@ func fetchAssetResponse(ctx context.Context, latestAsset *Asset) (*http.Response
 	if err != nil {
 		return nil, fmt.Errorf("request building failed: %w", err)
 	}
-	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set(headerUserAgent, updateUserAgent)
 
 	resp, err := httpClient.Do(req) // #nosec G704 -- URL is constructed from hardcoded GitHub API base, not user input
 	if err != nil {
@@ -2267,7 +2252,7 @@ func checkWritable(cmd *cobra.Command, dir string) error {
 	}
 
 	if removeErr := os.Remove(file.Name()); removeErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("could not remove temp file %s: %v\n", file.Name(), removeErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("could not remove temp file %s: %v\n", file.Name(), removeErr))
 	}
 
 	return nil
@@ -2287,7 +2272,7 @@ func fetchChecksumForBinary(ctx context.Context, checksumsAsset *Asset, binaryNa
 	if err != nil {
 		return "", fmt.Errorf("building request: %w", err)
 	}
-	req.Header.Set("User-Agent", updateUserAgent)
+	req.Header.Set(headerUserAgent, updateUserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -2425,19 +2410,19 @@ func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, 
 	mgr := getManager()
 	cfg := getConfig()
 
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "checking for active services...")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "checking for active services...")
 
 	serviceInstances, err := mgr.GetAllServiceInstances(cmd.Context())
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting all service instances: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting all service instances: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
 	numberActiveServices := len(serviceInstances)
 	if numberActiveServices == 1 {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active service", numberActiveServices))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active service", numberActiveServices))
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active services", numberActiveServices))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("found %d active services", numberActiveServices))
 	}
 
 	if numberActiveServices > 0 {
@@ -2447,40 +2432,40 @@ func uninstallCmd(cmd *cobra.Command, getManager func() manager.ServiceManager, 
 		}
 	}
 
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "stopping daemon...")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	_, err = ctrl.Stop(cmd.Context(), cmd, verbose)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "daemon stopped")
 
 	binaryRemoveErr := os.Remove(filepath.Join(installDir, "eos"))
 	if binaryRemoveErr != nil && !os.IsNotExist(binaryRemoveErr) {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing eos binary: %v", binaryRemoveErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing eos binary: %v", binaryRemoveErr))
 		helpers.PrintSudoHint(cmd)
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "removed binary")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "removed binary")
 
 	confirmed := flagYes || helpers.PromptConfirm(cmd, "remove eos system data? (y/n):")
 	if confirmed {
 		systemDataRemoveErr := os.RemoveAll(baseDir)
 		if systemDataRemoveErr != nil && !os.IsNotExist(systemDataRemoveErr) {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing eos system data: %v", systemDataRemoveErr))
+			cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing eos system data: %v", systemDataRemoveErr))
 			helpers.PrintSudoHint(cmd)
 			return helpers.ErrCommandFailed
 		}
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "removed eos system data")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "removed eos system data")
 	} else {
-		cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "skipped removal eos system data")
-		cmd.Printf("%s %s\n\n", ui.TextMuted.Render("  to remove later, run:"), ui.TextMuted.Render(fmt.Sprintf("rm -rf %s", baseDir)))
+		cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "skipped removal eos system data")
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("  to remove later, run:"), ui.TextMuted.Render(fmt.Sprintf("rm -rf %s", baseDir)))
 	}
 
 	// removeShellIntegration()
 
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "uninstall complete")
+	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), "uninstall complete")
 	return nil
 }
 
@@ -2488,31 +2473,31 @@ func handleStoppingServices(cmd *cobra.Command, mgr manager.ServiceManager, cfg 
 	confirmed := flagYes || helpers.PromptConfirm(cmd, "stop all services? (y/n):")
 
 	if !confirmed {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "uninstall canceled")
 		return false
 	}
 	stoppedServices, erroredServices := stopServices(cmd.Context(), mgr, cfg, serviceInstances)
 
 	numberStoppedServices := len(stoppedServices)
 	if numberStoppedServices != 0 {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d services", numberStoppedServices))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("stopped %d services", numberStoppedServices))
 	}
 	if len(erroredServices) != 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping services: %v", erroredServices))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping services: %v", erroredServices))
 		confirmed := helpers.PromptConfirm(cmd, "force stop remaining services? (y/n):")
 		if !confirmed {
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "uninstall canceled due to remaining active services")
+			cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "uninstall canceled due to remaining active services")
 			return false
 		}
 		err := forceStopServices(cmd.Context(), mgr, extractServiceInstancesFromErrors(erroredServices))
 		if len(err) != 0 {
-			cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warn"), fmt.Sprintf("force stopping services: %v", err))
+			cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warn"), fmt.Sprintf("force stopping services: %v", err))
 		}
 	}
 
 	for _, serviceInstance := range serviceInstances {
 		if _, removeErr := mgr.RemoveServiceInstance(cmd.Context(), serviceInstance.Name); removeErr != nil {
-			cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", removeErr))
+			cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("cleaning up service instance: %v", removeErr))
 		}
 	}
 
