@@ -37,9 +37,80 @@ func TestStatusCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestStatusCommandGetCatalogError (requires mock manager)
-// TODO: func TestStatusCommandGetInstanceError (requires mock manager)
-// TODO: func TestStatusCommandGetProcessHistoryError (requires mock manager)
+func TestStatusCommandGetCatalogError(t *testing.T) {
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return nil, fmt.Errorf("catalog unavailable")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting registered services") {
+		t.Errorf("expected catalog error message, got: %s", errBuf.String())
+	}
+}
+
+func TestStatusCommandGetInstanceError(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, fmt.Errorf("instance lookup failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting service instance") {
+		t.Errorf("expected service instance error message, got: %s", errBuf.String())
+	}
+}
+
+func TestStatusCommandGetProcessHistoryError(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, manager.ErrServiceNotRunning
+		},
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return nil, fmt.Errorf("process history lookup failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting process history") {
+		t.Errorf("expected process history error message, got: %s", errBuf.String())
+	}
+}
 
 func TestStatusCommandWithRegisteredService(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)
@@ -128,7 +199,7 @@ func TestStatusCommandWithRunningService(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v", err)
 	}
 
-	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(testFile.Name)
+	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("failed to get process history entry: %v", err)
 	}
@@ -187,7 +258,7 @@ func TestStatusCommandWithDependencyWait(t *testing.T) {
 		t.Fatalf("add should not return an error, got: %v", err)
 	}
 
-	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
+	if err := mgr.SetDependencyWaitStatus(t.Context(), testFile.Name, []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
@@ -371,9 +442,9 @@ func TestPrintStatusTable_GetCatalogError(t *testing.T) {
 	}
 }
 
-func writeStatusTestService(t *testing.T, dir, name string) {
+func writeStatusTestService(t *testing.T, dir string) {
 	t.Helper()
-	cfg := &types.ServiceConfig{Name: name, Command: "./start.sh"}
+	cfg := &types.ServiceConfig{Name: "svc", Command: "./start.sh"}
 	yamlData, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("marshal service config: %v", err)
@@ -388,7 +459,7 @@ func writeStatusTestService(t *testing.T, dir, name string) {
 
 func TestPrintStatusTable_GetServiceInstanceError(t *testing.T) {
 	dir := t.TempDir()
-	writeStatusTestService(t, dir, "svc")
+	writeStatusTestService(t, dir)
 
 	mgr := &mockMgr{
 		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
@@ -412,7 +483,7 @@ func TestPrintStatusTable_GetServiceInstanceError(t *testing.T) {
 
 func TestPrintStatusTable_GetProcessHistoryError(t *testing.T) {
 	dir := t.TempDir()
-	writeStatusTestService(t, dir, "svc")
+	writeStatusTestService(t, dir)
 
 	mgr := &mockMgr{
 		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
@@ -513,7 +584,7 @@ func TestPrintStatusTable_StaleRow(t *testing.T) {
 	// the current time; sleep afterward so it reads as stale against a
 	// deliberately tiny checkInterval, without needing to wait out a real
 	// health-check interval.
-	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(testFile.Name)
+	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("failed to get process history entry: %v", err)
 	}
@@ -614,6 +685,7 @@ func TestRenderWatchFrame(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 	cmd := newTestRootCmd(mgr)
+	cmd.SetContext(t.Context())
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)

@@ -47,7 +47,12 @@ func (c *standaloneDaemonController) Start(ctx context.Context, detach bool, log
 	if detach && !c.underSystemd {
 		return forkDaemon(ctx, &c.cfg, verbose, c.identity)
 	}
-	return process.StartStandaloneDaemon(ctx, logToFileAndConsole, verbose, c.baseDir, &c.cfg, &c.health, c.shutdown, c.telemetry, c.underSystemd)
+	return process.StartStandaloneDaemon(ctx, process.StandaloneDaemonStartOptions{
+		BaseDir:             c.baseDir,
+		LogToFileAndConsole: logToFileAndConsole,
+		Verbose:             verbose,
+		UnderSystemd:        c.underSystemd,
+	}, &c.cfg, &c.health, c.shutdown, c.telemetry)
 }
 
 func (c *standaloneDaemonController) Stop(_ context.Context, cmd *cobra.Command, verbose bool) (bool, error) {
@@ -90,28 +95,28 @@ func (c *standaloneDaemonController) Remove() error {
 func (c *standaloneDaemonController) Info(cmd *cobra.Command) {
 	status, err := process.StatusStandaloneDaemon(&c.cfg)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting daemon info: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting daemon info: %v", err))
 		return
 	}
 	if !status.Running {
 		if status.Pid != nil {
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon found but not running"))
+			cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon found but not running"))
 			printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
 			return
 		}
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is not running"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is not running"))
 		return
 	}
-	cmd.Printf("%s %s\n", ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
+	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
 	if version, err := resolveStandaloneDaemonVersion(cmd.Context(), &c.cfg); err == nil {
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("running version:"), version)
 	}
 	cmd.Println()
 	printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
 }
 
 func (c *standaloneDaemonController) LogsHint() string {
-	return "eos daemon logs"
+	return eosDaemonLogsCmdName
 }
 
 func (c *standaloneDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
@@ -127,18 +132,18 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 	logPath := filepath.Join(manager.CreateLogDirPath(baseDir), logFileName)
 
 	if _, err := os.Stat(logPath); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting log file: %v", err))
 		return
 	}
 	if lines < 0 || lines > 10000 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
 		return
 	}
 
 	if follow {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "streaming daemon logs")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "streaming daemon logs")
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "showing daemon logs")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "showing daemon logs")
 	}
 
 	tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
@@ -158,18 +163,18 @@ func tailDaemonLogFile(cmd *cobra.Command, baseDir string, logFileName string, l
 
 	stdout, pipeErr := tailCmd.StdoutPipe()
 	if pipeErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
 		return
 	}
 	if err := tailCmd.Start(); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting log command: %v", err))
 		return
 	}
 	renderServiceLogs(cmd.OutOrStdout(), stdout, "")
 	if err := tailCmd.Wait(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			if exitErr.ExitCode() != 130 { // 130 = Ctrl+C
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("log command failed: %v", err))
 			}
 		}
 	}
@@ -270,7 +275,7 @@ func buildJournalArgs(userUnit bool, lines int, follow bool) []string {
 // exit code 130 (SIGINT from the user's Ctrl-C while following) as normal.
 func reportJournalExit(cmd *cobra.Command, err error) {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() != 130 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("journalctl failed: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("journalctl failed: %v", err))
 	}
 }
 
@@ -287,7 +292,7 @@ func runJournalStream(cmd *cobra.Command, journalArgs []string) {
 	journalCmd.Stdout = cmd.OutOrStdout()
 	journalCmd.Stderr = cmd.ErrOrStderr()
 	if err := journalCmd.Start(); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting journalctl: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting journalctl: %v", err))
 		return
 	}
 	if err := journalCmd.Wait(); err != nil {
@@ -297,14 +302,14 @@ func runJournalStream(cmd *cobra.Command, journalArgs []string) {
 
 func (c systemdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
 	if lines < 0 || lines > 10000 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "invalid line count, should be between 0 and 10000")
 		return
 	}
 
 	if follow {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "streaming daemon logs")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "streaming daemon logs")
 	} else {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "showing daemon logs")
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "showing daemon logs")
 	}
 
 	runJournalStream(cmd, buildJournalArgs(c.cfg.UserUnit, lines, follow))
@@ -398,7 +403,7 @@ func (c launchdDaemonController) Info(cmd *cobra.Command) {
 }
 
 func (c launchdDaemonController) LogsHint() string {
-	return "eos daemon logs"
+	return eosDaemonLogsCmdName
 }
 
 func (c launchdDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
@@ -433,7 +438,7 @@ func (c openrcDaemonController) Start(ctx context.Context, _ bool, _ bool, _ boo
 	if os.Getuid() != 0 {
 		return errors.New("requires root — run with sudo")
 	}
-	out, err := c.run(ctx, "rc-service", c.unit(), "start")
+	out, err := c.run(ctx, rcServiceCmdName, c.unit(), "start")
 	if err != nil {
 		return fmt.Errorf("starting OpenRC service: %s", strings.TrimSpace(string(out)))
 	}
@@ -446,7 +451,7 @@ func (c openrcDaemonController) Stop(ctx context.Context, cmd *cobra.Command, ve
 	}
 	unit := c.unit()
 	helpers.Debugf(cmd, verbose, "running: rc-service %s stop", unit)
-	out, err := c.run(ctx, "rc-service", unit, "stop")
+	out, err := c.run(ctx, rcServiceCmdName, unit, "stop")
 	if err != nil {
 		helpers.Debugf(cmd, verbose, "rc-service exited with error: %s", strings.TrimSpace(string(out)))
 		return false, fmt.Errorf("stopping OpenRC service: %s", strings.TrimSpace(string(out)))
@@ -460,7 +465,7 @@ func (c openrcDaemonController) Stop(ctx context.Context, cmd *cobra.Command, ve
 // systemd's host-global `systemctl is-active` this carries no cross-base-dir
 // ambiguity to guard against.
 func (c openrcDaemonController) IsRunning(ctx context.Context) bool {
-	_, err := c.run(ctx, "rc-service", c.unit(), "status")
+	_, err := c.run(ctx, rcServiceCmdName, c.unit(), "status")
 	return err == nil
 }
 
@@ -473,7 +478,7 @@ func (c openrcDaemonController) Info(cmd *cobra.Command) {
 }
 
 func (c openrcDaemonController) LogsHint() string {
-	return "eos daemon logs"
+	return eosDaemonLogsCmdName
 }
 
 func (c openrcDaemonController) Logs(cmd *cobra.Command, lines int, follow bool) {
@@ -508,6 +513,27 @@ func newDaemonController(cfg config.DaemonConfig, baseDir string, health *config
 // getCtrl is called at Run time; in production it returns the controller set by
 // PersistentPreRun, and in tests it returns a mock.
 func buildDaemonSubcmds(daemonCmd *cobra.Command, getCtrl func() DaemonController) {
+	startCmd := daemonCmdBuildStartCmd(getCtrl)
+	daemonCmdMarkLogFlagHidden(daemonCmd, startCmd)
+
+	daemonCmd.AddCommand(daemonCmdBuildInfoCmd(getCtrl))
+	daemonCmd.AddCommand(daemonCmdBuildLogsCmd(getCtrl))
+	daemonCmd.AddCommand(daemonCmdBuildRemoveCmd(getCtrl))
+	daemonCmd.AddCommand(startCmd)
+	daemonCmd.AddCommand(daemonCmdBuildStopCmd(getCtrl))
+}
+
+// daemonCmdMarkLogFlagHidden hides startCmd's internal --log-to-file-and-console
+// flag (used only by the detached child spawned via buildForkCommand) from
+// `eos daemon start --help`.
+func daemonCmdMarkLogFlagHidden(daemonCmd *cobra.Command, startCmd *cobra.Command) {
+	if err := startCmd.Flags().MarkHidden(flagLogToFileAndConsole); err != nil {
+		daemonCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("marking daemon flag as hidden: %v", err))
+	}
+}
+
+// daemonCmdBuildStartCmd constructs the "eos daemon start" subcommand.
+func daemonCmdBuildStartCmd(getCtrl func() DaemonController) *cobra.Command {
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon process",
@@ -520,110 +546,159 @@ Otherwise, starts the daemon detached in the background by default; control retu
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctrl := getCtrl()
-			foreground, err := cmd.Flags().GetBool("foreground")
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			detachFlag, err := cmd.Flags().GetBool("detach")
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			if foreground && detachFlag {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "cannot use --foreground and --detach together")
-				return helpers.ErrCommandFailed
-			}
-			detach := !foreground
-			logToFileAndConsole, _ := cmd.Flags().GetBool("log-to-file-and-console")
-
-			if detach {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in background...")
-			} else {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "starting daemon in foreground — press Ctrl-C to stop this daemon...")
-			}
-
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole, verbose); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			if detach {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon started in background")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("to check daemon service status"))
-			}
-			return nil
+			return daemonCmdRunStart(cmd, getCtrl)
 		},
 	}
 	startCmd.Flags().BoolP("foreground", "f", false, "run daemon in foreground and stream output (Ctrl-C stops it)")
 	startCmd.Flags().BoolP("detach", "d", false, "run daemon in background (default; kept for backward compatibility)")
-	startCmd.Flags().Bool("log-to-file-and-console", false, "")
-	err := startCmd.Flags().MarkHidden("log-to-file-and-console")
+	startCmd.Flags().Bool(flagLogToFileAndConsole, false, "")
+	return startCmd
+}
+
+// daemonCmdRunStart implements startCmd's RunE: resolves the foreground/detach
+// flags, starts the daemon via ctrl, and reports the outcome.
+func daemonCmdRunStart(cmd *cobra.Command, getCtrl func() DaemonController) error {
+	ctrl := getCtrl()
+	detach, logToFileAndConsole, verbose, err := daemonCmdParseStartFlags(cmd)
 	if err != nil {
-		daemonCmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("marking daemon flag as hidden: %v", err))
+		return err
 	}
 
-	stopCmd := &cobra.Command{
+	daemonCmdPrintStarting(cmd, detach)
+
+	if err := ctrl.Start(cmd.Context(), detach, logToFileAndConsole, verbose); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		return helpers.ErrCommandFailed
+	}
+
+	if detach {
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "daemon started in background")
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos daemon info"), ui.TextMuted.Render("to check daemon service status"))
+	}
+	return nil
+}
+
+// daemonCmdParseStartFlags reads and validates startCmd's flags, resolving
+// --foreground/--detach into a single detach decision.
+func daemonCmdParseStartFlags(cmd *cobra.Command) (detach bool, logToFileAndConsole bool, verbose bool, err error) {
+	foreground, err := cmd.Flags().GetBool("foreground")
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return false, false, false, helpers.ErrCommandFailed
+	}
+	detachFlag, err := cmd.Flags().GetBool("detach")
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing flag: %v", err))
+		return false, false, false, helpers.ErrCommandFailed
+	}
+	if foreground && detachFlag {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "cannot use --foreground and --detach together")
+		return false, false, false, helpers.ErrCommandFailed
+	}
+	logToFileAndConsole, _ = cmd.Flags().GetBool(flagLogToFileAndConsole)
+	verbose, _ = cmd.Flags().GetBool("verbose")
+	return !foreground, logToFileAndConsole, verbose, nil
+}
+
+// daemonCmdPrintStarting prints the "starting daemon..." message, worded for
+// whether the daemon is starting detached or in the foreground.
+func daemonCmdPrintStarting(cmd *cobra.Command, detach bool) {
+	if detach {
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "starting daemon in background...")
+		return
+	}
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "starting daemon in foreground — press Ctrl-C to stop this daemon...")
+}
+
+// daemonCmdBuildStopCmd constructs the "eos daemon stop" subcommand.
+func daemonCmdBuildStopCmd(getCtrl func() DaemonController) *cobra.Command {
+	return &cobra.Command{
 		Use:           "stop",
 		Short:         "Stop the running daemon",
 		Long:          "Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root); if managed by OpenRC, delegates to rc-service stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctrl := getCtrl()
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "stopping daemon...")
-			killed, err := ctrl.Stop(cmd.Context(), cmd, verbose)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			if !killed {
-				cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
-				return nil
-			}
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon stopped")
-			return nil
+			return daemonCmdRunStop(cmd, getCtrl)
 		},
 	}
+}
 
-	removeCmd := &cobra.Command{
+// daemonCmdRunStop implements stopCmd's RunE: stops the daemon via ctrl and
+// reports whether it was actually running.
+func daemonCmdRunStop(cmd *cobra.Command, getCtrl func() DaemonController) error {
+	ctrl := getCtrl()
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "stopping daemon...")
+	killed, err := ctrl.Stop(cmd.Context(), cmd, verbose)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping daemon: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	if !killed {
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon was not running"))
+		return nil
+	}
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "daemon stopped")
+	return nil
+}
+
+// daemonCmdBuildRemoveCmd constructs the "eos daemon remove" subcommand.
+func daemonCmdBuildRemoveCmd(getCtrl func() DaemonController) *cobra.Command {
+	return &cobra.Command{
 		Use:           "remove",
 		Short:         "Remove a stopped daemon",
 		Long:          "Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctrl := getCtrl()
-			cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "removing daemon...")
-			if err := ctrl.Remove(); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing daemon: %v", err))
-				return helpers.ErrCommandFailed
-			}
-			cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "daemon removed")
-			cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("to undo systemd startup"))
-			return nil
+			return daemonCmdRunRemove(cmd, getCtrl)
 		},
 	}
+}
 
+// daemonCmdRunRemove implements removeCmd's RunE: removes the daemon's files
+// via ctrl and reports the outcome.
+func daemonCmdRunRemove(cmd *cobra.Command, getCtrl func() DaemonController) error {
+	ctrl := getCtrl()
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "removing daemon...")
+	if err := ctrl.Remove(); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing daemon: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "daemon removed")
+	cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system unstartup"), ui.TextMuted.Render("to undo systemd startup"))
+	return nil
+}
+
+// daemonCmdBuildInfoCmd constructs the "eos daemon info" subcommand.
+func daemonCmdBuildInfoCmd(getCtrl func() DaemonController) *cobra.Command {
 	var allUsers bool
 	infoCmd := &cobra.Command{
 		Use:   "info",
 		Short: "Show daemon status and configuration",
 		Long:  "Display daemon status and configuration. For systemd-managed daemons, shows configuration only (use 'systemctl status eos.service' for runtime state). For standalone daemons, shows whether the process is running, its PID, socket path, log directory, log file name, max file count, and file size limit. Reports clearly if the daemon is stopped or not found.\n\nPass --all (root only) to enumerate every user's standalone daemon on the host instead of just the invoking user's, flagging any still running against a since-replaced binary.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if allUsers {
-				return printAllDaemons(cmd)
-			}
-			ctrl := getCtrl()
-			ctrl.Info(cmd)
-			return nil
+			return daemonCmdRunInfo(cmd, getCtrl, allUsers)
 		},
 	}
 	infoCmd.Flags().BoolVar(&allUsers, "all", false, "list every user's standalone daemon on this host (root only)")
+	return infoCmd
+}
 
+// daemonCmdRunInfo implements infoCmd's RunE: either enumerates every user's
+// daemon (--all) or reports the invoking user's daemon status via ctrl.
+func daemonCmdRunInfo(cmd *cobra.Command, getCtrl func() DaemonController, allUsers bool) error {
+	if allUsers {
+		return printAllDaemons(cmd)
+	}
+	ctrl := getCtrl()
+	ctrl.Info(cmd)
+	return nil
+}
+
+// daemonCmdBuildLogsCmd constructs the "eos daemon logs" subcommand.
+func daemonCmdBuildLogsCmd(getCtrl func() DaemonController) *cobra.Command {
 	var lines int
 	var follow bool
 	logsCmd := &cobra.Command{
@@ -631,19 +706,45 @@ Otherwise, starts the daemon detached in the background by default; control retu
 		Short: "View daemon log output",
 		Long:  "Display or stream the daemon's log file. Defaults to the last 300 lines. Use --follow to tail in real time, --lines to control history depth. Accepts values between 0 and 10,000. Exit with Ctrl+C.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctrl := getCtrl()
-			ctrl.Logs(cmd, lines, follow)
-			return nil
+			return daemonCmdRunLogs(cmd, getCtrl, lines, follow)
 		},
 	}
 	logsCmd.Flags().IntVar(&lines, "lines", 300, "number of lines to display")
 	logsCmd.Flags().BoolVar(&follow, "follow", false, "follow log output")
+	return logsCmd
+}
 
-	daemonCmd.AddCommand(infoCmd)
-	daemonCmd.AddCommand(logsCmd)
-	daemonCmd.AddCommand(removeCmd)
-	daemonCmd.AddCommand(startCmd)
-	daemonCmd.AddCommand(stopCmd)
+// daemonCmdRunLogs implements logsCmd's RunE: streams or displays the
+// daemon's log output via ctrl.
+func daemonCmdRunLogs(cmd *cobra.Command, getCtrl func() DaemonController, lines int, follow bool) error {
+	ctrl := getCtrl()
+	ctrl.Logs(cmd, lines, follow)
+	return nil
+}
+
+// resolveDaemonControllerPreRun loads the system config via getConfig and
+// builds the DaemonController for it, printing an error and exiting on
+// either failure. Shared by newSystemCmd and newDaemonCmd, whose
+// PersistentPreRun bodies were otherwise byte-identical.
+func resolveDaemonControllerPreRun(cmd *cobra.Command, getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) DaemonController {
+	baseDir, systemConfig, identity, err := getConfig()
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
+		os.Exit(1)
+		return nil
+	}
+	if systemConfig == nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "getting config: got a nil system config")
+		os.Exit(1)
+		return nil
+	}
+	ctrl, err := newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
+		os.Exit(1)
+		return nil
+	}
+	return ctrl
 }
 
 func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
@@ -654,16 +755,7 @@ func newDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Ident
 		Short: "Manage the deployment daemon",
 		Long:  "Commands for controlling and monitoring the long-running deployment daemon process. Use start/stop to control the lifecycle, remove to clean up daemon files, info to inspect its current status, and logs to stream its output.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			baseDir, systemConfig, identity, err := getConfig()
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting config: %v", err))
-				os.Exit(1)
-			}
-			ctrl, err = newDaemonController(systemConfig.Daemon, baseDir, &systemConfig.Health, systemConfig.Shutdown, systemConfig.Telemetry, systemConfig.UnderSystemd, identity)
-			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving daemon mode: %v", err))
-				os.Exit(1)
-			}
+			ctrl = resolveDaemonControllerPreRun(cmd, getConfig)
 		},
 	}
 
@@ -780,6 +872,24 @@ func forkDaemon(ctx context.Context, cfg *config.StandaloneDaemonConfig, verbose
 	return confirmForkAlive(ctx, cfg)
 }
 
+// restartDaemonStandaloneIfConfirmed prompts to restart the daemon standalone
+// after a startup/unstartup change, forking it and reporting the outcome.
+// Shared by system.go's unstartupCmd/unstartupCmdLaunchd and
+// system_openrc.go's openrcUnstartupCmd, which otherwise repeat this
+// prompt-fork-report sequence verbatim.
+func restartDaemonStandaloneIfConfirmed(ctx context.Context, cmd *cobra.Command, flagYes bool, identity userutil.Identity) error {
+	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
+		return nil
+	}
+	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(msgCheckDaemonLogs) + "\n")
+		return helpers.ErrCommandFailed
+	}
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), msgDaemonStartedBg)
+	return nil
+}
+
 // ensureDaemonNotRunning errors if a live daemon already holds cfg's PID
 // file. A fork while one is running spawns a child that fails to bind and
 // exits quietly, which previously looked identical to success (issue #156).
@@ -838,13 +948,13 @@ func forkStartupErr(err error, pidFile string) error {
 
 func printAllDaemons(cmd *cobra.Command) error {
 	if os.Getuid() != 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "--all requires root — run with sudo")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "--all requires root — run with sudo")
 		return helpers.ErrCommandFailed
 	}
 
 	daemons, err := process.DiscoverDaemons()
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("discovering daemons: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("discovering daemons: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -856,19 +966,19 @@ func printAllDaemons(cmd *cobra.Command) error {
 // if any are stale. Split out from printAllDaemons so it can be tested without root.
 func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) {
 	if len(daemons) == 0 {
-		cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("no standalone daemons found on this host"))
+		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("no standalone daemons found on this host"))
 		return
 	}
 
 	staleCount := 0
 	for _, d := range daemons {
 		if d.Err != nil {
-			cmd.Printf("%s %s\n", ui.LabelError.Render("✗"), d.Username)
-			cmd.Printf("  %s %v\n\n", ui.TextMuted.Render("error:"), d.Err)
+			cmd.Printf(fmtLabelMsgLn, ui.LabelError.Render("✗"), d.Username)
+			cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("error:"), d.Err)
 			continue
 		}
 		if !d.Status.Running {
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("○"), d.Username, ui.TextMuted.Render("not running"))
+			cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("○"), d.Username, ui.TextMuted.Render("not running"))
 			continue
 		}
 		if d.StaleBinary {
@@ -881,46 +991,79 @@ func renderDaemonSummaries(cmd *cobra.Command, daemons []process.DaemonSummary) 
 	cmd.Println()
 
 	if staleCount > 0 {
-		cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("%d daemon(s) still running the pre-update binary", staleCount))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start") + ui.TextMuted.Render(" to restart each") + "\n\n")
+		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("%d daemon(s) still running the pre-update binary", staleCount))
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("sudo -u <user> eos daemon stop && sudo -u <user> eos daemon start") + ui.TextMuted.Render(" to restart each") + "\n\n")
 	}
 }
 
 func printSystemdDaemonDetails(cmd *cobra.Command, cfg config.SystemdConfig) {
-	statusCmd := "systemctl status eos.service"
-	logsCmd := "journalctl -u eos.service"
+	statusCmd, logsCmd := daemonCmdSystemdCommandHints(cfg.UserUnit)
 	if cfg.UserUnit {
-		statusCmd = "systemctl --user status eos.service"
-		logsCmd = "journalctl --user -u eos.service"
-
-		if effectiveUser, effectiveUserErr := userutil.EffectiveUser(); effectiveUserErr == nil {
-			if effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser); credErr == nil {
-				uid := int(effectiveUID)
-				if !systemdUserBusReachable(uid) {
-					cmd.Printf("%s %s\n\n", ui.LabelWarning.Render("warning"), "no active systemd user bus — the commands below will fail with \"Failed to connect to bus\"")
-					cmd.Printf("%s %s\n\n", ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s, then start a fresh login session (or export XDG_RUNTIME_DIR=/run/user/%d in this shell)", ui.TextCommand.Render("sudo loginctl enable-linger "+effectiveUser.Username), uid))
-				}
-			}
-		}
+		daemonCmdWarnSystemdUserBus(cmd)
 	}
-	if socketResponds(cmd.Context(), cfg.SocketPath) {
-		if pid, err := systemdMainPID(cmd.Context(), cfg.UserUnit); err == nil {
-			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
-		} else {
-			cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("✓"), "running")
-		}
-	} else {
-		cmd.Printf("  %s %s\n\n", ui.LabelInfo.Render("○"), ui.TextMuted.Render("not running"))
-	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
-	if version, err := systemdDaemonRunningVersion(cmd.Context(), cfg.UserUnit); err == nil {
-		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
-	}
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check systemd service status") + "\n")
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos system unstartup") + ui.TextMuted.Render(" to disable systemd management") + "\n\n")
-	cmd.Printf("%s\n", ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" to check journalctl service logs") + "\n")
+	daemonCmdPrintSystemdRunState(cmd, cfg)
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is systemd managed"))
+	daemonCmdPrintSystemdVersion(cmd, cfg)
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check systemd service status") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system unstartup") + ui.TextMuted.Render(" to disable systemd management") + "\n\n")
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Logging"))
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(logsCmd) + ui.TextMuted.Render(" to check journalctl service logs") + "\n")
 	cmd.Println()
+}
+
+// daemonCmdSystemdCommandHints returns the systemctl/journalctl invocations to
+// suggest to the user, scoped to the user bus when the unit is a user unit.
+func daemonCmdSystemdCommandHints(userUnit bool) (statusCmd string, logsCmd string) {
+	if userUnit {
+		return "systemctl --user status eos.service", "journalctl --user -u eos.service"
+	}
+	return "systemctl status eos.service", "journalctl -u eos.service"
+}
+
+// daemonCmdWarnSystemdUserBus prints a warning when the invoking session has
+// no reachable systemd user bus, which would otherwise make the suggested
+// systemctl/journalctl --user commands fail with "Failed to connect to bus".
+func daemonCmdWarnSystemdUserBus(cmd *cobra.Command) {
+	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
+	if effectiveUserErr != nil {
+		return
+	}
+	effectiveUID, _, credErr := userutil.UserCredentials(effectiveUser)
+	if credErr != nil {
+		return
+	}
+	uid := int(effectiveUID)
+	if systemdUserBusReachable(uid) {
+		return
+	}
+	cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no active systemd user bus — the commands below will fail with \"Failed to connect to bus\"")
+	cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s, then start a fresh login session (or export XDG_RUNTIME_DIR=/run/user/%d in this shell)", ui.TextCommand.Render("sudo loginctl enable-linger "+effectiveUser.Username), uid))
+}
+
+// daemonCmdPrintSystemdRunState prints whether the systemd-managed daemon is
+// currently running (and its PID when resolvable), based on the same
+// base-dir-scoped socket probe daemonIsDown() uses.
+func daemonCmdPrintSystemdRunState(cmd *cobra.Command, cfg config.SystemdConfig) {
+	if !socketResponds(cmd.Context(), cfg.SocketPath) {
+		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelInfo.Render("○"), ui.TextMuted.Render("not running"))
+		return
+	}
+	if pid, err := systemdMainPID(cmd.Context(), cfg.UserUnit); err == nil {
+		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
+		return
+	}
+	cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), "running")
+}
+
+// daemonCmdPrintSystemdVersion prints the version embedded in the binary
+// actually backing the running systemd-managed daemon process, when it can
+// be resolved.
+func daemonCmdPrintSystemdVersion(cmd *cobra.Command, cfg config.SystemdConfig) {
+	version, err := systemdDaemonRunningVersion(cmd.Context(), cfg.UserUnit)
+	if err != nil {
+		return
+	}
+	cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
 }
 
 // systemdUserBusReachable reports whether $XDG_RUNTIME_DIR, as exported in this process's own
@@ -985,29 +1128,29 @@ func printLaunchdDaemonDetails(cmd *cobra.Command, userAgent bool) {
 		scope = "launch agent"
 		statusCmd = "launchctl print gui/$(id -u)/" + config.LaunchdLabel
 	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render(fmt.Sprintf("daemon is launchd managed (%s)", scope)))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check launchd service status") + "\n\n")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render(fmt.Sprintf("daemon is launchd managed (%s)", scope)))
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(statusCmd) + ui.TextMuted.Render(" to check launchd service status") + "\n\n")
 	cmd.Printf("%s\n", ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" to tail daemon log file") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" to tail daemon log file") + "\n")
 	cmd.Println()
 }
 
 func printOpenRCDaemonDetails(cmd *cobra.Command) {
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is OpenRC managed"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("rc-service eos status") + ui.TextMuted.Render(" to check OpenRC service status") + "\n\n")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is OpenRC managed"))
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("rc-service eos status") + ui.TextMuted.Render(" to check OpenRC service status") + "\n\n")
 	cmd.Printf("%s\n", ui.TextBold.Render("Logging"))
-	cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" to tail daemon log file") + "\n")
+	cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(eosDaemonLogsCmdName) + ui.TextMuted.Render(" to tail daemon log file") + "\n")
 	cmd.Println()
 }
 
 func printStandaloneDaemonDetails(cmd *cobra.Command, pid int, cfg *config.StandaloneDaemonConfig) {
 	cmd.Printf("  %s %d\n", ui.TextMuted.Render("PID:"), pid)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("pid file:"), cfg.PIDFile)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket path:"), cfg.SocketPath)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("socket timeout:"), cfg.SocketTimeout)
-	cmd.Printf("%s\n\n", ui.TextBold.Render("Logging"))
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log dir:"), cfg.Log.LogDir)
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("log file:"), cfg.Log.LogFileName)
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("pid file:"), cfg.PIDFile)
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket path:"), cfg.SocketPath)
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket timeout:"), cfg.SocketTimeout)
+	cmd.Printf(fmtHeading, ui.TextBold.Render("Logging"))
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log dir:"), cfg.Log.LogDir)
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log file:"), cfg.Log.LogFileName)
 	cmd.Printf("  %s %d\n", ui.TextMuted.Render("log max files:"), cfg.Log.LogMaxFiles)
 	cmd.Printf("  %s %d\n", ui.TextMuted.Render("log file size limit:"), cfg.Log.LogFileSizeLimit)
 }

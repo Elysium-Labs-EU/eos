@@ -25,7 +25,7 @@ func TestNewHandles_NoopProviders(t *testing.T) {
 
 func TestRegisterDaemonGauges_NoopProvider(t *testing.T) {
 	mp := metricnoop.NewMeterProvider()
-	if err := RegisterDaemonGauges(mp, time.Now(), func() int { return 1 }, func() int { return 2 }); err != nil {
+	if err := RegisterDaemonGauges(mp, time.Now(), func(context.Context) int { return 1 }, func(context.Context) int { return 2 }); err != nil {
 		t.Fatalf("RegisterDaemonGauges: %v", err)
 	}
 }

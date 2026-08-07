@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -338,6 +340,95 @@ func TestInfoConfigLoadError(t *testing.T) {
 	}
 }
 
+// infoFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods needed to force error branches
+// that are impractical to reach through a real DB-backed manager.
+type infoFakeManager struct {
+	manager.ServiceManager
+
+	instance    *types.ServiceInstance
+	instanceErr error
+
+	processEntry *types.ProcessHistory
+	processErr   error
+}
+
+func (f *infoFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
+	return f.instance, f.instanceErr
+}
+
+func (f *infoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
+	return f.processEntry, f.processErr
+}
+
+func infoNewTestCmd() (*cobra.Command, *bytes.Buffer) {
+	cmd := &cobra.Command{}
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	return cmd, &errBuf
+}
+
+func TestInfoFetchServiceInstanceGenericError(t *testing.T) {
+	cmd, errBuf := infoNewTestCmd()
+	wantErr := errors.New("boom")
+
+	instance := infoFetchServiceInstance(cmd, t.Context(), &infoFakeManager{instanceErr: wantErr}, "svc")
+
+	if instance != nil {
+		t.Errorf("expected nil instance on error, got: %+v", instance)
+	}
+	if !strings.Contains(errBuf.String(), "getting service instance") {
+		t.Errorf("expected 'getting service instance' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoFetchProcessEntryGenericError(t *testing.T) {
+	cmd, errBuf := infoNewTestCmd()
+	wantErr := errors.New("boom")
+
+	entry := infoFetchProcessEntry(cmd, t.Context(), &infoFakeManager{processErr: wantErr}, "svc")
+
+	if entry != nil {
+		t.Errorf("expected nil process entry on error, got: %+v", entry)
+	}
+	if !strings.Contains(errBuf.String(), "getting process history") {
+		t.Errorf("expected 'getting process history' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoWithRegistryLogSinkRef(t *testing.T) {
+	cmd, outBuf, errBuf, tempDir := setupCmd(t)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithLogSinkRefs("prod-loki"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err := os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	cmd.SetArgs([]string{"add", fullPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add command should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	}
+
+	cmd.SetArgs([]string{"info", "cms"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("info command should not return an error, got: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, "sink 1") || !strings.Contains(output, "prod-loki") || !strings.Contains(output, "registry") {
+		t.Errorf("expected sink 1 to reference registry sink 'prod-loki', got: %s", output)
+	}
+}
+
 func TestInfoWithRunningServiceState(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -384,3 +475,81 @@ func TestInfoWithRunningServiceState(t *testing.T) {
 		t.Errorf("expected restarts=2 in Instance section, got: %s", output)
 	}
 }
+
+// fakeInfoMgr implements manager.ServiceManager, overriding only the methods
+// newInfoCmd's RunE touches; every other call panics via the nil embedded
+// interface (same idiom as cmd/snapshot_test.go's fakeSnapshotMgr). It exists
+// to force GetServiceInstance/GetMostRecentProcessHistoryEntry to return a
+// genuine, non-sentinel error — a real LocalManager backed by a single
+// sqlite connection can't be made to hit that specific branch without also
+// breaking the GetServiceCatalogEntry call two lines above it in the same
+// RunE, since both go through the same connection.
+type fakeInfoMgr struct {
+	manager.ServiceManager
+	catalogErr   error
+	instanceErr  error
+	historyErr   error
+	catalogEntry types.ServiceCatalogEntry
+}
+
+func (f *fakeInfoMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
+	return f.catalogEntry, f.catalogErr
+}
+
+func (f *fakeInfoMgr) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
+	return nil, f.instanceErr
+}
+
+func (f *fakeInfoMgr) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
+	return nil, f.historyErr
+}
+
+func (f *fakeInfoMgr) GetServiceLogFilePath(context.Context, string, bool) (*string, error) {
+	return nil, nil //nolint:nilnil // mirrors LocalManager's "no log file yet" contract, which info.go's callers already handle
+}
+
+// TestInfoCommandInstanceAndHistoryLookupErrors covers the
+// "getting service instance" (cmd/info.go:46-49) and "getting process
+// history" (cmd/info.go:52-55) error branches: both are genuine errors that
+// are neither manager.ErrServiceNotRunning nor manager.ErrProcessNotFound,
+// so info must surface them instead of silently treating the service as
+// never-started.
+func TestInfoCommandInstanceAndHistoryLookupErrors(t *testing.T) {
+	mgr := &fakeInfoMgr{
+		catalogEntry: types.ServiceCatalogEntry{
+			Name:           "cms",
+			DirectoryPath:  "/nonexistent-dir-for-info-test",
+			ConfigFileName: "service.yaml",
+		},
+		instanceErr: errors.New("instance lookup exploded"),
+		historyErr:  errors.New("history lookup exploded"),
+	}
+	root := newTestRootCmd(mgr)
+
+	var errBuf bytes.Buffer
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&errBuf)
+	root.SetArgs([]string{"info", "cms"})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("info should not return a hard error for soft lookup failures, got: %v", err)
+	}
+
+	output := errBuf.String()
+	if !strings.Contains(output, "getting service instance") || !strings.Contains(output, "instance lookup exploded") {
+		t.Errorf("expected 'getting service instance' error, got: %s", output)
+	}
+	if !strings.Contains(output, "getting process history") || !strings.Contains(output, "history lookup exploded") {
+		t.Errorf("expected 'getting process history' error, got: %s", output)
+	}
+}
+
+// Not tested, and why:
+//
+// cmd/info.go:31-34 (the errors.Is(err, database.ErrServiceNotFound) branch)
+// is dead code: LocalManager.GetServiceCatalogEntry always normalizes a
+// not-found lookup to manager.ErrServiceNotRegistered before returning (see
+// internal/manager/local_manager.go's isNotFound helper), never the raw
+// database.ErrServiceNotFound this branch checks for. The generic err != nil
+// branch two lines below (already covered by TestInfoNonExistentServiceCommand
+// via "service not registered") is the one that actually fires.

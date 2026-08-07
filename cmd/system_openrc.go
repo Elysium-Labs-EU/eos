@@ -61,115 +61,126 @@ func renderOpenRCScript(installDir, user string) (string, error) {
 // openrcStartupCmd is the OpenRC counterpart to startupCmd. OpenRC has no
 // per-user service manager equivalent to `systemctl --user`, so this always
 // installs a system-wide script and requires root.
-func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, installDir string, daemonConfig *config.StandaloneDaemonConfig, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
-	if err := ensureRuntime(cmd, verbose, detectRuntime, "openrc"); err != nil {
+//
+// openrcStartupParams bundles the plain-value parameters it needs to
+// render, write, and enable an OpenRC init script.
+type openrcStartupParams struct {
+	InstallDir   string
+	DaemonConfig *config.StandaloneDaemonConfig
+	InitDir      string
+	InitFile     string
+	Verbose      bool
+	FlagYes      bool
+}
+
+func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, p openrcStartupParams, detectRuntime func() (string, error), run runCmdFn) error {
+	if err := ensureRuntime(cmd, p.Verbose, detectRuntime, "openrc"); err != nil {
 		return err
 	}
 
-	fullTargetName := filepath.Join(initDir, initFile)
-	helpers.Debugf(cmd, verbose, "target init script: %s", fullTargetName)
+	fullTargetName := filepath.Join(p.InitDir, p.InitFile)
+	helpers.Debugf(cmd, p.Verbose, "target init script: %s", fullTargetName)
 
-	if err := checkWritable(cmd, initDir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+	if err := checkWritable(cmd, p.InitDir); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return helpers.ErrCommandFailed
 	}
 
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return helpers.ErrCommandFailed
 	}
-	helpers.Debugf(cmd, verbose, "effective user: %s", effectiveUser.Username)
+	helpers.Debugf(cmd, p.Verbose, "effective user: %s", effectiveUser.Username)
 
-	script, err := renderOpenRCScript(installDir, effectiveUser.Username)
+	script, err := renderOpenRCScript(p.InstallDir, effectiveUser.Username)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("rendering init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "create OpenRC init script? (y/n):", "init script creation canceled") {
+	if !confirmOrDecline(cmd, p.FlagYes, "create OpenRC init script? (y/n):", "init script creation canceled") {
 		return nil
 	}
 
 	if err = os.WriteFile(fullTargetName, []byte(script), 0755); err != nil { // #nosec G306 -- OpenRC requires init scripts to be executable
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("init script created, at:"), fullTargetName)
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("init script created, at:"), fullTargetName)
 
-	unit := initFile
-	helpers.Debugf(cmd, verbose, "running: rc-update add %s default", unit)
+	unit := p.InitFile
+	helpers.Debugf(cmd, p.Verbose, "running: rc-update add %s default", unit)
 	out, err := run(ctx, "rc-update", "add", unit, "default")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	helpers.Debugf(cmd, verbose, "rc-update output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
+	helpers.Debugf(cmd, p.Verbose, "rc-update output: %s", strings.TrimSpace(string(out)))
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon now? (y/n):", "daemon will be managed by OpenRC on next start") {
+	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by OpenRC on next start") {
 		return nil
 	}
 
-	if stopErr := stopStandaloneForRestart(cmd, daemonConfig); stopErr != nil {
+	if stopErr := stopStandaloneForRestart(cmd, p.DaemonConfig); stopErr != nil {
 		return stopErr
 	}
 
-	helpers.Debugf(cmd, verbose, "running: rc-service %s start", unit)
-	out, err = run(ctx, "rc-service", unit, "start")
+	helpers.Debugf(cmd, p.Verbose, "running: rc-service %s start", unit)
+	out, err = run(ctx, rcServiceCmdName, unit, "start")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	helpers.Debugf(cmd, verbose, "rc-service output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
+	helpers.Debugf(cmd, p.Verbose, "rc-service output: %s", strings.TrimSpace(string(out)))
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
 
 // openrcUnstartupCmd is the OpenRC counterpart to unstartupCmd.
-func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, initDir, initFile string, verbose, flagYes bool, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error { //nolint:unparam // initFile drives the rc-update/rc-service unit name; varies in tests so calls target a throwaway unit instead of the real one
-	if err := ensureRuntime(cmd, verbose, detectRuntime, "openrc"); err != nil {
+// openrcUnstartupParams bundles the plain-value parameters it needs to
+// disable and remove an OpenRC init script.
+type openrcUnstartupParams struct {
+	InitDir  string
+	InitFile string
+	Verbose  bool
+	FlagYes  bool
+}
+
+func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, p openrcUnstartupParams, detectRuntime func() (string, error), run runCmdFn, identity userutil.Identity) error {
+	if err := ensureRuntime(cmd, p.Verbose, detectRuntime, "openrc"); err != nil {
 		return err
 	}
 
-	if !confirmOrDecline(cmd, flagYes, "remove OpenRC init script and disable eos on boot? (y/n):", "canceled") {
+	if !confirmOrDecline(cmd, p.FlagYes, "remove OpenRC init script and disable eos on boot? (y/n):", "canceled") {
 		return nil
 	}
 
-	unit := initFile
-	helpers.Debugf(cmd, verbose, "running: rc-service %s stop", unit)
-	out, err := run(ctx, "rc-service", unit, "stop")
+	unit := p.InitFile
+	helpers.Debugf(cmd, p.Verbose, "running: rc-service %s stop", unit)
+	out, err := run(ctx, rcServiceCmdName, unit, "stop")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service stopped")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service stopped")
 
-	helpers.Debugf(cmd, verbose, "running: rc-update del %s default", unit)
+	helpers.Debugf(cmd, p.Verbose, "running: rc-update del %s default", unit)
 	out, err = run(ctx, "rc-update", "del", unit, "default")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("disabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service disabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service disabled")
 
-	fullTargetName := filepath.Join(initDir, initFile)
+	fullTargetName := filepath.Join(p.InitDir, p.InitFile)
 	if err = os.Remove(fullTargetName); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
 
-	if !confirmOrDecline(cmd, flagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" to check daemon logs") + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, p.FlagYes, identity)
 }

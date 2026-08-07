@@ -53,7 +53,7 @@ func TestNewServiceLogFiles_rejectsPathTraversalName(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if _, _, err := mgr.NewServiceLogFiles("../../pwned"); err == nil {
+	if _, _, err := mgr.NewServiceLogFiles(t.Context(), "../../pwned"); err == nil {
 		t.Fatal("expected NewServiceLogFiles to reject a path-traversal service name")
 	}
 
@@ -66,11 +66,11 @@ func TestGetServiceLogFilePath(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if _, _, err := mgr.NewServiceLogFiles("log-path-svc"); err != nil {
+	if _, _, err := mgr.NewServiceLogFiles(t.Context(), "log-path-svc"); err != nil {
 		t.Fatalf("NewServiceLogFiles: %v", err)
 	}
 
-	logPath, err := mgr.GetServiceLogFilePath("log-path-svc", false)
+	logPath, err := mgr.GetServiceLogFilePath(t.Context(), "log-path-svc", false)
 	if err != nil {
 		t.Fatalf("GetServiceLogFilePath(stdout): %v", err)
 	}
@@ -78,7 +78,7 @@ func TestGetServiceLogFilePath(t *testing.T) {
 		t.Errorf("expected stdout log path suffix, got %q", *logPath)
 	}
 
-	errorLogPath, err := mgr.GetServiceLogFilePath("log-path-svc", true)
+	errorLogPath, err := mgr.GetServiceLogFilePath(t.Context(), "log-path-svc", true)
 	if err != nil {
 		t.Fatalf("GetServiceLogFilePath(stderr): %v", err)
 	}
@@ -91,10 +91,10 @@ func TestGetServiceLogFilePath_missing(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if _, err := mgr.GetServiceLogFilePath("no-such-svc", false); err == nil {
+	if _, err := mgr.GetServiceLogFilePath(t.Context(), "no-such-svc", false); err == nil {
 		t.Fatal("expected error for missing stdout log file")
 	}
-	if _, err := mgr.GetServiceLogFilePath("no-such-svc", true); err == nil {
+	if _, err := mgr.GetServiceLogFilePath(t.Context(), "no-such-svc", true); err == nil {
 		t.Fatal("expected error for missing stderr log file")
 	}
 }
@@ -103,7 +103,7 @@ func TestLogToServiceStdoutAndStderr(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if _, _, err := mgr.NewServiceLogFiles("health-log-svc"); err != nil {
+	if _, _, err := mgr.NewServiceLogFiles(t.Context(), "health-log-svc"); err != nil {
 		t.Fatalf("NewServiceLogFiles: %v", err)
 	}
 

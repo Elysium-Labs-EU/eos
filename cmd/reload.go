@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -19,7 +20,7 @@ import (
 // the short-lived CLI, so reload deliberately requires the daemon and errors out
 // otherwise rather than pretending to swap.
 type serviceReloader interface {
-	ReloadService(name string, cfg manager.ReloadConfig) (manager.ReloadResult, error)
+	ReloadService(ctx context.Context, name string, cfg manager.ReloadConfig) (manager.ReloadResult, error)
 }
 
 const (
@@ -63,27 +64,27 @@ instance untouched.`,
 			mgr := getManager()
 			cfg := getConfig()
 
-			cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "reloading", ui.TextBold.Render(serviceName))
+			cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "reloading", ui.TextBold.Render(serviceName))
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if !exists {
-				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 				return helpers.ErrCommandFailed
 			}
 
 			reloader, ok := mgr.(serviceReloader)
 			if !ok {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "reload requires the standalone eos daemon")
-				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run without"), ui.TextCommand.Render("--no-daemon"), ui.TextMuted.Render("to use the daemon"))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "reload requires the standalone eos daemon")
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run without"), ui.TextCommand.Render("--no-daemon"), ui.TextMuted.Render("to use the daemon"))
 				return helpers.ErrCommandFailed
 			}
 
-			result, err := reloader.ReloadService(serviceName, manager.ReloadConfig{
+			result, err := reloader.ReloadService(cmd.Context(), serviceName, manager.ReloadConfig{
 				GracePeriod:      cfg.Shutdown.GracePeriod,
 				TickerPeriod:     reloadTickerPeriod,
 				ReadinessTimeout: reloadReadinessTimeout,
@@ -91,17 +92,17 @@ instance untouched.`,
 			})
 			if err != nil {
 				if errors.Is(err, manager.ErrServiceNotRunning) {
-					cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not running")
-					cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
+					cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not running")
+					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
 					return helpers.ErrCommandFailed
 				}
 				if errors.Is(err, manager.ErrReloadNotReady) {
-					cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("new instance never became healthy: %v", err))
-					cmd.PrintErrf("  %s %s %s\n", ui.TextMuted.Render("note:"), ui.TextBold.Render(serviceName), "kept the old instance running")
-					cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to see why it failed"))
+					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("new instance never became healthy: %v", err))
+					cmd.PrintErrf(fmtIndentLabelTwoMsgLn, ui.TextMuted.Render("note:"), ui.TextBold.Render(serviceName), "kept the old instance running")
+					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to see why it failed"))
 					return helpers.ErrCommandFailed
 				}
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reloading service: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reloading service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 
@@ -114,7 +115,7 @@ instance untouched.`,
 }
 
 func printReloadSuccessOutput(cmd *cobra.Command, serviceName string, result manager.ReloadResult) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("reloaded (PGID %d to %d)", result.OldPGID, result.NewPGID))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("reloaded (PGID %d to %d)", result.OldPGID, result.NewPGID))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))

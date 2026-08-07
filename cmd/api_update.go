@@ -44,7 +44,7 @@ Exit codes:
 			newProjectPath := args[1]
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("checking service: %w", err))
 			}
@@ -63,7 +63,7 @@ Exit codes:
 			}
 
 			configFile := filepath.Base(yamlFile)
-			if err := mgr.UpdateServiceCatalogEntry(serviceName, absPath, configFile); err != nil {
+			if err := mgr.UpdateServiceCatalogEntry(cmd.Context(), serviceName, absPath, configFile); err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("updating service: %w", err))
 			}
 

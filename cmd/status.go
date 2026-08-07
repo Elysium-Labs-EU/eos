@@ -48,7 +48,7 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 				return nil
 			}
 			if interval < 1 {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "--interval must be at least 1 second")
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "--interval must be at least 1 second")
 				return helpers.ErrCommandFailed
 			}
 
@@ -134,32 +134,32 @@ type statusServiceEntry struct {
 // buildStatusServiceEntry resolves a single registered service's display row.
 // ok is false when the service's own data couldn't be resolved (error already
 // printed to cmd); the caller should skip that service rather than render it.
-func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, regService types.ServiceCatalogEntry, checkInterval time.Duration, now time.Time) (statusServiceEntry, bool) {
+func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, regService *types.ServiceCatalogEntry, checkInterval time.Duration, now time.Time) (statusServiceEntry, bool) {
 	regServiceName := regService.Name
 	configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("loading service config: %v", err))
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("loading service config: %v", err))
 		return statusServiceEntry{}, false
 	}
 	if config.Name != regServiceName {
-		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
-		cmd.PrintErrf("  %s %s %s\n",
+		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
+		cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 			ui.TextMuted.Render("run:"),
 			ui.TextCommand.Render("eos update <service-name> <new-path>"),
 			ui.TextMuted.Render("to update the service"),
 		)
 	}
 
-	serviceInstance, err := mgr.GetServiceInstance(regServiceName)
+	serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), regServiceName)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
+		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting service instance: %v", err))
 		return statusServiceEntry{}, false
 	}
 
-	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(regServiceName)
+	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), regServiceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-		cmd.PrintErrf("%s %s: %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
+		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting process history: %v", err))
 		return statusServiceEntry{}, false
 	}
 
@@ -193,7 +193,7 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 	// service blocked on depends_on has no process yet, so without this it
 	// renders identically to one that was simply never started (see issue
 	// #136's "eos status ... distinct state rather than looking like a hang").
-	if pending := helpers.ResolveDependencyWaitStatus(mgr, regServiceName); len(pending) > 0 {
+	if pending := helpers.ResolveDependencyWaitStatus(cmd.Context(), mgr, regServiceName); len(pending) > 0 {
 		entry.Status = types.ServiceStatusWaitingForDeps
 		entry.Error = "waiting for: " + strings.Join(pending, ", ")
 	}
@@ -251,14 +251,14 @@ func statusTableStyleFunc(staleRows []bool) func(row, col int) lipgloss.Style {
 }
 
 func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInterval time.Duration) {
-	registeredServices, err := mgr.GetAllServiceCatalogEntries()
+	registeredServices, err := mgr.GetAllServiceCatalogEntries(cmd.Context())
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered services: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered services: %v", err))
 		return
 	}
 
 	if len(registeredServices) == 0 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no services are registered "+daemonIdentity())
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no services are registered "+daemonIdentity())
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos add <path>") + ui.TextMuted.Render(" to register a service") + "\n")
 		return
 	}
@@ -266,7 +266,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInter
 	var activeServices []statusServiceEntry
 	now := time.Now()
 	for _, regService := range registeredServices {
-		entry, ok := buildStatusServiceEntry(cmd, mgr, regService, checkInterval, now)
+		entry, ok := buildStatusServiceEntry(cmd, mgr, &regService, checkInterval, now)
 		if !ok {
 			continue
 		}

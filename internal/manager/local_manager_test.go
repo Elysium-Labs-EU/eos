@@ -1,9 +1,11 @@
 package manager
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +51,7 @@ func TestNewManager(t *testing.T) {
 		t.Fatal("Manager should not be nil")
 		return
 	}
-	services, err := manager.GetAllServiceCatalogEntries()
+	services, err := manager.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Errorf("GetAllRegisteredServices shouldn't error, got: %v", err)
 	}
@@ -67,13 +69,13 @@ func TestAddService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 
 	if err != nil {
 		t.Fatalf("Adding service catalog entry should not error: %v", err)
 
 	}
-	services, err := manager.GetAllServiceCatalogEntries()
+	services, err := manager.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("Getting all service catalog entries should not error: %v", err)
 	}
@@ -94,13 +96,13 @@ func TestAddServiceMultipleTimes(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 
 	if err != nil {
 		t.Fatalf("Adding service should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err == nil {
 		t.Fatalf("Expected error on adding the same service catalog entry twice")
 		return
@@ -126,7 +128,7 @@ func TestAddServiceCaseInsensitiveCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating first catalog entry should not error: %v", err)
 	}
-	if err = manager.AddServiceCatalogEntry(first); err != nil {
+	if err = manager.AddServiceCatalogEntry(t.Context(), first); err != nil {
 		t.Fatalf("adding first service should not error: %v", err)
 	}
 
@@ -135,13 +137,13 @@ func TestAddServiceCaseInsensitiveCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating colliding catalog entry should not error: %v", err)
 	}
-	err = manager.AddServiceCatalogEntry(collide)
+	err = manager.AddServiceCatalogEntry(t.Context(), collide)
 	if !errors.Is(err, ErrServiceNameCaseConflict) {
 		t.Fatalf("expected ErrServiceNameCaseConflict adding case-colliding name, got: %v", err)
 	}
 
 	// The colliding service must NOT have been registered.
-	services, err := manager.GetAllServiceCatalogEntries()
+	services, err := manager.GetAllServiceCatalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("listing services should not error: %v", err)
 	}
@@ -154,7 +156,7 @@ func TestAddServiceCaseInsensitiveCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating unrelated catalog entry should not error: %v", err)
 	}
-	if err = manager.AddServiceCatalogEntry(other); err != nil {
+	if err = manager.AddServiceCatalogEntry(t.Context(), other); err != nil {
 		t.Fatalf("adding a distinct single-case service should not error: %v", err)
 	}
 }
@@ -167,12 +169,12 @@ func TestGetService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
-	found, error := manager.GetServiceCatalogEntry("test-service")
+	found, error := manager.GetServiceCatalogEntry(t.Context(), "test-service")
 	if error != nil {
 		t.Errorf("Service should exist")
 	}
@@ -185,7 +187,7 @@ func TestGetInvalidServiceInstance(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	serviceInstance, err := manager.GetServiceInstance("non-existent")
+	serviceInstance, err := manager.GetServiceInstance(t.Context(), "non-existent")
 
 	if serviceInstance != nil {
 		t.Error("Non-existent service should not exist")
@@ -232,12 +234,12 @@ func TestStartService(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
-	pgid, err := manager.StartService("test-service")
+	pgid, err := manager.StartService(t.Context(), "test-service")
 
 	if err != nil {
 		t.Fatalf("Starting service should not error: %v", err)
@@ -286,7 +288,7 @@ func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
@@ -297,7 +299,7 @@ func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	pgid, err := manager.StartService("test-service")
+	pgid, err := manager.StartService(t.Context(), "test-service")
 	if err != nil {
 		t.Fatalf("StartService should ignore a stale Starting entry with a dead PGID, got error: %v", err)
 	}
@@ -366,7 +368,7 @@ func TestStartServiceSelfHealsStaleServiceInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
@@ -380,7 +382,7 @@ func TestStartServiceSelfHealsStaleServiceInstance(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	pgid, err := manager.StartService("test-service")
+	pgid, err := manager.StartService(t.Context(), "test-service")
 	if err != nil {
 		t.Fatalf("StartService should self-heal a stale service_instances row with a dead PGID, got error: %v", err)
 	}
@@ -440,7 +442,7 @@ func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
@@ -460,7 +462,7 @@ func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	_, err = manager.StartService("test-service")
+	_, err = manager.StartService(t.Context(), "test-service")
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("expected ErrAlreadyRunning for a live PGID, got: %v", err)
 	}
@@ -508,12 +510,12 @@ func TestStartServiceWithValidEnvLocation(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
-	if _, err := manager.StartService("test-service"); err != nil {
+	if _, err := manager.StartService(t.Context(), "test-service"); err != nil {
 		t.Fatalf("Starting service should not error: %v", err)
 	}
 }
@@ -556,12 +558,12 @@ func TestStartServiceWithInvalidEnvLocation(t *testing.T) {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
 
-	err = manager.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry)
 	if err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
-	if _, err := manager.StartService("test-service"); err == nil {
+	if _, err := manager.StartService(t.Context(), "test-service"); err == nil {
 		t.Fatal("Starting service should error")
 	}
 }
@@ -570,7 +572,7 @@ func TestIsServiceRegistered(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	registered, err := mgr.IsServiceRegistered("not-registered")
+	registered, err := mgr.IsServiceRegistered(t.Context(), "not-registered")
 	if err != nil {
 		t.Fatalf("IsServiceRegistered: %v", err)
 	}
@@ -581,7 +583,7 @@ func TestIsServiceRegistered(t *testing.T) {
 	if regErr := db.RegisterService(t.Context(), "my-svc", tempDir, "service.yaml"); regErr != nil {
 		t.Fatalf("RegisterService: %v", regErr)
 	}
-	registered, err = mgr.IsServiceRegistered("my-svc")
+	registered, err = mgr.IsServiceRegistered(t.Context(), "my-svc")
 	if err != nil {
 		t.Fatalf("IsServiceRegistered after register: %v", err)
 	}
@@ -598,7 +600,7 @@ func TestRemoveServiceInstance(t *testing.T) {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
 
-	removed, err := mgr.RemoveServiceInstance("remove-inst-svc")
+	removed, err := mgr.RemoveServiceInstance(t.Context(), "remove-inst-svc")
 	if err != nil {
 		t.Fatalf("RemoveServiceInstance: %v", err)
 	}
@@ -615,7 +617,7 @@ func TestRemoveServiceCatalogEntry(t *testing.T) {
 		t.Fatalf("RegisterService: %v", err)
 	}
 
-	removed, err := mgr.RemoveServiceCatalogEntry("catalog-svc")
+	removed, err := mgr.RemoveServiceCatalogEntry(t.Context(), "catalog-svc")
 	if err != nil {
 		t.Fatalf("RemoveServiceCatalogEntry: %v", err)
 	}
@@ -628,7 +630,7 @@ func TestGetAllServiceInstances(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	instances, err := mgr.GetAllServiceInstances()
+	instances, err := mgr.GetAllServiceInstances(t.Context())
 	if err != nil {
 		t.Fatalf("GetAllServiceInstances: %v", err)
 	}
@@ -639,7 +641,7 @@ func TestGetAllServiceInstances(t *testing.T) {
 	if regErr := db.RegisterServiceInstance(t.Context(), "inst-svc"); regErr != nil {
 		t.Fatalf("RegisterServiceInstance: %v", regErr)
 	}
-	instances, err = mgr.GetAllServiceInstances()
+	instances, err = mgr.GetAllServiceInstances(t.Context())
 	if err != nil {
 		t.Fatalf("GetAllServiceInstances after add: %v", err)
 	}
@@ -658,7 +660,7 @@ func TestLocalManager_GetVersion(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	version, err := mgr.GetVersion()
+	version, err := mgr.GetVersion(t.Context())
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
@@ -830,7 +832,7 @@ func TestStopService_noLiveProcesses(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	result, err := mgr.StopService(name, time.Second, 50*time.Millisecond)
+	result, err := mgr.StopService(t.Context(), name, time.Second, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("StopService: %v", err)
 	}
@@ -855,7 +857,7 @@ func TestStopService_deadPGID(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	result, err := mgr.StopService(name, time.Second, 50*time.Millisecond)
+	result, err := mgr.StopService(t.Context(), name, time.Second, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("StopService: %v", err)
 	}
@@ -880,7 +882,7 @@ func TestForceStopService_deadPGID(t *testing.T) {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
-	result, err := mgr.ForceStopService(name)
+	result, err := mgr.ForceStopService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("ForceStopService: %v", err)
 	}
@@ -1138,7 +1140,7 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 	}
 
 	// Must not panic, and must return the newer entry.
-	entry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	entry, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -1156,11 +1158,11 @@ func TestUpdateServiceCatalogEntry(t *testing.T) {
 	}
 
 	newDir := filepath.Join(tempDir, "moved")
-	if err := mgr.UpdateServiceCatalogEntry("update-catalog-svc", newDir, "new-service.yaml"); err != nil {
+	if err := mgr.UpdateServiceCatalogEntry(t.Context(), "update-catalog-svc", newDir, "new-service.yaml"); err != nil {
 		t.Fatalf("UpdateServiceCatalogEntry: %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry("update-catalog-svc")
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "update-catalog-svc")
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -1176,8 +1178,58 @@ func TestUpdateServiceCatalogEntry_unregisteredService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if err := mgr.UpdateServiceCatalogEntry("no-such-service", tempDir, "service.yaml"); err == nil {
+	if err := mgr.UpdateServiceCatalogEntry(t.Context(), "no-such-service", tempDir, "service.yaml"); err == nil {
 		t.Fatal("expected error updating an unregistered service")
+	}
+}
+
+// TestSetServiceEnabled proves the persisted desired-boot-state flag flips
+// both ways through LocalManager, backing issue #172's stop/run persistence.
+func TestSetServiceEnabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := db.RegisterService(t.Context(), "toggle-svc", tempDir, "service.yaml"); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Fatal("expected a freshly registered service to default Enabled=true")
+	}
+
+	if err = mgr.SetServiceEnabled(t.Context(), "toggle-svc", false); err != nil {
+		t.Fatalf("SetServiceEnabled(false): %v", err)
+	}
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), "toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after SetServiceEnabled(false)")
+	}
+
+	if err = mgr.SetServiceEnabled(t.Context(), "toggle-svc", true); err != nil {
+		t.Fatalf("SetServiceEnabled(true): %v", err)
+	}
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), "toggle-svc")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after SetServiceEnabled(true)")
+	}
+}
+
+func TestSetServiceEnabled_unregisteredService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := mgr.SetServiceEnabled(t.Context(), "no-such-service", false); err == nil {
+		t.Fatal("expected error setting enabled state on an unregistered service")
 	}
 }
 
@@ -1230,11 +1282,11 @@ func TestRestartService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	if addErr := manager.AddServiceCatalogEntry(serviceCatalogEntry); addErr != nil {
+	if addErr := manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); addErr != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", addErr)
 	}
 
-	originalPGID, err := manager.StartService("restart-service")
+	originalPGID, err := manager.StartService(t.Context(), "restart-service")
 	if err != nil {
 		t.Fatalf("Starting service should not error: %v", err)
 	}
@@ -1242,7 +1294,7 @@ func TestRestartService(t *testing.T) {
 		t.Fatal("Starting service should return a non-zero PGID, got 0")
 	}
 
-	newPGID, err := manager.RestartService("restart-service", time.Second, 50*time.Millisecond)
+	newPGID, err := manager.RestartService(t.Context(), "restart-service", time.Second, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("RestartService should not error: %v", err)
 	}
@@ -1259,7 +1311,7 @@ func TestRestartService_notRegistered(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
 
-	_, err := manager.RestartService("no-such-service", time.Second, 50*time.Millisecond)
+	_, err := manager.RestartService(t.Context(), "no-such-service", time.Second, 50*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected error restarting an unregistered service")
 	}
@@ -1301,7 +1353,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create service catalog entry should not error: %v", err)
 	}
-	if err = manager.AddServiceCatalogEntry(serviceCatalogEntry); err != nil {
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
 		t.Fatalf("Add service catalog entry should not error: %v", err)
 	}
 
@@ -1315,7 +1367,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
-			pgids[idx], errs[idx] = manager.StartService("test-service")
+			pgids[idx], errs[idx] = manager.StartService(t.Context(), "test-service")
 		}(i)
 	}
 	close(start)
@@ -1370,7 +1422,7 @@ func TestStartServiceConcurrentStartsSpawnOnce(t *testing.T) {
 	}
 
 	// The tracked instance in the DB must point at the single live winner.
-	instance, err := manager.GetServiceInstance("test-service")
+	instance, err := manager.GetServiceInstance(t.Context(), "test-service")
 	if err != nil {
 		t.Fatalf("GetServiceInstance after concurrent starts: %v", err)
 	}
@@ -1408,21 +1460,21 @@ func (f *fakeDependencyWaitDB) GetDependencyWaitStatus(context.Context, string) 
 
 func TestSetDependencyWaitStatus_dbError(t *testing.T) {
 	m := &LocalManager{db: &fakeDependencyWaitDB{setErr: errors.New("disk full")}, ctx: t.Context()}
-	if err := m.SetDependencyWaitStatus("web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
+	if err := m.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, time.Now().Add(time.Minute)); err == nil {
 		t.Fatal("expected the db error to be wrapped and returned")
 	}
 }
 
 func TestClearDependencyWaitStatus_dbError(t *testing.T) {
 	m := &LocalManager{db: &fakeDependencyWaitDB{clearErr: errors.New("disk full")}, ctx: t.Context()}
-	if err := m.ClearDependencyWaitStatus("web"); err == nil {
+	if err := m.ClearDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected the db error to be wrapped and returned")
 	}
 }
 
 func TestGetDependencyWaitStatus_dbError(t *testing.T) {
 	m := &LocalManager{db: &fakeDependencyWaitDB{getErr: errors.New("disk full")}, ctx: t.Context()}
-	if _, _, err := m.GetDependencyWaitStatus("web"); err == nil {
+	if _, _, err := m.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected the db error to be wrapped and returned")
 	}
 }
@@ -1436,7 +1488,7 @@ func TestGetDependencyWaitStatus_staleClearError(t *testing.T) {
 		getStatus: types.DependencyWaitStatus{ServiceName: "web", Deadline: time.Now().Add(-DependencyWaitStaleGrace - time.Minute)},
 		clearErr:  errors.New("disk full"),
 	}, ctx: t.Context()}
-	if _, _, err := m.GetDependencyWaitStatus("web"); err == nil {
+	if _, _, err := m.GetDependencyWaitStatus(t.Context(), "web"); err == nil {
 		t.Fatal("expected the clear error for a stale wait to be wrapped and returned")
 	}
 }
@@ -1445,16 +1497,16 @@ func TestDependencyWaitStatus(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	m := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
-	if status, waiting, err := m.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if status, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Fatalf("expected no wait recorded initially, got %+v waiting=%v (err %v)", status, waiting, err)
 	}
 
 	deadline := time.Now().Add(5 * time.Minute)
-	if err := m.SetDependencyWaitStatus("web", []string{"db", "cache"}, deadline); err != nil {
+	if err := m.SetDependencyWaitStatus(t.Context(), "web", []string{"db", "cache"}, deadline); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
-	status, waiting, err := m.GetDependencyWaitStatus("web")
+	status, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("GetDependencyWaitStatus: %v", err)
 	}
@@ -1473,23 +1525,23 @@ func TestDependencyWaitStatus(t *testing.T) {
 
 	// A second service's wait must not be visible under the first's name, and
 	// mutating the returned slice must not corrupt the stored copy.
-	if _, _, err := m.GetDependencyWaitStatus("unrelated"); err != nil {
+	if _, _, err := m.GetDependencyWaitStatus(t.Context(), "unrelated"); err != nil {
 		t.Fatalf("GetDependencyWaitStatus for unrelated service: %v", err)
 	}
 	status.Pending[0] = "corrupted"
-	if again, _, _ := m.GetDependencyWaitStatus("web"); again.Pending[0] != "db" {
+	if again, _, _ := m.GetDependencyWaitStatus(t.Context(), "web"); again.Pending[0] != "db" {
 		t.Fatalf("mutating a returned status must not affect the stored copy, got %v", again.Pending)
 	}
 
-	if err := m.ClearDependencyWaitStatus("web"); err != nil {
+	if err := m.ClearDependencyWaitStatus(t.Context(), "web"); err != nil {
 		t.Fatalf("ClearDependencyWaitStatus: %v", err)
 	}
-	if status, waiting, err := m.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if status, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Fatalf("expected no wait after Clear, got %+v waiting=%v (err %v)", status, waiting, err)
 	}
 
 	// Clearing a service with no recorded wait must be a harmless no-op.
-	if err := m.ClearDependencyWaitStatus("never-waited"); err != nil {
+	if err := m.ClearDependencyWaitStatus(t.Context(), "never-waited"); err != nil {
 		t.Fatalf("ClearDependencyWaitStatus on unrecorded service: %v", err)
 	}
 }
@@ -1504,11 +1556,11 @@ func TestDependencyWaitStatus_StaleIsSelfHealed(t *testing.T) {
 	m := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	pastDeadline := time.Now().Add(-DependencyWaitStaleGrace - time.Minute)
-	if err := m.SetDependencyWaitStatus("web", []string{"db"}, pastDeadline); err != nil {
+	if err := m.SetDependencyWaitStatus(t.Context(), "web", []string{"db"}, pastDeadline); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
-	status, waiting, err := m.GetDependencyWaitStatus("web")
+	status, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("GetDependencyWaitStatus: %v", err)
 	}
@@ -1534,7 +1586,7 @@ func TestDependencyWaitStatus_LongMaxWaitNotPrematurelyStale(t *testing.T) {
 
 	// A wait started under a 15-minute max_wait: deadline is 4 minutes out.
 	futureDeadline := time.Now().Add(4 * time.Minute)
-	if err := m.SetDependencyWaitStatus("web", []string{"slow-dep"}, futureDeadline); err != nil {
+	if err := m.SetDependencyWaitStatus(t.Context(), "web", []string{"slow-dep"}, futureDeadline); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
@@ -1546,7 +1598,7 @@ func TestDependencyWaitStatus_LongMaxWaitNotPrematurelyStale(t *testing.T) {
 		t.Fatalf("backdating since: %v", err)
 	}
 
-	status, waiting, err := m.GetDependencyWaitStatus("web")
+	status, waiting, err := m.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("GetDependencyWaitStatus: %v", err)
 	}
@@ -1568,9 +1620,9 @@ func TestDependencyWaitStatusConcurrent(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			name := fmt.Sprintf("svc-%d", n)
-			_ = m.SetDependencyWaitStatus(name, []string{"dep"}, time.Now().Add(time.Minute))
-			_, _, _ = m.GetDependencyWaitStatus(name)
-			_ = m.ClearDependencyWaitStatus(name)
+			_ = m.SetDependencyWaitStatus(t.Context(), name, []string{"dep"}, time.Now().Add(time.Minute))
+			_, _, _ = m.GetDependencyWaitStatus(t.Context(), name)
+			_ = m.ClearDependencyWaitStatus(t.Context(), name)
 		}(i)
 	}
 	wg.Wait()
@@ -1600,11 +1652,11 @@ func TestDependencyWaitStatusCrossProcess(t *testing.T) {
 	t.Cleanup(func() { _ = dbB.CloseDBConnection() })
 	mgrB := NewLocalManager(dbB, filepath.Dir(dbPath), t.Context(), testutil.NewTestLogger(t))
 
-	if setErr := mgrA.SetDependencyWaitStatus("web", []string{"db", "cache"}, time.Now().Add(5*time.Minute)); setErr != nil {
+	if setErr := mgrA.SetDependencyWaitStatus(t.Context(), "web", []string{"db", "cache"}, time.Now().Add(5*time.Minute)); setErr != nil {
 		t.Fatalf("SetDependencyWaitStatus on mgrA: %v", setErr)
 	}
 
-	status, waiting, err := mgrB.GetDependencyWaitStatus("web")
+	status, waiting, err := mgrB.GetDependencyWaitStatus(t.Context(), "web")
 	if err != nil {
 		t.Fatalf("GetDependencyWaitStatus on mgrB: %v", err)
 	}
@@ -1615,10 +1667,251 @@ func TestDependencyWaitStatusCrossProcess(t *testing.T) {
 		t.Errorf("expected pending [db cache], got %v", status.Pending)
 	}
 
-	if err := mgrB.ClearDependencyWaitStatus("web"); err != nil {
+	if err := mgrB.ClearDependencyWaitStatus(t.Context(), "web"); err != nil {
 		t.Fatalf("ClearDependencyWaitStatus on mgrB: %v", err)
 	}
-	if _, waiting, err := mgrA.GetDependencyWaitStatus("web"); err != nil || waiting {
+	if _, waiting, err := mgrA.GetDependencyWaitStatus(t.Context(), "web"); err != nil || waiting {
 		t.Fatalf("expected mgrA to see the clear mgrB made, waiting=%v err=%v", waiting, err)
 	}
+}
+
+func TestLmScanAndForward(t *testing.T) {
+	t.Run("forwards lines to logLine and subscribed sinks", func(t *testing.T) {
+		r, w := io.Pipe()
+		go func() {
+			_, _ = w.Write([]byte("line1\nline2\n"))
+			_ = w.Close()
+		}()
+
+		logger := testutil.NewTestLogger(t)
+		sink := newSinkProcess(&types.LogSink{Type: "test"}, "svc", logger, logger)
+
+		var got []string
+		scanner := bufio.NewScanner(r)
+		err := lmScanAndForward(scanner, "stdout", []*sinkProcess{sink}, func(line string) {
+			got = append(got, line)
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := []string{"line1", "line2"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("got[%d] = %q, want %q", i, got[i], w)
+			}
+		}
+		if sink.buf.Len() != len(want) {
+			t.Errorf("expected sink to receive %d records, got %d", len(want), sink.buf.Len())
+		}
+	})
+
+	t.Run("does not forward to a sink not subscribed to the stream", func(t *testing.T) {
+		r, w := io.Pipe()
+		go func() {
+			_, _ = w.Write([]byte("line1\n"))
+			_ = w.Close()
+		}()
+
+		logger := testutil.NewTestLogger(t)
+		sink := newSinkProcess(&types.LogSink{Type: "test", Streams: []string{"stderr"}}, "svc", logger, logger)
+
+		scanner := bufio.NewScanner(r)
+		if err := lmScanAndForward(scanner, "stdout", []*sinkProcess{sink}, func(string) {}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if sink.buf.Len() != 0 {
+			t.Errorf("expected sink not subscribed to stdout to receive nothing, got %d records", sink.buf.Len())
+		}
+	})
+
+	t.Run("returns the scanner's terminal error", func(t *testing.T) {
+		r, w := io.Pipe()
+		boom := errors.New("boom")
+		go func() {
+			_, _ = w.Write([]byte("partial"))
+			_ = w.CloseWithError(boom)
+		}()
+
+		scanner := bufio.NewScanner(r)
+		err := lmScanAndForward(scanner, "stdout", nil, func(string) {})
+		if !errors.Is(err, boom) {
+			t.Fatalf("expected wrapped boom error, got %v", err)
+		}
+	})
+}
+
+func TestLmApplyRuntimePathEnv(t *testing.T) {
+	t.Run("empty runtime path leaves env untouched", func(t *testing.T) {
+		env := []string{"FOO=bar"}
+		got := lmApplyRuntimePathEnv("", env)
+		if len(got) != 1 || got[0] != "FOO=bar" {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("replaces an existing PATH entry", func(t *testing.T) {
+		env := []string{"PATH=/usr/bin"}
+		got := lmApplyRuntimePathEnv("/opt/bun/bin", env)
+		want := "PATH=/opt/bun/bin:/usr/bin"
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("got %v, want [%q]", got, want)
+		}
+	})
+
+	t.Run("appends PATH when absent", func(t *testing.T) {
+		env := []string{"FOO=bar"}
+		got := lmApplyRuntimePathEnv("/opt/bun/bin", env)
+		want := []string{"FOO=bar", "PATH=/opt/bun/bin"}
+		if len(got) != len(want) || got[1] != want[1] {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+}
+
+func TestLmOverlayEnvVars(t *testing.T) {
+	env := []string{"FOO=old"}
+	got := lmOverlayEnvVars(env, []string{"FOO=new", "BAR=baz"})
+	want := []string{"FOO=new", "BAR=baz"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLmResolveRuntimeDir(t *testing.T) {
+	t.Run("absolute path is returned unchanged", func(t *testing.T) {
+		got, err := lmResolveRuntimeDir("/abs/path")
+		if err != nil || got != "/abs/path" {
+			t.Fatalf("got %q, err %v", got, err)
+		}
+	})
+
+	t.Run("relative path joins the home dir", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		got, err := lmResolveRuntimeDir("bin")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(home, "bin")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("errors when the home dir cannot be resolved", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		if _, err := lmResolveRuntimeDir("bin"); err == nil {
+			t.Fatal("expected error when HOME is unset")
+		}
+	})
+}
+
+func TestLmPollPendingExits(t *testing.T) {
+	const deadPGID = 999992
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test dead-pgid path", deadPGID)
+	}
+
+	// alreadyStoppedPGID stands in for a PID already recorded in stopped: it
+	// must be left alone (never re-checked via isProcessAlive) rather than
+	// re-evaluated.
+	const alreadyStoppedPGID = 999993
+	pending := map[int]bool{deadPGID: true, alreadyStoppedPGID: true}
+	stopped := map[int]bool{alreadyStoppedPGID: true}
+
+	lmPollPendingExits(pending, stopped)
+
+	if !stopped[deadPGID] {
+		t.Errorf("expected dead pgid %d to be marked stopped", deadPGID)
+	}
+	if len(stopped) != 2 {
+		t.Errorf("expected stopped to have 2 entries, got %v", stopped)
+	}
+}
+
+func TestLmDeferCleanupIO(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	readLog, writeLog, err := newPipeForStd()
+	if err != nil {
+		t.Fatalf("newPipeForStd: %v", err)
+	}
+	readErr, writeErr, err := newPipeForStd()
+	if err != nil {
+		t.Fatalf("newPipeForStd: %v", err)
+	}
+	// Pre-close one fd so closeAll's Close() call on it fails, forcing
+	// lmDeferCleanupIO's error-join branch.
+	if closeErr := readLog.Close(); closeErr != nil {
+		t.Fatalf("pre-closing readLog: %v", closeErr)
+	}
+
+	lio := launchIO{readLog: readLog, writeLog: writeLog, readErr: readErr, writeErr: writeErr}
+
+	launchSuccess := false
+	var runErr error
+	cleanup := lmDeferCleanupIO(mgr, lio, "cleanup-svc", &launchSuccess, &runErr)
+	cleanup()
+
+	if runErr == nil {
+		t.Fatal("expected the pre-close error to be joined into runErr")
+	}
+}
+
+// TestReconcileStartHistory_LiveEntryErrors exercises reconcileStartHistory's
+// error path, reached when a Running or Starting history row's process is
+// still alive: this only happens when the caller's own live-instance check
+// (lmCheckAlreadyRunning) didn't already short-circuit — e.g. the
+// service_instances row is missing entirely while process history still has
+// a live entry.
+func TestReconcileStartHistory_LiveEntryErrors(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	bystander := exec.Command("/bin/sh", "-c", "sleep 30")
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("starting bystander: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(bystander.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = bystander.Process.Wait()
+	})
+
+	ticks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	t.Run("running", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-running", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateRunning},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live running entry")
+		}
+	})
+
+	t.Run("starting", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-starting", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateStarting},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live starting entry")
+		}
+	})
 }

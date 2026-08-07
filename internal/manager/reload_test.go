@@ -65,7 +65,7 @@ func registerServiceOnManager(t *testing.T, mgr *LocalManager, baseDir, name, co
 	if err != nil {
 		t.Fatalf("catalog entry: %v", err)
 	}
-	if err := mgr.AddServiceCatalogEntry(entry); err != nil {
+	if err := mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
 		t.Fatalf("add catalog entry: %v", err)
 	}
 }
@@ -94,13 +94,68 @@ func waitGone(pgid int) bool {
 func alwaysReady(context.Context, int, int64, int) bool { return true }
 func neverReady(context.Context, int, int64, int) bool  { return false }
 
+// TestReloadCleanupUnlaunched exercises ReloadService's launch-failure cleanup
+// helper directly: it must skip closing lio when the launch already succeeded,
+// and join whatever close errors come back into errOut when it did not.
+func TestReloadCleanupUnlaunched(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	t.Run("launched skips cleanup", func(t *testing.T) {
+		launchSuccess := true
+		var errOut error
+		mgr.reloadCleanupUnlaunched(launchIO{}, "reload-cleanup-launched", &launchSuccess, &errOut)
+		if errOut != nil {
+			t.Errorf("expected no cleanup once the launch succeeded, got %v", errOut)
+		}
+	})
+
+	t.Run("unlaunched closes and joins errors", func(t *testing.T) {
+		launchSuccess := false
+		var errOut error
+		mgr.reloadCleanupUnlaunched(launchIO{}, "reload-cleanup-unlaunched", &launchSuccess, &errOut)
+		if errOut == nil {
+			t.Fatal("expected the empty launchIO's close failures to be joined into errOut")
+		}
+	})
+}
+
+// TestReloadLaunchIncoming exercises ReloadService's validate-then-launch step
+// directly: a runtime that fails validation must bail out before ever calling
+// launchAndCapture, reporting a zero pgid/ticks and leaving launchSuccess false.
+func TestReloadLaunchIncoming(t *testing.T) {
+	mgr, name := registerLongRunningService(t, "reload-launch-incoming-badruntime")
+
+	target := reloadTarget{
+		service: types.ServiceCatalogEntry{Name: name},
+		config: &types.ServiceConfig{
+			Name:    name,
+			Command: "sleep 300",
+			Runtime: types.Runtime{Path: "/nonexistent-eos-runtime-path", Type: "node"},
+		},
+		oldPGID: 1,
+	}
+
+	launchSuccess := false
+	pgid, ticks, err := mgr.reloadLaunchIncoming(name, &target, launchIO{}, &launchSuccess)
+	if err == nil {
+		t.Fatal("expected a runtime validation error for a nonexistent runtime path")
+	}
+	if pgid != 0 || ticks != 0 {
+		t.Errorf("expected zero pgid/ticks on validation failure, got pgid=%d ticks=%d", pgid, ticks)
+	}
+	if launchSuccess {
+		t.Error("expected launchSuccess to stay false when validation fails before launching")
+	}
+}
+
 // TestReloadServiceCutover proves the happy path: a new instance starts, the
 // readiness gate passes, and only then is the old instance drained — old dead,
 // new alive, and the reported PGIDs match.
 func TestReloadServiceCutover(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-cutover")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -137,7 +192,7 @@ func TestReloadServiceCutover(t *testing.T) {
 func TestReloadServiceAbortKeepsOld(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-abort")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -166,7 +221,7 @@ func TestReloadServiceAbortKeepsOld(t *testing.T) {
 	// most-recent row would make the health monitor restart the service and kill
 	// the old instance the abort just protected. Most-recent must be the old,
 	// still-Running instance.
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -185,7 +240,7 @@ func TestReloadServiceAbortKeepsOld(t *testing.T) {
 func TestReloadServiceReadinessTimeoutBelowProbeInterval(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-fast-timeout")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -243,7 +298,7 @@ func waitForFile(path string, within time.Duration) bool {
 func TestDrainInstanceAlreadyGone(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "drain-gone")
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -255,7 +310,7 @@ func TestDrainInstanceAlreadyGone(t *testing.T) {
 	if drainErr := mgr.drainInstance(name, pgid, time.Second, 20*time.Millisecond); drainErr != nil {
 		t.Fatalf("drainInstance: %v", drainErr)
 	}
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -272,7 +327,7 @@ func TestDrainInstanceForceKillsOnGraceTimeout(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "trap-ready")
 	mgr := registerServiceWithCommand(t, name, sigtermIgnoringCommand(marker))
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -292,7 +347,7 @@ func TestDrainInstanceForceKillsOnGraceTimeout(t *testing.T) {
 	if !waitGone(pgid) {
 		t.Errorf("process group %d should have been force-killed after the grace period", pgid)
 	}
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -315,7 +370,7 @@ func TestDrainInstanceCanceledLeavesRow(t *testing.T) {
 	marker := filepath.Join(tempDir, name, "trap-ready")
 	registerServiceOnManager(t, mgr, tempDir, name, sigtermIgnoringCommand(marker))
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -367,7 +422,7 @@ func TestReloadServiceNotRunning(t *testing.T) {
 func TestReloadServiceNilProbe(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-nilprobe")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
