@@ -27,6 +27,12 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+const (
+	logFailedUpdateProcessHistory = "failed to update process history entry"
+	logFailedLogServiceOutput     = "failed to log service output"
+	logFailedLogServiceErrOutput  = "failed to log service error output"
+)
+
 // cpuSample is the previous CPU-time reading for a service, used to turn two
 // cumulative readings into an interval CPU percentage.
 type cpuSample struct {
@@ -291,7 +297,7 @@ func (hm *HealthMonitor) checkStartProcess(
 	runningMsg := hmStartupRunningMessage(serviceName, config.Port)
 	hm.logger.Info(runningMsg)
 	if logErr := hm.mgr.LogToServiceStdout(serviceName, runningMsg); logErr != nil {
-		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
+		hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", logErr)
 	}
 
 	hm.hmFinishStartupTransition(ctx, pgid, serviceName, process.PeakRssMemoryKb)
@@ -332,7 +338,7 @@ func (hm *HealthMonitor) hmFinishStartupTransition(ctx context.Context, pgid int
 		PeakRssMemoryKb: peakRssKbPtr(priorPeakRssKb, activeRssMemoryKb, sampled),
 	})
 	if err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
 }
 
@@ -343,7 +349,7 @@ func (hm *HealthMonitor) updateProcessEntry(ctx context.Context, pgid int, rssMe
 		CPUPercent:      cpuPercent,
 	})
 	if err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
 }
 
@@ -408,7 +414,7 @@ func (hm *HealthMonitor) checkCronRestart(ctx context.Context, service *types.Se
 	restartMsg := fmt.Sprintf("[%s] cron restart triggered", serviceName)
 	hm.logger.Info(restartMsg)
 	if logErr := hm.mgr.LogToServiceStdout(serviceName, restartMsg); logErr != nil {
-		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
+		hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", logErr)
 	}
 
 	if _, err := hm.mgr.RestartService(ctx, serviceName, hm.shutdownGracePeriod, 200*time.Millisecond); err != nil {
@@ -516,7 +522,7 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 		hm.logger.Warn(warnMsg)
 		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", sample.rssKb)
 		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
-			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
+			hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", logErr)
 		}
 		hm.updateProcessEntry(ctx, sample.pgid, rssPtr, peakPtr, cpuPtr, serviceName)
 	case ReasonSoftRestart:
@@ -540,7 +546,7 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 			CPUPercent:      cpuPtr,
 		})
 		if err != nil {
-			hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+			hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 		}
 	}
 }
@@ -565,7 +571,7 @@ func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *
 	restartMsg := fmt.Sprintf("[%s] auto %s restarted due to memory limits", serviceName, restart.label)
 	hm.logger.Warn(restartMsg)
 	if logErr := hm.mgr.LogToServiceStderr(serviceName, restartMsg); logErr != nil {
-		hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
+		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", logErr)
 	}
 	delete(hm.lastMemSample, serviceName)
 	// The restarted service has a new PGID; drop the old CPU baseline so the
@@ -647,7 +653,7 @@ func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *ty
 	hm.logger.Debug("scheduling restart", "service", serviceName, "attempt", restartCount+1, "backoff", backoff)
 	hm.logger.Info(errorString)
 	if err := hm.mgr.LogToServiceStderr(serviceName, errorString); err != nil {
-		hm.logger.Error("failed to log service error output", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)
 	}
 	_, err := hm.mgr.RestartService(ctx, serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
@@ -689,7 +695,7 @@ func (hm *HealthMonitor) handleRestartFailure(ctx context.Context, serviceName s
 		hm.logger.Debug("failed to log restart error to service", "service", serviceName, "error", logErr)
 	}
 	if err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, update); err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
 }
 
@@ -740,7 +746,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	hm.logger.Debug("state→Running", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStdout(serviceName, updateString)
 	if err != nil {
-		hm.logger.Error("failed to log service output", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", err)
 	}
 
 	activeRssMemoryKb, sampled := hm.measureRSS(ctx, pgid, serviceName)
@@ -757,7 +763,7 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 		PeakRssMemoryKb: peakPtr,
 	})
 	if err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
 }
 
@@ -766,7 +772,7 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 	hm.logger.Debug("state→Failed", "service", serviceName, "pgid", pgid)
 	err := hm.mgr.LogToServiceStderr(serviceName, errorString)
 	if err != nil {
-		hm.logger.Error("failed to log service error output", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)
 	}
 
 	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
@@ -776,7 +782,7 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 		Error:       new(errorString),
 	})
 	if err != nil {
-		hm.logger.Error("failed to update process history entry", "service", serviceName, "error", err)
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
 }
 

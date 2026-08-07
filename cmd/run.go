@@ -109,7 +109,7 @@ func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.Servi
 	if err != nil {
 		return err
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "waiting for dependencies", ui.TextBold.Render(strings.Join(cfg.DependsOn, ", ")))
 	return manager.RecordDependencyWait(ctx, mgr, mgr, entry.Name, cfg.DependsOn, maxWait)
 }
 
@@ -138,14 +138,14 @@ func isServiceRunning(ctx context.Context, mgr manager.ServiceManager, serviceNa
 }
 
 func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
 func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
@@ -166,26 +166,26 @@ func runParseFlags(cmd *cobra.Command) (string, bool, error) {
 }
 
 func runPrintNoServiceSpecifiedError(cmd *cobra.Command) {
-	cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "no service specified")
-	cmd.PrintErrf("  %s %s %s\n",
+	cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no service specified")
+	cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 		ui.TextMuted.Render("run:"),
 		ui.TextCommand.Render("eos run -f <path>"),
 		ui.TextMuted.Render("→ run from a service file"),
 	)
-	cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
+	cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run <name>"), ui.TextMuted.Render("→ run a registered service by name"))
 }
 
 func runPrintAmbiguousSelectorError(cmd *cobra.Command) {
-	cmd.PrintErrf("%s %s\n\n",
+	cmd.PrintErrf(fmtLabelMsg,
 		ui.LabelError.Render("error"),
 		"ambiguous input: --file and a service name cannot be used together",
 	)
-	cmd.PrintErrf("  %s %s %s\n",
+	cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 		ui.TextMuted.Render("use:"),
 		ui.TextCommand.Render("eos run -f <path>"),
 		ui.TextMuted.Render("→ to run from a file"),
 	)
-	cmd.PrintErrf("  %s %s %s\n\n",
+	cmd.PrintErrf(fmtIndentLabelTwoMsg,
 		ui.TextMuted.Render("use:"),
 		ui.TextCommand.Render("eos run <name>"),
 		ui.TextMuted.Render("→ to run by name"),
@@ -193,25 +193,25 @@ func runPrintAmbiguousSelectorError(cmd *cobra.Command) {
 }
 
 func runPrintServiceAlreadyRegisteredWarning(cmd *cobra.Command, serviceName string) {
-	cmd.PrintErrf("%s %s\n\n", ui.LabelWarning.Render("warning"), fmt.Sprintf("service %q is already registered", serviceName))
-	cmd.PrintErrf("  %s %s %s\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos update %s", serviceName)), ui.TextMuted.Render("to update"))
-	cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", serviceName)), ui.TextMuted.Render("to remove conflicting service"))
+	cmd.PrintErrf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("service %q is already registered", serviceName))
+	cmd.PrintErrf(fmtIndentLabelTwoMsgLn, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos update %s", serviceName)), ui.TextMuted.Render("to update"))
+	cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", serviceName)), ui.TextMuted.Render("to remove conflicting service"))
 }
 
 func runResolveServiceNameFromFile(cmd *cobra.Command, mgr manager.ServiceManager, serviceFile string) (string, error) {
 	parsedService, parseError := parseServiceFile(serviceFile)
 	if parseError != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("parsing service file: %v", parseError))
 		return "", helpers.ErrCommandFailed
 	}
 
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(parsedService.Config.Name))
 
 	printSelfDetachWarnings(cmd, parsedService.Config.Command)
 
 	registerResult, registerErr := registerServiceIfNeeded(cmd.Context(), mgr, parsedService.YamlFile, parsedService.Config.Name)
 	if registerErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
 		return "", helpers.ErrCommandFailed
 	}
 
@@ -222,16 +222,16 @@ func runResolveServiceNameFromFile(cmd *cobra.Command, mgr manager.ServiceManage
 }
 
 func runResolveServiceNameFromArgs(cmd *cobra.Command, mgr manager.ServiceManager, serviceNameArg string) (string, error) {
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
 
 	registeredServiceName, registeredCheckErr := isServiceRegistered(cmd.Context(), mgr, serviceNameArg)
 	if errors.Is(registeredCheckErr, ErrServiceNonExistent) {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
-		cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run -f <path>"))
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
+		cmd.PrintErrf(fmtIndentLabelMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run -f <path>"))
 		return "", helpers.ErrCommandFailed
 	}
 	if registeredCheckErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service name: %v", registeredCheckErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("handling service name: %v", registeredCheckErr))
 		return "", helpers.ErrCommandFailed
 	}
 	return registeredServiceName, nil
@@ -244,11 +244,11 @@ func runHandleOnceFlag(cmd *cobra.Command, mgr manager.ServiceManager, once bool
 
 	running, runningCheckErr := isServiceRunning(cmd.Context(), mgr, serviceName)
 	if runningCheckErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
 		return false, helpers.ErrCommandFailed
 	}
 	if running {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "service is already running")
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "service is already running")
 		return true, nil
 	}
 	return false, nil
@@ -287,7 +287,7 @@ func runResolveServiceSelector(cmd *cobra.Command, mgr manager.ServiceManager, a
 func runGetRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
 	registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 		return types.ServiceCatalogEntry{}, helpers.ErrCommandFailed
 	}
 	return registeredService, nil
@@ -295,7 +295,7 @@ func runGetRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, ser
 
 func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, entry *types.ServiceCatalogEntry) error {
 	if depErr := gateDependencies(cmd.Context(), cmd, mgr, entry); depErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), depErr.Error())
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), depErr.Error())
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -304,7 +304,7 @@ func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, 
 func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) error {
 	serviceRunResult, err := startOrRestartService(cmd.Context(), mgr, gracePeriod, registeredService)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	if serviceRunResult.Restarted {
@@ -340,7 +340,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 
 			serviceFile, once, err := runParseFlags(cmd)
 			if err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), err.Error())
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), err.Error())
 				return helpers.ErrCommandFailed
 			}
 
@@ -353,7 +353,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			// stop recorded by a prior "eos stop" — bootPersistedServices reads
 			// this flag on the next daemon start/reboot (issue #172).
 			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
-				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
 				return helpers.ErrCommandFailed
 			}
 

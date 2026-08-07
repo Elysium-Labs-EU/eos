@@ -58,7 +58,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 func infoFetchRegisteredService(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
 	registeredService, err := mgr.GetServiceCatalogEntry(ctx, serviceName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 		return types.ServiceCatalogEntry{}, helpers.ErrCommandFailed
 	}
 	return registeredService, nil
@@ -67,7 +67,7 @@ func infoFetchRegisteredService(cmd *cobra.Command, ctx context.Context, mgr man
 func infoLoadConfig(cmd *cobra.Command, configPath string) *types.ServiceConfig {
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("loading service config: %v", err))
 	}
 	return config
 }
@@ -75,7 +75,7 @@ func infoLoadConfig(cmd *cobra.Command, configPath string) *types.ServiceConfig 
 func infoFetchServiceInstance(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) *types.ServiceInstance {
 	serviceInstance, err := mgr.GetServiceInstance(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
 	}
 	// serviceInstance may be nil if service was never started
 	return serviceInstance
@@ -84,7 +84,7 @@ func infoFetchServiceInstance(cmd *cobra.Command, ctx context.Context, mgr manag
 func infoFetchProcessEntry(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) *types.ProcessHistory {
 	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 	}
 	return processEntry
 }
@@ -96,7 +96,7 @@ func infoFetchLogPath(cmd *cobra.Command, ctx context.Context, mgr manager.Servi
 		if errorLog {
 			label = "getting error log path"
 		}
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("%s: %v", label, err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("%s: %v", label, err))
 	}
 	return logPath
 }

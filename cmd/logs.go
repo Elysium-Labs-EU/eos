@@ -88,12 +88,12 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 func logsCmdCheckRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
 	exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	if !exists {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-		cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -102,12 +102,12 @@ func logsCmdCheckRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serv
 func logsCmdCheckStarted(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
 	processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	if processHistoryEntry == nil {
-		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has never been started")
-		cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
+		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has never been started")
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -115,7 +115,7 @@ func logsCmdCheckStarted(cmd *cobra.Command, mgr manager.ServiceManager, service
 
 func logsCmdValidateLines(cmd *cobra.Command, lines int) error {
 	if lines < 0 || lines > 10000 {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), "line count must be between 0 and 10000")
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "line count must be between 0 and 10000")
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -123,21 +123,25 @@ func logsCmdValidateLines(cmd *cobra.Command, lines int) error {
 
 func logsCmdPrintHeader(cmd *cobra.Command, serviceName string, follow bool) {
 	if follow {
-		cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
+		cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "streaming logs for", ui.TextBold.Render(serviceName))
 	} else {
-		cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "showing logs for", ui.TextBold.Render(serviceName))
+		cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "showing logs for", ui.TextBold.Render(serviceName))
 	}
 }
 
 func logsCmdRunCombined(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, follow bool, lines int) error {
 	outPath, outErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, false)
 	if outErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
 		return helpers.ErrCommandFailed
 	}
 	errPath, errPathErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, true)
 	if errPathErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
+		return helpers.ErrCommandFailed
+	}
+	if outPath == nil || errPath == nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("log file path unavailable for %q", serviceName))
 		return helpers.ErrCommandFailed
 	}
 	if follow {
@@ -151,7 +155,11 @@ func logsCmdRunCombined(cmd *cobra.Command, mgr manager.ServiceManager, serviceN
 func logsCmdRunSingleStream(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, errorOnly, follow bool, lines int) error {
 	logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, errorOnly)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	if logPath == nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("log file path unavailable for %q", serviceName))
 		return helpers.ErrCommandFailed
 	}
 
@@ -163,7 +171,7 @@ func logsCmdRunSingleStream(cmd *cobra.Command, mgr manager.ServiceManager, serv
 
 	tailPath, err := helpers.ResolveExecutable("tail")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("resolving tail: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving tail: %v", err))
 		return helpers.ErrCommandFailed
 	}
 	// #nosec G204 - args are validated above, tailPath is resolved via LookPath
@@ -172,16 +180,16 @@ func logsCmdRunSingleStream(cmd *cobra.Command, mgr manager.ServiceManager, serv
 
 	stdout, pipeErr := tailLogCommand.StdoutPipe()
 	if pipeErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("creating log pipe: %v", pipeErr))
 		return helpers.ErrCommandFailed
 	}
 	if startErr := tailLogCommand.Start(); startErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", startErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", startErr))
 		return helpers.ErrCommandFailed
 	}
 	renderServiceLogs(cmd.OutOrStdout(), stdout, "")
 	if waitErr := tailLogCommand.Wait(); waitErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", waitErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading log file: %v", waitErr))
 	}
 	return nil
 }
@@ -283,7 +291,7 @@ func showCombinedLogs(out, errW io.Writer, outPath, errPath string, lines int) {
 	outLines, outErr := tailLogLines(outPath, lines)
 	errLines, errErr := tailLogLines(errPath, lines)
 	if outErr != nil && errErr != nil {
-		_, _ = fmt.Fprintf(errW, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("reading log files: %v, %v", outErr, errErr))
+		_, _ = fmt.Fprintf(errW, fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reading log files: %v, %v", outErr, errErr))
 		return
 	}
 
