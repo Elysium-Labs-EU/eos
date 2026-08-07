@@ -1,0 +1,22 @@
+title = "eos gitleaks config"
+
+# Extend gitleaks' default ruleset rather than replacing it.
+[extend]
+useDefault = true
+
+# Narrowly-scoped global allowlist: these two regexes match only the exact,
+# deliberately-fake credential strings used as test fixtures in
+# cmd/diagnose_test.go's TestDiagnoseScrubLine, which proves the `eos
+# diagnose` command's redactor scrubs realistic secret shapes (a generic
+# api_key assignment, an AWS-access-key-shaped token) before they're ever
+# written into a diagnostic bundle. Neither string is a real credential.
+#
+# Deliberately not a path-based exemption for the whole test file: that would
+# risk silently masking a real secret accidentally added to it later. These
+# regexes match only the two known-fake literal values.
+[allowlist]
+description = "Fake credential fixtures in TestDiagnoseScrubLine (cmd/diagnose_test.go) — not real secrets"
+regexes = [
+  '''sk-abc123def456''',
+  '''AKIAABCDEFGHIJKLMNOP''',
+]

@@ -151,7 +151,8 @@ func runDiagnose(cmd *cobra.Command, opts diagnoseOptions) error {
 		return helpers.ErrCommandFailed
 	}
 
-	mgr, cleanup, err := newLocalManagerWithCleanup(cmd.Context(), baseDir, false, sysCfg.Sinks)
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	mgr, cleanup, err := newLocalManagerWithCleanup(cmd.Context(), baseDir, verbose, sysCfg.Sinks)
 	if err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("opening local state: %v", err))
 		return helpers.ErrCommandFailed
@@ -373,10 +374,7 @@ func diagnoseCollectDaemonLog(baseDir string, daemon *config.DaemonConfig, opts 
 	filtered := diagnoseFilterLogLinesSince(lines, since)
 	filtered = diagnoseCapLines(filtered, opts.Lines)
 
-	scrubbed := make([]string, len(filtered))
-	for i, line := range filtered {
-		scrubbed[i] = diagnoseScrubLine(line)
-	}
+	scrubbed := diagnoseScrubLines(filtered)
 
 	content := ""
 	if len(scrubbed) > 0 {
@@ -413,10 +411,7 @@ func diagnoseCollectServiceLogs(ctx context.Context, mgr manager.ServiceManager,
 				steps = append(steps, diagnoseStepResult{Name: stepName, OK: false, Error: err.Error()})
 				continue
 			}
-			scrubbed := make([]string, len(tailed))
-			for j, line := range tailed {
-				scrubbed[j] = diagnoseScrubLine(line)
-			}
+			scrubbed := diagnoseScrubLines(tailed)
 			content := ""
 			if len(scrubbed) > 0 {
 				content = strings.Join(scrubbed, "\n") + "\n"
@@ -533,20 +528,61 @@ var diagnosePathPattern = regexp.MustCompile(`(?:/home/[^\s"']+|/Users/[^\s"']+|
 // design exists in the first place.
 var diagnoseSecretPattern = regexp.MustCompile(`(?i)(authorization|api[_-]?key|secret|token|password|passwd)("?\s*[:=]\s*"?)([^\s"',}]+)`)
 
+// diagnosePrivateKeyPattern matches a PEM private key block only when the
+// BEGIN and END markers appear in the same string — sufficient for a single
+// multi-line value (e.g. a status field that happens to embed newlines), but
+// not for scrubbing a log file's lines one at a time: a real PEM key logged
+// to a service's stdout is written one line per line, so BEGIN and END never
+// appear together in any single line diagnoseScrubLine sees. Line-oriented
+// callers must use diagnoseScrubLines instead, which tracks the open/close
+// state across lines.
 var diagnosePrivateKeyPattern = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
+
+var diagnosePrivateKeyBeginPattern = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+
+var diagnosePrivateKeyEndPattern = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
 
 var diagnoseAWSKeyPattern = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
 
-// diagnoseScrubLine redacts absolute home-directory paths and common
-// secret-shaped tokens from a single line of free-text content. Applied to
-// every log line and every free-text status field before it's written to the
-// bundle.
+// diagnoseScrubLine redacts absolute home-directory paths, common
+// secret-shaped tokens, and a same-line PEM private key block from a single
+// line of free-text content. Applied to every free-text status field (e.g. a
+// service's last error) before it's written to the bundle. Log files must go
+// through diagnoseScrubLines instead — see diagnosePrivateKeyPattern's doc
+// comment for why a per-line call alone can't catch a real, multi-line key.
 func diagnoseScrubLine(line string) string {
 	line = diagnosePathPattern.ReplaceAllString(line, "<redacted-path>")
 	line = diagnoseSecretPattern.ReplaceAllString(line, "$1$2[REDACTED]")
 	line = diagnosePrivateKeyPattern.ReplaceAllString(line, "[REDACTED PRIVATE KEY]")
 	line = diagnoseAWSKeyPattern.ReplaceAllString(line, "[REDACTED]")
 	return line
+}
+
+// diagnoseScrubLines scrubs a whole log file's lines, threading a
+// private-key state across them: once a BEGIN marker is seen, every
+// subsequent line is redacted outright (its content is opaque base64, not
+// something the other patterns need to inspect) until the matching END
+// marker closes the block. This is what actually protects a real PEM key a
+// service logged to its own stdout, one line at a time — diagnoseScrubLine's
+// same-line BEGIN...END pattern never matches across separate lines.
+func diagnoseScrubLines(lines []string) []string {
+	scrubbed := make([]string, len(lines))
+	inPrivateKey := false
+	for i, line := range lines {
+		switch {
+		case inPrivateKey:
+			scrubbed[i] = "[REDACTED PRIVATE KEY]"
+			if diagnosePrivateKeyEndPattern.MatchString(line) {
+				inPrivateKey = false
+			}
+		case diagnosePrivateKeyBeginPattern.MatchString(line):
+			scrubbed[i] = "[REDACTED PRIVATE KEY]"
+			inPrivateKey = !diagnosePrivateKeyEndPattern.MatchString(line)
+		default:
+			scrubbed[i] = diagnoseScrubLine(line)
+		}
+	}
+	return scrubbed
 }
 
 // diagnoseWriteBundle assembles manifest.json plus every collected file into

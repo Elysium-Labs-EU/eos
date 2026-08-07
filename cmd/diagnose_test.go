@@ -556,6 +556,110 @@ func TestDiagnoseScrubLine_PreservesUnrelatedContent(t *testing.T) {
 	}
 }
 
+// TestDiagnoseScrubLines_MultiLinePrivateKey is the regression test for a
+// real PEM private key logged one line per line, as a service actually would
+// write it to its own stdout — diagnoseScrubLine alone can't catch this,
+// since its BEGIN...END pattern only matches within a single string, and a
+// real log file hands each line to the scrubber separately.
+func TestDiagnoseScrubLines_MultiLinePrivateKey(t *testing.T) {
+	lines := []string{
+		"service starting up",
+		"-----BEGIN RSA PRIVATE KEY-----",
+		"MIIBOgIBAAJBAK8z9x8example1",
+		"MIIBOgIBAAJBAK8z9x8example2",
+		"-----END RSA PRIVATE KEY-----",
+		"service ready on port 3000",
+	}
+
+	got := diagnoseScrubLines(lines)
+	if len(got) != len(lines) {
+		t.Fatalf("expected %d lines out, got %d: %v", len(lines), len(got), got)
+	}
+
+	joined := strings.Join(got, "\n")
+	for _, forbidden := range []string{"MIIBOgIBAAJBAK8z9x8example1", "MIIBOgIBAAJBAK8z9x8example2"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("expected private key body line %q to be redacted, got: %v", forbidden, got)
+		}
+	}
+	if got[0] != "service starting up" || got[len(got)-1] != "service ready on port 3000" {
+		t.Errorf("expected lines outside the key block to survive unchanged, got: %v", got)
+	}
+	for i := 1; i <= 4; i++ {
+		if got[i] != "[REDACTED PRIVATE KEY]" {
+			t.Errorf("expected line %d (inside the key block) to be redacted, got: %q", i, got[i])
+		}
+	}
+}
+
+// TestDiagnoseScrubLines_UnterminatedPrivateKeyStaysRedacted proves a key
+// block with no END marker in the tailed window (e.g. --lines truncated it)
+// still redacts every line from BEGIN onward, rather than falling back to
+// leaking the rest of the file once the state never closes.
+func TestDiagnoseScrubLines_UnterminatedPrivateKeyStaysRedacted(t *testing.T) {
+	lines := []string{
+		"-----BEGIN RSA PRIVATE KEY-----",
+		"MIIBOgIBAAJBAK8z9x8example1",
+		"MIIBOgIBAAJBAK8z9x8example2",
+	}
+	got := diagnoseScrubLines(lines)
+	for i, line := range got {
+		if line != "[REDACTED PRIVATE KEY]" {
+			t.Errorf("expected line %d to stay redacted with no END marker, got: %q", i, line)
+		}
+	}
+}
+
+// TestDiagnoseScrubLines_AppliesLineScrubbingOutsideKeyBlocks proves lines
+// outside any private-key block still go through the normal path/secret
+// redaction diagnoseScrubLine applies.
+func TestDiagnoseScrubLines_AppliesLineScrubbingOutsideKeyBlocks(t *testing.T) {
+	got := diagnoseScrubLines([]string{"loaded config from /home/alice/.eos/config.yaml"})
+	if strings.Contains(got[0], "/home/alice") {
+		t.Errorf("expected home path to be redacted, got: %q", got[0])
+	}
+}
+
+// TestDiagnoseCmd_MultiLinePrivateKeyRedactedInRealServiceLog exercises the
+// actual per-line collection path (diagnoseCollectServiceLogs, via the real
+// "diagnose" command), not just the pure scrubber directly — the gap the
+// prior single-call PEM test left uncovered.
+func TestDiagnoseCmd_MultiLinePrivateKeyRedactedInRealServiceLog(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupDiagnoseCmd(t)
+	registerPlainService(t, cmd, tempDir, "svc-a", errBuf)
+
+	logPath, _, err := diagnoseTestManager(t, tempDir).NewServiceLogFiles(t.Context(), "svc-a")
+	if err != nil {
+		t.Fatalf("creating service log files: %v", err)
+	}
+	pemLog := "starting up\n" +
+		"-----BEGIN RSA PRIVATE KEY-----\n" +
+		"MIIBOgIBAAJBAK8z9x8realkeybodyline1\n" +
+		"MIIBOgIBAAJBAK8z9x8realkeybodyline2\n" +
+		"-----END RSA PRIVATE KEY-----\n" +
+		"ready\n"
+	if err := os.WriteFile(logPath, []byte(pemLog), 0644); err != nil {
+		t.Fatalf("writing stdout log: %v", err)
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	cmd.SetArgs([]string{"diagnose", "--output", outputPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("diagnose should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	}
+
+	files := readDiagnoseBundle(t, outputPath)
+	got := string(files["logs/svc-a-out.log"])
+	for _, forbidden := range []string{"MIIBOgIBAAJBAK8z9x8realkeybodyline1", "MIIBOgIBAAJBAK8z9x8realkeybodyline2"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("expected multi-line PEM key body to be redacted in the bundled log, got: %s", got)
+		}
+	}
+	if !strings.Contains(got, "starting up") || !strings.Contains(got, "ready") {
+		t.Errorf("expected lines outside the key block to survive, got: %s", got)
+	}
+}
+
 func TestDiagnoseHostID_StableAndNonEmpty(t *testing.T) {
 	first := diagnoseHostID()
 	second := diagnoseHostID()
