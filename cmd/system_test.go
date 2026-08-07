@@ -246,8 +246,11 @@ func TestStartupCmdFlagYesSkipsPrompts(t *testing.T) {
 }
 
 // TestStartupCmdUserUnitFullPath exercises the userUnit=true branch: the user
-// bus prep call, the "user unit enabled" + linger hint messages, and the
-// --user systemctl args, none of which the system-unit tests above touch.
+// bus prep call, the "user unit enabled" message, the linger explanation +
+// prompt (accepted here), and the --user systemctl args, none of which the
+// system-unit tests above touch. recordingRunCmd answers every run() call
+// with "ok", so the loginctl show-user check parses as "not enabled" and the
+// enable-linger prompt fires.
 func TestStartupCmdUserUnitFullPath(t *testing.T) {
 	tempDir := t.TempDir()
 	// A dir owned by this process's own uid satisfies isAccessibleDir, so
@@ -255,8 +258,13 @@ func TestStartupCmdUserUnitFullPath(t *testing.T) {
 	// enable linger.
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	c, outBuf, _ := makeTestCmd(t)
-	// confirm unit file creation, confirm restart
-	setStdin(c, "y\ny\n")
+	// confirm unit file creation, confirm enable-linger, confirm restart
+	setStdin(c, "y\ny\ny\n")
+
+	currentUser, userErr := userutil.EffectiveUser()
+	if userErr != nil {
+		t.Fatalf("resolving current user: %v", userErr)
+	}
 
 	var calls []string
 	err := startupCmd(t.Context(), c, systemdStartupParams{
@@ -274,16 +282,235 @@ func TestStartupCmdUserUnitFullPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := []string{"systemctl --user daemon-reload", "systemctl --user enable eos", "systemctl --user start eos"}
+	want := []string{
+		"systemctl --user daemon-reload",
+		"systemctl --user enable eos",
+		"loginctl show-user " + currentUser.Username + " --property=Linger",
+		"loginctl enable-linger " + currentUser.Username,
+		"systemctl --user start eos",
+	}
 	if !reflect.DeepEqual(calls, want) {
-		t.Errorf("expected systemctl calls %v, got %v", want, calls)
+		t.Errorf("expected systemctl/loginctl calls %v, got %v", want, calls)
 	}
 
 	if !strings.Contains(outBuf.String(), "user unit enabled, eos will start on login") {
 		t.Errorf("expected 'user unit enabled' message, got: %s", outBuf.String())
 	}
+	if !strings.Contains(outBuf.String(), "linger enabled") {
+		t.Errorf("expected linger-enabled confirmation, got: %s", outBuf.String())
+	}
+}
+
+// TestStartupCmdUserUnit_LingerAlreadyEnabled verifies that when loginctl
+// reports linger already on, startupCmd skips the explanation/prompt
+// entirely instead of nagging on every run.
+func TestStartupCmdUserUnit_LingerAlreadyEnabled(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	c, outBuf, _ := makeTestCmd(t)
+	// confirm unit file creation, confirm restart (no linger prompt expected)
+	setStdin(c, "y\ny\n")
+
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := strings.Join(append([]string{name}, args...), " ")
+		calls = append(calls, call)
+		if name == "loginctl" && len(args) > 0 && args[0] == "show-user" {
+			return []byte("Linger=yes"), nil
+		}
+		return []byte("ok"), nil
+	}
+
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    true,
+	}, fakeDetectRuntime("systemd"), run)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, call := range calls {
+		if strings.HasPrefix(call, "loginctl enable-linger") {
+			t.Errorf("expected no enable-linger call when linger already enabled, got calls: %v", calls)
+		}
+	}
+	if !strings.Contains(outBuf.String(), "linger already enabled") {
+		t.Errorf("expected already-enabled message, got: %s", outBuf.String())
+	}
+}
+
+// TestStartupCmdUserUnit_DeclineLinger verifies declining the linger prompt
+// doesn't fail the command and prints the manual loginctl command to run later.
+func TestStartupCmdUserUnit_DeclineLinger(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	c, outBuf, _ := makeTestCmd(t)
+	// confirm unit file creation, decline linger, confirm restart
+	setStdin(c, "y\nn\ny\n")
+
+	var calls []string
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    true,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, call := range calls {
+		if strings.HasPrefix(call, "loginctl enable-linger") {
+			t.Errorf("expected no enable-linger call after decline, got calls: %v", calls)
+		}
+	}
+	if !strings.Contains(outBuf.String(), "linger not enabled") {
+		t.Errorf("expected decline message, got: %s", outBuf.String())
+	}
 	if !strings.Contains(outBuf.String(), "loginctl enable-linger") {
-		t.Errorf("expected linger hint, got: %s", outBuf.String())
+		t.Errorf("expected manual loginctl hint after decline, got: %s", outBuf.String())
+	}
+}
+
+// TestStartupCmdUserUnit_EnableLingerFails verifies a failing `loginctl
+// enable-linger` call is reported but treated as non-fatal — startup still
+// proceeds to the restart prompt.
+func TestStartupCmdUserUnit_EnableLingerFails(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	c, outBuf, _ := makeTestCmd(t)
+	// confirm unit file creation, confirm linger, confirm restart
+	setStdin(c, "y\ny\ny\n")
+
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := strings.Join(append([]string{name}, args...), " ")
+		calls = append(calls, call)
+		if name == "loginctl" && len(args) > 0 && args[0] == "enable-linger" {
+			return []byte("Interactive authentication required."), errors.New("exit status 1")
+		}
+		return []byte("ok"), nil
+	}
+
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    true,
+	}, fakeDetectRuntime("systemd"), run)
+
+	if err != nil {
+		t.Fatalf("expected enable-linger failure to be non-fatal, got error: %v", err)
+	}
+
+	found := false
+	for _, call := range calls {
+		if call == "systemctl --user start eos" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected startup to continue to restart despite enable-linger failure, got calls: %v", calls)
+	}
+	if !strings.Contains(outBuf.String(), "enable-linger") {
+		t.Errorf("expected enable-linger error message, got: %s", outBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "run manually") {
+		t.Errorf("expected manual fallback hint, got: %s", outBuf.String())
+	}
+}
+
+// TestStartupCmdUserUnit_FlagYesAutoEnablesLinger verifies --yes both skips
+// the unit-creation/restart prompts (already covered for system units by
+// TestStartupCmdFlagYesSkipsPrompts) and auto-enables linger for a user unit
+// without requiring stdin.
+func TestStartupCmdUserUnit_FlagYesAutoEnablesLinger(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	c, outBuf, _ := makeTestCmd(t)
+
+	var calls []string
+	err := startupCmd(t.Context(), c, systemdStartupParams{
+		InstallDir: filepath.Join(tempDir, "eos"),
+		DaemonConfig: &config.StandaloneDaemonConfig{
+			PIDFile:    filepath.Join(tempDir, "eos.pid"),
+			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		},
+		SystemdDir:  tempDir + "/",
+		SystemdFile: "eos.service",
+		UserUnit:    true,
+		FlagYes:     true,
+	}, fakeDetectRuntime("systemd"), recordingRunCmd(t, &calls))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, call := range calls {
+		if strings.HasPrefix(call, "loginctl enable-linger") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --yes to auto-enable linger without a prompt, got calls: %v", calls)
+	}
+	if !strings.Contains(outBuf.String(), "linger enabled") {
+		t.Errorf("expected linger-enabled confirmation, got: %s", outBuf.String())
+	}
+}
+
+func TestLingerEnabled(t *testing.T) {
+	tests := []struct {
+		run  runCmdFn
+		name string
+		want bool
+	}{
+		{
+			name: "enabled",
+			run: func(context.Context, string, ...string) ([]byte, error) {
+				return []byte("Linger=yes"), nil
+			},
+			want: true,
+		},
+		{
+			name: "disabled",
+			run: func(context.Context, string, ...string) ([]byte, error) {
+				return []byte("Linger=no"), nil
+			},
+			want: false,
+		},
+		{
+			name: "run error treated as not enabled",
+			run: func(context.Context, string, ...string) ([]byte, error) {
+				return nil, errors.New("loginctl: command not found")
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lingerEnabled(t.Context(), "testuser", tt.run); got != tt.want {
+				t.Errorf("lingerEnabled() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
