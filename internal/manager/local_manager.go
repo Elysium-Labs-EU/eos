@@ -534,16 +534,10 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks
 	defer stop()
 	logger := logutil.NewJSONLogger(w, false)
 	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
+	scanErr := lmScanAndForward(scanner, "stdout", sinks, func(line string) {
 		logger.Info(line, "service", name, "source", "stdout")
-		for _, s := range sinks {
-			if sinkWantsStream(s, "stdout") {
-				s.Send(line, "stdout")
-			}
-		}
-	}
-	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
+	})
+	if scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning log pipe", "service", name, "error", scanErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
@@ -552,6 +546,22 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks
 	if err := m.releaseServiceLogWriter(name, false); err != nil {
 		m.logger.Error("releasing log file", "service", name, "error", err)
 	}
+}
+
+// lmScanAndForward reads scanner line by line, passing each line to logLine
+// and forwarding it to any sink in sinks subscribed to stream. Returns the
+// scanner's terminal error, if any.
+func lmScanAndForward(scanner *bufio.Scanner, stream string, sinks []*sinkProcess, logLine func(line string)) error {
+	for scanner.Scan() {
+		line := scanner.Text()
+		logLine(line)
+		for _, s := range sinks {
+			if sinkWantsStream(s, stream) {
+				s.Send(line, stream)
+			}
+		}
+	}
+	return scanner.Err()
 }
 
 // pipeToErrorLogFile forwards r (the service's stderr) into errFileLogger
@@ -566,16 +576,10 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger
 	stop := m.closePipeOnCancel(r)
 	defer stop()
 	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
+	scanErr := lmScanAndForward(scanner, "stderr", sinks, func(line string) {
 		errFileLogger.Info(line, "service", name, "source", "stderr")
-		for _, s := range sinks {
-			if sinkWantsStream(s, "stderr") {
-				s.Send(line, "stderr")
-			}
-		}
-	}
-	if scanErr := scanner.Err(); scanErr != nil && m.ctx.Err() == nil {
+	})
+	if scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning error log pipe", "service", name, "error", scanErr)
 	}
 	if err := r.Close(); err != nil && m.ctx.Err() == nil {
@@ -768,33 +772,45 @@ func (m *LocalManager) captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks 
 // Starting->Failed) so status displays don't report phantom processes.
 func (m *LocalManager) reconcileStartHistory(name string, processHistory []types.ProcessHistory) error {
 	for i := range processHistory {
-		p := &processHistory[i]
-		switch p.State {
-		case types.ProcessStateRunning:
-			if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
-				return fmt.Errorf("service already running with PGID %d", p.PGID)
-			}
-			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, p.PGID, database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateStopped),
-				StoppedAt: new(time.Now()),
-			}); updateErr != nil {
-				m.logger.Error("failed to mark stale running entry as stopped", "service", name, "pgid", p.PGID, "error", updateErr)
-			}
-		case types.ProcessStateStarting:
-			if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
-				return fmt.Errorf("service already starting with PGID %d", p.PGID)
-			}
-			if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, p.PGID, database.ProcessHistoryUpdate{
-				State:     new(types.ProcessStateFailed),
-				StoppedAt: new(time.Now()),
-			}); updateErr != nil {
-				m.logger.Error("failed to mark stale starting entry as failed", "service", name, "pgid", p.PGID, "error", updateErr)
-			}
-		case types.ProcessStateStopped, types.ProcessStateFailed, types.ProcessStateUnknown:
-			// Already terminal; nothing to reconcile.
+		if err := m.lmReconcileHistoryEntry(name, &processHistory[i]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// lmReconcileHistoryEntry reconciles a single process history row for a
+// pending start: it errors if p is Running or Starting with a still-live
+// process, and otherwise self-heals a stale row (Running->Stopped,
+// Starting->Failed) so status displays don't report phantom processes.
+func (m *LocalManager) lmReconcileHistoryEntry(name string, p *types.ProcessHistory) error {
+	switch p.State {
+	case types.ProcessStateRunning:
+		if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
+			return fmt.Errorf("service already running with PGID %d", p.PGID)
+		}
+		m.lmMarkStaleHistoryEntry(name, p.PGID, types.ProcessStateStopped, "failed to mark stale running entry as stopped")
+	case types.ProcessStateStarting:
+		if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
+			return fmt.Errorf("service already starting with PGID %d", p.PGID)
+		}
+		m.lmMarkStaleHistoryEntry(name, p.PGID, types.ProcessStateFailed, "failed to mark stale starting entry as failed")
+	case types.ProcessStateStopped, types.ProcessStateFailed, types.ProcessStateUnknown:
+		// Already terminal; nothing to reconcile.
+	}
+	return nil
+}
+
+// lmMarkStaleHistoryEntry updates a stale history row to newState, logging
+// logMsg on failure rather than propagating the error: reconciliation is
+// best-effort bookkeeping, not something that should block a start.
+func (m *LocalManager) lmMarkStaleHistoryEntry(name string, pgid int, newState types.ProcessState, logMsg string) {
+	if updateErr := m.db.UpdateProcessHistoryEntry(m.ctx, pgid, database.ProcessHistoryUpdate{
+		State:     new(newState),
+		StoppedAt: new(time.Now()),
+	}); updateErr != nil {
+		m.logger.Error(logMsg, "service", name, "pgid", pgid, "error", updateErr)
+	}
 }
 
 // loadServiceForLaunch resolves the catalog entry, parsed service config, and
@@ -881,6 +897,39 @@ func (m *LocalManager) recordRestartedInstance(service *types.ServiceCatalogEntr
 	return pgid, nil
 }
 
+// lmCheckAlreadyRunning returns ErrAlreadyRunning if serviceInstance is on
+// record and processHistory shows a still-live process for it — intentionally
+// omitting the live PGID, since changing StartService's (pgid, err) contract
+// to carry one alongside an error would ripple to every caller, and callers
+// that need it already have GetServiceInstance. A recorded instance with
+// nothing alive in its history is stale (e.g. the daemon was killed
+// out-of-band without a clean `eos stop`, which never got the chance to
+// remove this row) and is not an error: the caller self-heals by proceeding
+// with the start.
+func lmCheckAlreadyRunning(serviceInstance *types.ServiceInstance, processHistory []types.ProcessHistory) error {
+	if serviceInstance == nil {
+		return nil
+	}
+	if livePGID := livePGIDInHistory(processHistory); livePGID > 0 {
+		return ErrAlreadyRunning
+	}
+	return nil
+}
+
+// lmDeferCleanupIO returns a deferred cleanup function that closes lio's fds
+// and releases its log writers unless *launchSuccess is true by the time it
+// runs (i.e. cmd.Start failed or a step before it did), joining any close
+// error into *errp.
+func lmDeferCleanupIO(m *LocalManager, lio launchIO, serviceName string, launchSuccess *bool, errp *error) func() {
+	return func() {
+		if !*launchSuccess {
+			if closeErr := lio.closeAll(m, serviceName); closeErr != nil {
+				*errp = errors.Join(*errp, closeErr)
+			}
+		}
+	}
+}
+
 func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int, err error) {
 	unlock := m.lockService(name)
 	defer unlock()
@@ -906,19 +955,8 @@ func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int,
 		return 0, fmt.Errorf("get process history for %s: %w", name, err)
 	}
 
-	if serviceInstance != nil {
-		if livePGID := livePGIDInHistory(processHistory); livePGID > 0 {
-			// ErrAlreadyRunning intentionally omits the live PGID: changing
-			// StartService's (pgid, err) contract to carry a PGID alongside
-			// an error would ripple to every caller. Callers that need the
-			// running PGID already have GetServiceInstance for that.
-			return 0, ErrAlreadyRunning
-		}
-		// service_instances row is stale: nothing in process history is
-		// actually alive (e.g. the daemon was killed out-of-band without a
-		// clean `eos stop`, which never got the chance to remove this row).
-		// Self-heal by proceeding — RegisterServiceInstance below replaces
-		// this row on a successful start.
+	if runningErr := lmCheckAlreadyRunning(serviceInstance, processHistory); runningErr != nil {
+		return 0, runningErr
 	}
 
 	if reconcileErr := m.reconcileStartHistory(name, processHistory); reconcileErr != nil {
@@ -931,13 +969,7 @@ func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int,
 	}
 
 	launchSuccess := false
-	defer func() {
-		if !launchSuccess {
-			if closeErr := lio.closeAll(m, service.Name); closeErr != nil {
-				err = errors.Join(err, closeErr)
-			}
-		}
-	}()
+	defer lmDeferCleanupIO(m, lio, service.Name, &launchSuccess, &err)()
 
 	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
@@ -956,6 +988,21 @@ func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int,
 	m.logger.Debug("state=Starting recorded", "service", name, "pgid", pgid)
 
 	return pgid, nil
+}
+
+// lmStopForRestart stops name's running process(es) as part of a restart. It
+// calls the unlocked stop core directly: the caller already holds the
+// per-service lock, and the mutex is not reentrant, so StopService (which
+// re-acquires it) would deadlock.
+func (m *LocalManager) lmStopForRestart(name string, gracePeriod, tickerPeriod time.Duration) error {
+	stopResult, err := m.stopServiceLocked(name, gracePeriod, tickerPeriod)
+	if err != nil {
+		return fmt.Errorf("stopping process(es) for %s: %w", name, err)
+	}
+	if len(stopResult.Errored) > 0 {
+		return fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
+	}
+	return nil
 }
 
 func (m *LocalManager) RestartService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
@@ -987,27 +1034,14 @@ func (m *LocalManager) RestartService(ctx context.Context, name string, gracePer
 	}
 
 	launchSuccess := false
-	defer func() {
-		if !launchSuccess {
-			if closeErr := lio.closeAll(m, service.Name); closeErr != nil {
-				err = errors.Join(err, closeErr)
-			}
-		}
-	}()
+	defer lmDeferCleanupIO(m, lio, service.Name, &launchSuccess, &err)()
 
 	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
 
-	// Call the unlocked stop core directly: this goroutine already holds the
-	// per-service lock, and the mutex is not reentrant, so m.StopService (which
-	// re-acquires it) would deadlock.
-	stopResult, err := m.stopServiceLocked(name, gracePeriod, tickerPeriod)
-	if err != nil {
-		return 0, fmt.Errorf("stopping process(es) for %s: %w", name, err)
-	}
-	if len(stopResult.Errored) > 0 {
-		return 0, fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
+	if stopErr := m.lmStopForRestart(name, gracePeriod, tickerPeriod); stopErr != nil {
+		return 0, stopErr
 	}
 
 	m.logger.Debug("stop complete, launching restart", "service", name)
@@ -1061,22 +1095,11 @@ func (m *LocalManager) waitForPendingStops(name string, pending map[int]bool, er
 		select {
 		case <-ticker.C:
 			if time.Since(requestStartTime) > gracePeriod {
-				for pendingPID := range pending {
-					if _, ok := stopped[pendingPID]; !ok {
-						errored[pendingPID] = "killing service: exceeded grace period"
-					}
-				}
+				lmMarkGracePeriodExceeded(pending, stopped, errored)
 				return stopped, false
 			}
 
-			for pendingPID := range pending {
-				if _, ok := stopped[pendingPID]; ok {
-					continue
-				}
-				if !isProcessAlive(pendingPID) {
-					stopped[pendingPID] = true
-				}
-			}
+			lmPollPendingExits(pending, stopped)
 
 			if len(stopped) == countPending {
 				m.logger.Debug("all processes exited", "service", name, "elapsed", time.Since(requestStartTime))
@@ -1085,6 +1108,29 @@ func (m *LocalManager) waitForPendingStops(name string, pending map[int]bool, er
 
 		case <-m.ctx.Done():
 			return nil, true
+		}
+	}
+}
+
+// lmMarkGracePeriodExceeded records "exceeded grace period" in errored for
+// every pending PID not already recorded in stopped.
+func lmMarkGracePeriodExceeded(pending map[int]bool, stopped map[int]bool, errored map[int]string) {
+	for pendingPID := range pending {
+		if _, ok := stopped[pendingPID]; !ok {
+			errored[pendingPID] = "killing service: exceeded grace period"
+		}
+	}
+}
+
+// lmPollPendingExits checks each pending PID not already marked stopped and
+// adds it to stopped if it's no longer alive.
+func lmPollPendingExits(pending map[int]bool, stopped map[int]bool) {
+	for pendingPID := range pending {
+		if _, ok := stopped[pendingPID]; ok {
+			continue
+		}
+		if !isProcessAlive(pendingPID) {
+			stopped[pendingPID] = true
 		}
 	}
 }
@@ -1251,46 +1297,7 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 	errored := make(map[int]string)
 
 	for i := range processHistory {
-		p := &processHistory[i]
-		processState := p.State
-		processPGID := p.PGID
-
-		switch processState {
-		case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
-			// Guard against PGID reuse before signaling. The kernel recycles
-			// PGIDs, so a stored record whose process has since exited may now
-			// point at an unrelated, later process. Signaling it blindly would
-			// kill an innocent bystander (or, if it belongs to another user,
-			// fail with EPERM and surface as a spurious stop error). Only signal
-			// when the PGID is still alive AND its start time matches what we
-			// recorded; otherwise the process we started is already gone.
-			if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-				alreadyDead[processPGID] = true
-				continue
-			}
-			err := syscall.Kill(-processPGID, signal)
-			switch {
-			case errors.Is(err, syscall.ESRCH):
-				alreadyDead[processPGID] = true
-			case err != nil:
-				// The process was alive and ours a moment ago (IsAliveMatching
-				// above), so an error here means it raced from running into an
-				// exited/zombie state before the signal landed — e.g. a service
-				// that exits the instant it's stopped. On macOS, signaling a
-				// process group whose leader is now a zombie returns EPERM.
-				// Classify by liveness, not the raw errno: if it's no longer
-				// alive-matching it's already gone, not a stop failure.
-				if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-					alreadyDead[processPGID] = true
-				} else {
-					errored[processPGID] = fmt.Sprintf("killing service: %v", err)
-				}
-			default:
-				pending[processPGID] = true
-			}
-		case types.ProcessStateFailed, types.ProcessStateStopped:
-			continue
-		}
+		lmSignalHistoryEntry(&processHistory[i], signal, pending, alreadyDead, errored)
 	}
 
 	return StopRequestResult{
@@ -1298,6 +1305,61 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 		Errored:     errored,
 		Pending:     pending,
 	}, nil
+}
+
+// lmIsSignalableState reports whether a process history row in state is
+// still eligible to be signaled (i.e. not already terminal).
+func lmIsSignalableState(state types.ProcessState) bool {
+	switch state {
+	case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
+		return true
+	case types.ProcessStateFailed, types.ProcessStateStopped:
+		return false
+	}
+	return false
+}
+
+// lmSignalHistoryEntry signals p's process group with signal if p is in a
+// signalable state and still alive-matching, classifying the outcome into
+// pending/alreadyDead/errored. A terminal-state p is left untouched.
+func lmSignalHistoryEntry(p *types.ProcessHistory, signal syscall.Signal, pending, alreadyDead map[int]bool, errored map[int]string) {
+	if !lmIsSignalableState(p.State) {
+		return
+	}
+	processPGID := p.PGID
+
+	// Guard against PGID reuse before signaling. The kernel recycles PGIDs,
+	// so a stored record whose process has since exited may now point at an
+	// unrelated, later process. Signaling it blindly would kill an innocent
+	// bystander (or, if it belongs to another user, fail with EPERM and
+	// surface as a spurious stop error). Only signal when the PGID is still
+	// alive AND its start time matches what we recorded; otherwise the
+	// process we started is already gone.
+	if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
+		alreadyDead[processPGID] = true
+		return
+	}
+
+	err := syscall.Kill(-processPGID, signal)
+	switch {
+	case errors.Is(err, syscall.ESRCH):
+		alreadyDead[processPGID] = true
+	case err != nil:
+		// The process was alive and ours a moment ago (IsAliveMatching
+		// above), so an error here means it raced from running into an
+		// exited/zombie state before the signal landed — e.g. a service
+		// that exits the instant it's stopped. On macOS, signaling a process
+		// group whose leader is now a zombie returns EPERM. Classify by
+		// liveness, not the raw errno: if it's no longer alive-matching it's
+		// already gone, not a stop failure.
+		if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
+			alreadyDead[processPGID] = true
+		} else {
+			errored[processPGID] = fmt.Sprintf("killing service: %v", err)
+		}
+	default:
+		pending[processPGID] = true
+	}
 }
 
 // type SupportedRuntime string
@@ -1343,15 +1405,40 @@ func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error 
 	return nil
 }
 
-func ValidateRuntimePath(runtime types.Runtime) error {
-	runtimePath := runtime.Path
+// lmResolveRuntimeDir expands a relative runtime path against the user's
+// home directory; an absolute path is returned unchanged.
+func lmResolveRuntimeDir(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("getting homeDir for runtime validation: %w", err)
+	}
+	return filepath.Join(homeDir, path), nil
+}
 
-	if !filepath.IsAbs(runtime.Path) {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("getting homeDir for runtime validation: %w", err)
-		}
-		runtimePath = filepath.Join(homeDir, runtime.Path)
+// lmCheckRuntimeBinary verifies that binaryName exists directly under
+// runtimeDir, is not itself a directory, and is executable.
+func lmCheckRuntimeBinary(runtimeDir, binaryName string) error {
+	binPath := filepath.Join(runtimeDir, binaryName)
+	info, err := os.Stat(binPath)
+	if err != nil {
+		return fmt.Errorf("find %s binary in runtime path: %w", binaryName, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s runtime binary path is a directory", binaryName)
+	}
+	if info.Mode()&0111 == 0 {
+		return fmt.Errorf("%s binary is not executable: %s", binaryName, binPath)
+	}
+	return nil
+}
+
+func ValidateRuntimePath(runtime types.Runtime) error {
+	runtimePath, err := lmResolveRuntimeDir(runtime.Path)
+	if err != nil {
+		return err
 	}
 
 	dirInfo, err := os.Stat(runtimePath)
@@ -1365,52 +1452,11 @@ func ValidateRuntimePath(runtime types.Runtime) error {
 
 	switch runtime.Type {
 	case "bun":
-		bunPath := filepath.Join(runtimePath, "bun")
-		bunInfo, err := os.Stat(bunPath)
-		if err != nil {
-			return fmt.Errorf("find bun binary in runtime path: %w", err)
-		}
-
-		if bunInfo.IsDir() {
-			return fmt.Errorf("bun runtime binary path is a directory")
-		}
-
-		if bunInfo.Mode()&0111 == 0 {
-			return fmt.Errorf("bun binary is not executable: %s", bunPath)
-		}
-		return nil
+		return lmCheckRuntimeBinary(runtimePath, "bun")
 	case "deno":
-		denoPath := filepath.Join(runtimePath, "deno")
-		denoInfo, err := os.Stat(denoPath)
-		if err != nil {
-			return fmt.Errorf("find deno binary in runtime path: %w", err)
-		}
-
-		if denoInfo.IsDir() {
-			return fmt.Errorf("deno runtime binary path is a directory")
-		}
-
-		if denoInfo.Mode()&0111 == 0 {
-			return fmt.Errorf("deno binary is not executable: %s", denoPath)
-		}
-
-		return nil
+		return lmCheckRuntimeBinary(runtimePath, "deno")
 	case "node", "nodejs":
-		nodePath := filepath.Join(runtimePath, "node")
-		nodeInfo, err := os.Stat(nodePath)
-		if err != nil {
-			return fmt.Errorf("find node binary in runtime path: %w", err)
-		}
-
-		if nodeInfo.IsDir() {
-			return fmt.Errorf("node runtime binary path is a directory")
-		}
-
-		if nodeInfo.Mode()&0111 == 0 {
-			return fmt.Errorf("node binary is not executable: %s", nodePath)
-		}
-
-		return nil
+		return lmCheckRuntimeBinary(runtimePath, "node")
 	}
 	return nil
 }
@@ -1418,37 +1464,57 @@ func ValidateRuntimePath(runtime types.Runtime) error {
 func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) ([]string, error) {
 	env := os.Environ()
 
-	if config.Runtime.Path != "" {
-		index, after := doesEnvVarAlreadyExist("PATH=", env)
-
-		if index > -1 {
-			env[index] = fmt.Sprintf("PATH=%s:%s", config.Runtime.Path, after)
-		} else {
-			env = append(env, "PATH="+config.Runtime.Path)
-		}
-	}
-
-	if config.Port != 0 {
-		env = append(env, fmt.Sprintf("PORT=%d", config.Port))
-	}
+	env = lmApplyRuntimePathEnv(config.Runtime.Path, env)
+	env = lmApplyPortEnv(config.Port, env)
 
 	if config.EnvFile != "" {
 		envFileVars, err := ParseEnvFile(config, serviceDirectoryPath)
 		if err != nil {
 			return nil, err
 		}
-		for _, envVar := range envFileVars {
-			before, _, _ := strings.Cut(envVar, "=")
-			index, _ := doesEnvVarAlreadyExist(before+"=", env)
-			if index > -1 {
-				env[index] = envVar
-			} else {
-				env = append(env, envVar)
-			}
-		}
+		env = lmOverlayEnvVars(env, envFileVars)
 	}
 
 	return env, nil
+}
+
+// lmApplyRuntimePathEnv prepends runtimePath onto env's PATH entry (creating
+// one if absent), or returns env unchanged when runtimePath is empty.
+func lmApplyRuntimePathEnv(runtimePath string, env []string) []string {
+	if runtimePath == "" {
+		return env
+	}
+	index, after := doesEnvVarAlreadyExist("PATH=", env)
+	if index == -1 {
+		return append(env, "PATH="+runtimePath)
+	}
+	env[index] = fmt.Sprintf("PATH=%s:%s", runtimePath, after)
+	return env
+}
+
+// lmApplyPortEnv appends a PORT entry to env, or returns env unchanged when
+// port is unset (0).
+func lmApplyPortEnv(port int, env []string) []string {
+	if port == 0 {
+		return env
+	}
+	return append(env, fmt.Sprintf("PORT=%d", port))
+}
+
+// lmOverlayEnvVars overlays each KEY=VALUE entry in overlay onto env,
+// replacing an existing entry for the same key in place or appending a new
+// one.
+func lmOverlayEnvVars(env []string, overlay []string) []string {
+	for _, envVar := range overlay {
+		before, _, _ := strings.Cut(envVar, "=")
+		index, _ := doesEnvVarAlreadyExist(before+"=", env)
+		if index > -1 {
+			env[index] = envVar
+		} else {
+			env = append(env, envVar)
+		}
+	}
+	return env
 }
 
 // ResolveEnvFilePath returns the absolute path to a service's env_file,
@@ -1489,8 +1555,15 @@ func ParseEnvFile(config *types.ServiceConfig, serviceDirectoryPath string) ([]s
 		return nil, fmt.Errorf("reading env file: %w", readErr)
 	}
 
+	return lmParseEnvFileLines(string(envFileContents)), nil
+}
+
+// lmParseEnvFileLines parses KEY=VALUE lines out of env file contents,
+// skipping blank lines, #-comments, and lines with no "="; later duplicate
+// keys override earlier ones.
+func lmParseEnvFileLines(contents string) []string {
 	envFileVars := []string{}
-	for envVar := range strings.SplitSeq(string(envFileContents), "\n") {
+	for envVar := range strings.SplitSeq(contents, "\n") {
 		envVar = strings.TrimSpace(envVar)
 		if envVar == "" {
 			continue
@@ -1511,7 +1584,7 @@ func ParseEnvFile(config *types.ServiceConfig, serviceDirectoryPath string) ([]s
 		}
 	}
 
-	return envFileVars, nil
+	return envFileVars
 }
 
 func doesEnvVarAlreadyExist(envName string, env []string) (int, string) {

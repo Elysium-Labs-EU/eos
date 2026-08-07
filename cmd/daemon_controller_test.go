@@ -953,6 +953,42 @@ func TestPrintSystemdDaemonDetails_Running(t *testing.T) {
 	}
 }
 
+// TestDaemonCmdPrintSystemdRunState_RunningPIDUnresolved covers the case where the
+// daemon's socket answers (so it's confirmed running) but systemctl can't resolve
+// MainPID (e.g. transient systemd query failure) — daemonCmdPrintSystemdRunState
+// must still report "running", just without a pid.
+func TestDaemonCmdPrintSystemdRunState_RunningPIDUnresolved(t *testing.T) {
+	dir := shortTempSocketDir(t)
+	sockPath := filepath.Join(dir, "eos.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Listen unix: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	scriptDir := t.TempDir()
+	script := "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(scriptDir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatalf("writing failing fake systemctl: %v", err)
+	}
+	t.Setenv("PATH", scriptDir)
+
+	var out bytes.Buffer
+	cmd := newTestRootCmd(nil)
+	cmd.SetOut(&out)
+	cmd.SetContext(context.Background())
+
+	daemonCmdPrintSystemdRunState(cmd, config.SystemdConfig{SocketPath: sockPath})
+
+	got := out.String()
+	if !strings.Contains(got, "running") || strings.Contains(got, "not running") {
+		t.Errorf("expected plain 'running' without pid, got: %s", got)
+	}
+	if strings.Contains(got, "pid") {
+		t.Errorf("expected no pid in output when systemctl fails to resolve it, got: %s", got)
+	}
+}
+
 // TestSystemdUserBusReachable_FalseWhenEnvUnset guards issue #41: the bus-availability check must
 // key off whether $XDG_RUNTIME_DIR is actually exported in this process, not whether some
 // accessible runtime dir happens to exist for the uid elsewhere on disk — a lingering user manager

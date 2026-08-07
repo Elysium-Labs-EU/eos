@@ -176,6 +176,42 @@ func TestWaitForDependencies_OnPendingChangeDeduped(t *testing.T) {
 	}
 }
 
+// TestDepTimeoutResult exercises WaitForDependencies's timer.C branch directly:
+// depTimeoutResult must take one last read at the deadline instant rather than
+// trusting the tick before it, so a dependency that becomes ready exactly as
+// max_wait expires still succeeds instead of failing on stale data.
+func TestDepTimeoutResult(t *testing.T) {
+	t.Run("ready at the deadline succeeds silently", func(t *testing.T) {
+		p := &fakeProber{readyAfter: 1}
+		var reported [][]string
+		report := func(pending []string) { reported = append(reported, pending) }
+
+		if err := depTimeoutResult(t.Context(), p, []string{"a"}, "web", time.Second, report); err != nil {
+			t.Fatalf("expected nil when the deadline-instant read shows ready, got %v", err)
+		}
+		if len(reported) != 0 {
+			t.Errorf("expected no report when the deadline read finds nothing pending, got %v", reported)
+		}
+	})
+
+	t.Run("still pending reports then fails loud", func(t *testing.T) {
+		p := &fakeProber{readyAfter: 1 << 30}
+		var reported [][]string
+		report := func(pending []string) { reported = append(reported, pending) }
+
+		err := depTimeoutResult(t.Context(), p, []string{"a"}, "web", time.Second, report)
+		if err == nil {
+			t.Fatal("expected an error when still pending at the deadline")
+		}
+		if !strings.Contains(err.Error(), "not ready after") {
+			t.Errorf("error %q missing the timeout message", err.Error())
+		}
+		if len(reported) != 1 || !slices.Equal(reported[0], []string{"a"}) {
+			t.Errorf("expected exactly one report of [a], got %v", reported)
+		}
+	})
+}
+
 func TestDependencyWaitIsStale(t *testing.T) {
 	if dependencyWaitIsStale(time.Now().Add(5 * time.Minute)) {
 		t.Error("a wait whose deadline is still in the future must not be stale")

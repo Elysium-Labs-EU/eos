@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -65,7 +66,7 @@ func (s *sinkProcess) Send(line, stream string) {
 // Run starts the sink supervisor loop. Blocks until Stop is called.
 // Must be called in its own goroutine.
 func (s *sinkProcess) Run(ctx context.Context) {
-	if s.sink.Mode == "" || s.sink.Address == "" {
+	if !sinkConfigValid(&s.sink) {
 		s.logger.Error("sink config invalid: mode and address are required", "type", s.sink.Type)
 		close(s.doneCh)
 		return
@@ -77,18 +78,11 @@ func (s *sinkProcess) Run(ctx context.Context) {
 		close(s.doneCh)
 	}()
 
-	restartDelayMs := s.sink.RestartDelayMs
-	if restartDelayMs <= 0 {
-		restartDelayMs = sinkDefaultRestartDelayMs
-	}
+	restartDelayMs := sinkRestartDelayMs(&s.sink)
 
 	for {
-		select {
-		case <-s.stopCh:
+		if s.sinkStopRequested(ctx) {
 			return
-		case <-ctx.Done():
-			return
-		default:
 		}
 
 		if err := s.runOnce(ctx); err != nil {
@@ -98,16 +92,49 @@ func (s *sinkProcess) Run(ctx context.Context) {
 			)
 		}
 
-		t := time.NewTimer(time.Duration(restartDelayMs) * time.Millisecond)
-		select {
-		case <-s.stopCh:
-			t.Stop()
+		if s.sinkWaitBeforeRestart(ctx, restartDelayMs) {
 			return
-		case <-ctx.Done():
-			t.Stop()
-			return
-		case <-t.C:
 		}
+	}
+}
+
+// sinkConfigValid reports whether the sink config has the fields required to start a plugin.
+func sinkConfigValid(sink *types.LogSink) bool {
+	return sink.Mode != "" && sink.Address != ""
+}
+
+// sinkRestartDelayMs resolves the configured restart delay, applying the package default when unset.
+func sinkRestartDelayMs(sink *types.LogSink) int {
+	if sink.RestartDelayMs <= 0 {
+		return sinkDefaultRestartDelayMs
+	}
+	return sink.RestartDelayMs
+}
+
+// sinkStopRequested reports whether stop or ctx cancellation has already fired, without blocking.
+func (s *sinkProcess) sinkStopRequested(ctx context.Context) bool {
+	select {
+	case <-s.stopCh:
+		return true
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// sinkWaitBeforeRestart blocks for the restart delay, returning true if stop or ctx
+// cancellation fired first (caller should exit rather than restart).
+func (s *sinkProcess) sinkWaitBeforeRestart(ctx context.Context, delayMs int) bool {
+	t := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
+	defer t.Stop()
+	select {
+	case <-s.stopCh:
+		return true
+	case <-ctx.Done():
+		return true
+	case <-t.C:
+		return false
 	}
 }
 
@@ -120,56 +147,94 @@ func (s *sinkProcess) Stop() {
 // runOnce launches the plugin binary, performs the READY handshake, drains the ring buffer
 // into the plugin's stdin, and returns when the plugin exits or stop is signaled.
 func (s *sinkProcess) runOnce(ctx context.Context) error {
+	cmd, stdin, stdoutPipe, stderrPipe, err := s.sinkStartPlugin(ctx)
+	if err != nil {
+		return err
+	}
+
+	go s.sinkDrainStderr(stderrPipe)
+
+	ready, err := s.sinkAwaitReady(ctx, cmd, stdoutPipe)
+	if !ready {
+		return err
+	}
+
+	s.logger.Info("sink:"+s.sink.Type+" ready", "address", s.sink.Address, "service", s.service)
+
+	// Pump records from the ring buffer into plugin stdin.
+	// On stop/ctx cancel we flush remaining buffered records first, then close stdin.
+	writer := bufio.NewWriter(stdin)
+	pumpErr := s.pump(ctx, writer)
+
+	// Flush writer buffer and close stdin to signal EOF to the plugin.
+	_ = writer.Flush()
+	_ = stdin.Close()
+
+	return s.sinkAwaitExit(cmd, pumpErr)
+}
+
+// sinkStartPlugin resolves the plugin binary, builds its environment, wires up its
+// stdio pipes, and starts it. Callers own the returned pipes and must not use them
+// after the process has exited.
+func (s *sinkProcess) sinkStartPlugin(ctx context.Context) (cmd *exec.Cmd, stdin io.WriteCloser, stdout, stderr io.ReadCloser, err error) {
 	binaryPath, err := s.resolveBinary()
 	if err != nil {
-		return fmt.Errorf("resolving binary: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("resolving binary: %w", err)
 	}
 
 	optionsEnv, err := buildOptionsEnv(s.sink.Options)
 	if err != nil {
-		return fmt.Errorf("encoding options: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("encoding options: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, binaryPath, s.sink.Args...) // #nosec G204 -- path validated at config load
+	cmd = exec.CommandContext(ctx, binaryPath, s.sink.Args...) // #nosec G204 -- path validated at config load
 	cmd.Env = append(os.Environ(), optionsEnv,
 		"EOS_SINK_SERVICE="+s.service,
 		"EOS_SINK_TYPE="+s.sink.Type,
 		"EOS_SINK_ADDRESS="+s.sink.Address,
 	)
 
-	stdin, err := cmd.StdinPipe()
+	stdin, err = cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("creating stdin pipe: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("creating stdin pipe: %w", err)
 	}
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdout, err = cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("creating stdout pipe: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	stderr, err = cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("creating stderr pipe: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("creating stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting plugin: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("starting plugin: %w", err)
 	}
 
-	// Drain stderr to daemon logger and service error log in background.
-	go func() {
-		sc := bufio.NewScanner(stderrPipe)
-		for sc.Scan() {
-			msg := sc.Text()
-			s.logger.Warn("sink plugin stderr", "sink", s.sink.Type, "service", s.service, "msg", msg)
-			if s.errLog != nil {
-				s.errLog.Warn(msg, "source", "sink:"+s.sink.Type)
-			}
-		}
-	}()
+	return cmd, stdin, stdout, stderr, nil
+}
 
-	// Wait for READY on stdout before sending any records.
+// sinkDrainStderr forwards the plugin's stderr lines to the daemon logger and, if set,
+// the service error log. Runs in its own goroutine for the lifetime of the plugin process.
+func (s *sinkProcess) sinkDrainStderr(stderr io.Reader) {
+	sc := bufio.NewScanner(stderr)
+	for sc.Scan() {
+		msg := sc.Text()
+		s.logger.Warn("sink plugin stderr", "sink", s.sink.Type, "service", s.service, "msg", msg)
+		if s.errLog != nil {
+			s.errLog.Warn(msg, "source", "sink:"+s.sink.Type)
+		}
+	}
+}
+
+// sinkAwaitReady waits for the plugin to send "READY" on stdout, or for it to exit,
+// time out, or stop/ctx to fire first. ready is true only when READY was received in
+// time; on every other branch the process has already been killed and waited on, and
+// err (possibly nil) is the runOnce result the caller should return immediately.
+func (s *sinkProcess) sinkAwaitReady(ctx context.Context, cmd *exec.Cmd, stdout io.Reader) (ready bool, err error) {
 	readyCh := make(chan error, 1)
 	go func() {
-		sc := bufio.NewScanner(stdoutPipe)
+		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			if strings.TrimSpace(sc.Text()) == "READY" {
 				readyCh <- nil
@@ -189,34 +254,28 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 		if err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return err
+			return false, err
 		}
+		return true, nil
 	case <-readyTimer.C:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return fmt.Errorf("timed out waiting for READY from plugin %q", s.sink.Type)
+		return false, fmt.Errorf("timed out waiting for READY from plugin %q", s.sink.Type)
 	case <-s.stopCh:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return nil
+		return false, nil
 	case <-ctx.Done():
 		// exec.CommandContext kills the subprocess automatically on ctx cancel.
 		_ = cmd.Wait()
-		return nil
+		return false, nil
 	}
+}
 
-	s.logger.Info("sink:"+s.sink.Type+" ready", "address", s.sink.Address, "service", s.service)
-
-	// Pump records from the ring buffer into plugin stdin.
-	// On stop/ctx cancel we flush remaining buffered records first, then close stdin.
-	writer := bufio.NewWriter(stdin)
-	pumpErr := s.pump(ctx, writer)
-
-	// Flush writer buffer and close stdin to signal EOF to the plugin.
-	_ = writer.Flush()
-	_ = stdin.Close()
-
-	// Wait for plugin to exit with a timeout.
+// sinkAwaitExit waits for the plugin to exit after stdin has been closed, killing it
+// if it does not exit within sinkShutdownTimeout. pumpErr takes priority unless the
+// plugin itself exited with an error and the pump reported none.
+func (s *sinkProcess) sinkAwaitExit(cmd *exec.Cmd, pumpErr error) error {
 	exitCh := make(chan error, 1)
 	go func() { exitCh <- cmd.Wait() }()
 	shutdownTimer := time.NewTimer(sinkShutdownTimeout)
@@ -244,16 +303,7 @@ func (s *sinkProcess) pump(ctx context.Context, w *bufio.Writer) error {
 			// Buffer empty — check stop signals before blocking.
 			select {
 			case <-s.stopCh:
-				// Flush remaining buffer before returning.
-				for {
-					rec, ok := s.buf.pop()
-					if !ok {
-						return nil
-					}
-					if err := writeRecord(w, rec, s.service); err != nil {
-						return err
-					}
-				}
+				return sinkFlushBuffer(s.buf, w, s.service)
 			case <-ctx.Done():
 				// subprocess killed by exec.CommandContext; no point flushing.
 				return nil
@@ -263,13 +313,37 @@ func (s *sinkProcess) pump(ctx context.Context, w *bufio.Writer) error {
 				continue
 			}
 		}
-		if err := writeRecord(w, r, s.service); err != nil {
-			return fmt.Errorf("writing record to plugin stdin: %w", err)
-		}
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("flushing record to plugin stdin: %w", err)
+		if err := sinkWriteAndFlush(w, r, s.service); err != nil {
+			return err
 		}
 	}
+}
+
+// sinkFlushBuffer drains every remaining record from buf into w, in pop order,
+// stopping at the first write error. Used on shutdown to deliver buffered records
+// before the plugin's stdin is closed.
+func sinkFlushBuffer(buf *ringBuffer, w *bufio.Writer, service string) error {
+	for {
+		rec, ok := buf.pop()
+		if !ok {
+			return nil
+		}
+		if err := writeRecord(w, rec, service); err != nil {
+			return err
+		}
+	}
+}
+
+// sinkWriteAndFlush writes one record to w and flushes it immediately, wrapping any
+// error with which step failed.
+func sinkWriteAndFlush(w *bufio.Writer, r sinkRecord, service string) error {
+	if err := writeRecord(w, r, service); err != nil {
+		return fmt.Errorf("writing record to plugin stdin: %w", err)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing record to plugin stdin: %w", err)
+	}
+	return nil
 }
 
 func writeRecord(w *bufio.Writer, r sinkRecord, service string) error {

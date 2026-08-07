@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +15,12 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+// sinkErrWriter is an io.Writer that always fails, used to exercise write/flush
+// error paths in the sink helpers below.
+type sinkErrWriter struct{ err error }
+
+func (w *sinkErrWriter) Write(_ []byte) (int, error) { return 0, w.err }
 
 func TestBuildOptionsEnv_empty(t *testing.T) {
 	env, err := buildOptionsEnv(nil)
@@ -386,4 +394,241 @@ func TestStartStopSinkProcesses(t *testing.T) {
 func newTestLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 	return slog.Default()
+}
+
+// --- Coverage for helpers extracted from Run/runOnce/pump ---
+
+func TestSinkStopRequested_stopChClosed(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	close(sp.stopCh)
+	if !sp.sinkStopRequested(context.Background()) {
+		t.Error("expected true when stopCh is closed")
+	}
+}
+
+func TestSinkStopRequested_ctxDone(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !sp.sinkStopRequested(ctx) {
+		t.Error("expected true when ctx is done")
+	}
+}
+
+func TestSinkStopRequested_neitherFired(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	if sp.sinkStopRequested(context.Background()) {
+		t.Error("expected false when neither stopCh nor ctx has fired")
+	}
+}
+
+func TestSinkStartPlugin_resolveBinaryError(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+
+	sp := newSinkProcess(&types.LogSink{Type: "nonexistent"}, "svc", newTestLogger(t), nil)
+	_, _, _, _, err := sp.sinkStartPlugin(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "resolving binary") {
+		t.Fatalf("expected 'resolving binary' error, got %v", err)
+	}
+}
+
+func TestSinkStartPlugin_optionsEncodeError(t *testing.T) {
+	sink := &types.LogSink{Type: "test", Exec: "sh", Options: map[string]any{"bad": make(chan int)}}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+	_, _, _, _, err := sp.sinkStartPlugin(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "encoding options") {
+		t.Fatalf("expected 'encoding options' error, got %v", err)
+	}
+}
+
+// TestRunOnce_startPluginErrorPropagates covers runOnce's early return when
+// sinkStartPlugin fails, before any pipes or the READY handshake are touched.
+func TestRunOnce_startPluginErrorPropagates(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+
+	sp := newSinkProcess(&types.LogSink{Type: "nonexistent"}, "svc", newTestLogger(t), nil)
+	err := sp.runOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "resolving binary") {
+		t.Fatalf("expected 'resolving binary' error, got %v", err)
+	}
+}
+
+// TestSinkAwaitReady_discardsExtraStdoutAfterReady covers the discard loop that keeps
+// reading (and dropping) stdout lines sent after READY.
+func TestSinkAwaitReady_discardsExtraStdoutAfterReady(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test", Mode: "push", Address: "http://localhost"}, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "echo READY; echo extra1; echo extra2; sleep 0.2")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ready, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	if !ready || err != nil {
+		t.Fatalf("expected ready=true err=nil, got ready=%v err=%v", ready, err)
+	}
+	_ = cmd.Wait()
+}
+
+// TestSinkAwaitReady_timesOut covers the readyTimer.C branch: the plugin never sends
+// READY and never exits, so sinkAwaitReady must time out, kill it, and return an error.
+func TestSinkAwaitReady_timesOut(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test", Mode: "push", Address: "http://localhost"}, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), sinkReadyTimeout+5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 30")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ready, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	if ready || err == nil || !strings.Contains(err.Error(), "timed out waiting for READY") {
+		t.Fatalf("expected timeout error, got ready=%v err=%v", ready, err)
+	}
+}
+
+// TestSinkAwaitExit_timeoutKillsProcess covers the shutdownTimer.C branch: a plugin
+// that never exits on its own must be killed after sinkShutdownTimeout.
+func TestSinkAwaitExit_timeoutKillsProcess(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test"}, "svc", newTestLogger(t), nil)
+
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- sp.sinkAwaitExit(cmd, nil) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected pumpErr(nil) passthrough, got %v", err)
+		}
+	case <-time.After(sinkShutdownTimeout + 5*time.Second):
+		t.Fatal("sinkAwaitExit did not kill the stuck process in time")
+	}
+}
+
+func TestSinkFlushBuffer_empty(t *testing.T) {
+	buf := newRingBuffer(4)
+	var sb strings.Builder
+	w := bufio.NewWriter(&sb)
+	if err := sinkFlushBuffer(buf, w, "svc"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSinkFlushBuffer_drainsInOrder(t *testing.T) {
+	buf := newRingBuffer(4)
+	buf.push(sinkRecord{line: "first", stream: "stdout"})
+	buf.push(sinkRecord{line: "second", stream: "stdout"})
+	var sb strings.Builder
+	w := bufio.NewWriter(&sb)
+	if err := sinkFlushBuffer(buf, w, "svc"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(sb.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "first") || !strings.Contains(lines[1], "second") {
+		t.Fatalf("expected records in push order, got: %q", sb.String())
+	}
+}
+
+func TestSinkFlushBuffer_writeErrorStopsDrain(t *testing.T) {
+	buf := newRingBuffer(4)
+	buf.push(sinkRecord{line: "x", stream: "stdout"})
+	w := bufio.NewWriterSize(&sinkErrWriter{err: errors.New("boom")}, 1)
+	if err := sinkFlushBuffer(buf, w, "svc"); err == nil {
+		t.Fatal("expected error from broken writer")
+	}
+}
+
+func TestSinkWriteAndFlush_success(t *testing.T) {
+	var sb strings.Builder
+	w := bufio.NewWriter(&sb)
+	if err := sinkWriteAndFlush(w, sinkRecord{line: "hi", stream: "stdout"}, "svc"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(sb.String(), `"hi"`) {
+		t.Errorf("expected record written, got %q", sb.String())
+	}
+}
+
+func TestSinkWriteAndFlush_writeError(t *testing.T) {
+	w := bufio.NewWriterSize(&sinkErrWriter{err: errors.New("boom")}, 1)
+	err := sinkWriteAndFlush(w, sinkRecord{line: "hi", stream: "stdout"}, "svc")
+	if err == nil || !strings.Contains(err.Error(), "writing record") {
+		t.Fatalf("expected 'writing record' error, got %v", err)
+	}
+}
+
+func TestSinkWriteAndFlush_flushError(t *testing.T) {
+	w := bufio.NewWriter(&sinkErrWriter{err: errors.New("boom")})
+	err := sinkWriteAndFlush(w, sinkRecord{line: "hi", stream: "stdout"}, "svc")
+	if err == nil || !strings.Contains(err.Error(), "flushing record") {
+		t.Fatalf("expected 'flushing record' error, got %v", err)
+	}
+}
+
+func TestSinkConfigValid(t *testing.T) {
+	if sinkConfigValid(&types.LogSink{}) {
+		t.Error("expected false for empty sink config")
+	}
+	if sinkConfigValid(&types.LogSink{Mode: "push"}) {
+		t.Error("expected false when address is missing")
+	}
+	if !sinkConfigValid(&types.LogSink{Mode: "push", Address: "http://localhost"}) {
+		t.Error("expected true when mode and address are set")
+	}
+}
+
+func TestSinkRestartDelayMs(t *testing.T) {
+	if got := sinkRestartDelayMs(&types.LogSink{}); got != sinkDefaultRestartDelayMs {
+		t.Errorf("expected default %d, got %d", sinkDefaultRestartDelayMs, got)
+	}
+	if got := sinkRestartDelayMs(&types.LogSink{RestartDelayMs: 250}); got != 250 {
+		t.Errorf("expected 250, got %d", got)
+	}
+}
+
+func TestSinkWaitBeforeRestart_stopChFires(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	close(sp.stopCh)
+	if !sp.sinkWaitBeforeRestart(context.Background(), 10000) {
+		t.Error("expected true when stopCh fires before the delay")
+	}
+}
+
+func TestSinkWaitBeforeRestart_ctxDoneFires(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !sp.sinkWaitBeforeRestart(ctx, 10000) {
+		t.Error("expected true when ctx is done before the delay")
+	}
+}
+
+func TestSinkWaitBeforeRestart_timerFires(t *testing.T) {
+	sp := &sinkProcess{stopCh: make(chan struct{})}
+	if sp.sinkWaitBeforeRestart(context.Background(), 1) {
+		t.Error("expected false when the delay elapses first")
+	}
 }

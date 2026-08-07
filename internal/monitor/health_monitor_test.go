@@ -2109,6 +2109,51 @@ func TestScanStatusFieldBytes_empty(t *testing.T) {
 	}
 }
 
+func TestHmStartupDeathMessage(t *testing.T) {
+	withLine := hmStartupDeathMessage("svc", 123, "boom", true)
+	if want := "[svc] died during startup (PGID 123): boom"; withLine != want {
+		t.Errorf("got %q, want %q", withLine, want)
+	}
+
+	withoutLine := hmStartupDeathMessage("svc", 123, "", false)
+	if want := "[svc] died during startup (PGID 123)"; withoutLine != want {
+		t.Errorf("got %q, want %q", withoutLine, want)
+	}
+}
+
+func TestHmRestartFailedMessage(t *testing.T) {
+	withLine := hmRestartFailedMessage("svc", errors.New("boom"), "last stderr line", true)
+	if want := "[svc] restart failed: boom (last stderr line)"; withLine != want {
+		t.Errorf("got %q, want %q", withLine, want)
+	}
+
+	withoutLine := hmRestartFailedMessage("svc", errors.New("boom"), "", false)
+	if want := "[svc] restart failed: boom"; withoutLine != want {
+		t.Errorf("got %q, want %q", withoutLine, want)
+	}
+}
+
+func TestHmStatIndicatesAlive(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		want     bool
+	}{
+		{"running", "1234 (myproc) R 1 1234 1234 0", true},
+		{"zombie", "1234 (myproc) Z 1 1234 1234 0", false},
+		{"no closing paren", "garbage", true},
+		{"closing paren too close to end", "1234 (myproc)", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hmStatIndicatesAlive([]byte(tc.contents))
+			if got != tc.want {
+				t.Errorf("hmStatIndicatesAlive(%q) = %v, want %v", tc.contents, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCheckMemoryLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("checkMemoryLinux only runs on Linux")
@@ -2277,6 +2322,172 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	}
 }
 
+// TestCheckService_DispatchesUnknownState exercises checkService end-to-end for
+// a service in ProcessStateUnknown, hitting hmDispatchByState's Unknown case
+// (TestCheckUnknownProcess_alive/_dead call checkUnknownProcess directly and so
+// never reach the dispatch switch).
+func TestCheckService_DispatchesUnknownState(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "dispatch-unknown-svc"
+	fullDirPath := filepath.Join(tempDir, "dispatch-unknown-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+	testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithCommand("./"+testServiceScript.FileName))
+	yamlData, yamlErr := yaml.Marshal(testFile)
+	if yamlErr != nil {
+		t.Fatalf("failed to marshal config: %v", yamlErr)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+	if err = db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{State: new(types.ProcessStateUnknown)}); err != nil {
+		t.Fatalf("failed to force Unknown state: %v", err)
+	}
+
+	hm.checkService(t.Context(), entry)
+
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil || updated == nil {
+		t.Fatal("failed to get updated process history")
+	}
+	if updated.State != types.ProcessStateRunning {
+		t.Errorf("expected dispatch to mark alive Unknown-state process Running, got %v", updated.State)
+	}
+}
+
+// TestHmFetchServiceState_NoInstance exercises checkService/hmFetchServiceState
+// when the service catalog knows about a service but no instance was ever
+// registered, so GetServiceInstance returns a nil instance.
+func TestHmFetchServiceState_NoInstance(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(mgr, db, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "no-instance-svc"
+	fullDirPath := filepath.Join(tempDir, "no-instance-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+	entry, err := manager.NewServiceCatalogEntry(serviceName, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	// No RegisterServiceInstance call: GetServiceInstance should report no
+	// instance, and checkService must return without panicking.
+	hm.checkService(t.Context(), entry)
+}
+
+// TestHmFetchServiceState_NoProcessHistory covers the case where a service
+// instance is registered but no process-history entry exists yet.
+func TestHmFetchServiceState_NoProcessHistory(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(mgr, db, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "no-history-svc"
+	fullDirPath := filepath.Join(tempDir, "no-history-project")
+	if err := os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+	entry, err := manager.NewServiceCatalogEntry(serviceName, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to register service instance: %v", err)
+	}
+
+	// No process-history entry registered: GetMostRecentProcessHistoryEntry
+	// should report none, and checkService must return without panicking.
+	hm.checkService(t.Context(), entry)
+}
+
+// TestHmAttemptFailedRestart_Deferred covers the backoff-not-elapsed branch of
+// hmAttemptFailedRestart, where canRestart defers the restart attempt and no
+// manager call is made at all.
+func TestHmAttemptFailedRestart_Deferred(t *testing.T) {
+	healthConfig := newTestHealthConfig(t, WithBackoff(1000, 5000))
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(nil, nil, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	service := &types.ServiceCatalogEntry{Name: "deferred-svc"}
+	stoppedAt := time.Now()
+	process := &types.ProcessHistory{PGID: 123, StoppedAt: &stoppedAt}
+
+	// restartCount=1 against a 1000ms base backoff means the just-now StoppedAt
+	// is well within the backoff window, so canRestart is false and the
+	// function must return early without touching hm.mgr (nil here).
+	hm.hmAttemptFailedRestart(t.Context(), service, process, 1, 0)
+}
+
 func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
@@ -2295,6 +2506,32 @@ func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
 
 	if hm.checkInterval != 2*time.Second {
 		t.Errorf("expected default checkInterval 2s, got %v", hm.checkInterval)
+	}
+}
+
+func TestHmResolvedBackoff(t *testing.T) {
+	defaulted := hmResolvedBackoff(config.BackoffConfig{})
+	if defaulted.BaseMs != config.HealthBackoffBaseMs || defaulted.MaxMs != config.HealthBackoffMaxMs {
+		t.Errorf("expected defaults (%d, %d), got (%d, %d)", config.HealthBackoffBaseMs, config.HealthBackoffMaxMs, defaulted.BaseMs, defaulted.MaxMs)
+	}
+
+	configured := hmResolvedBackoff(config.BackoffConfig{BaseMs: 5, MaxMs: 10})
+	if configured.BaseMs != 5 || configured.MaxMs != 10 {
+		t.Errorf("expected configured values preserved, got (%d, %d)", configured.BaseMs, configured.MaxMs)
+	}
+}
+
+func TestHmResolvedMemory(t *testing.T) {
+	defaulted := hmResolvedMemory(config.MemoryThresholdConfig{})
+	if defaulted.WarningThreshold != config.HealthMemoryWarningThreshold ||
+		defaulted.SoftRestartThreshold != config.HealthMemorySoftRestartThreshold ||
+		defaulted.ForceRestartThreshold != config.HealthMemoryForceRestartThreshold {
+		t.Errorf("expected all thresholds defaulted, got %+v", defaulted)
+	}
+
+	configured := hmResolvedMemory(config.MemoryThresholdConfig{WarningThreshold: 0.1, SoftRestartThreshold: 0.2, ForceRestartThreshold: 0.3})
+	if configured.WarningThreshold != 0.1 || configured.SoftRestartThreshold != 0.2 || configured.ForceRestartThreshold != 0.3 {
+		t.Errorf("expected configured thresholds preserved, got %+v", configured)
 	}
 }
 
