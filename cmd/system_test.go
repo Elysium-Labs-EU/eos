@@ -17,7 +17,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -262,7 +261,7 @@ func TestStartupCmdUserUnitFullPath(t *testing.T) {
 	// confirm unit file creation, confirm enable-linger, confirm restart
 	setStdin(c, "y\ny\ny\n")
 
-	currentUser, userErr := user.Current()
+	currentUser, userErr := userutil.EffectiveUser()
 	if userErr != nil {
 		t.Fatalf("resolving current user: %v", userErr)
 	}
