@@ -2660,6 +2660,9 @@ type mockMgr struct {
 	getAllCatalogEntries func() ([]types.ServiceCatalogEntry, error)
 	getServiceInstance   func(string) (*types.ServiceInstance, error)
 	getMostRecentProcess func(string) (*types.ProcessHistory, error)
+	isServiceRegistered  func(string) (bool, error)
+	removeCatalogEntry   func(string) (bool, error)
+	updateCatalogEntry   func(string, string, string) error
 }
 
 func (m *mockMgr) GetAllServiceInstances(context.Context) ([]types.ServiceInstance, error) {
@@ -2704,11 +2707,22 @@ func (m *mockMgr) GetAllServiceCatalogEntries(context.Context) ([]types.ServiceC
 func (m *mockMgr) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return types.ServiceCatalogEntry{}, nil
 }
-func (m *mockMgr) IsServiceRegistered(context.Context, string) (bool, error) { return false, nil }
-func (m *mockMgr) RemoveServiceCatalogEntry(context.Context, string) (bool, error) {
+func (m *mockMgr) IsServiceRegistered(_ context.Context, name string) (bool, error) {
+	if m.isServiceRegistered != nil {
+		return m.isServiceRegistered(name)
+	}
 	return false, nil
 }
-func (m *mockMgr) UpdateServiceCatalogEntry(context.Context, string, string, string) error {
+func (m *mockMgr) RemoveServiceCatalogEntry(_ context.Context, name string) (bool, error) {
+	if m.removeCatalogEntry != nil {
+		return m.removeCatalogEntry(name)
+	}
+	return false, nil
+}
+func (m *mockMgr) UpdateServiceCatalogEntry(_ context.Context, name, newDirectoryPath, newConfigFileName string) error {
+	if m.updateCatalogEntry != nil {
+		return m.updateCatalogEntry(name, newDirectoryPath, newConfigFileName)
+	}
 	return nil
 }
 func (m *mockMgr) SetServiceEnabled(context.Context, string, bool) error { return nil }
