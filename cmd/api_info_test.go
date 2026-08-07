@@ -65,7 +65,7 @@ func TestAPIInfoLoadRegisteredServiceErrors(t *testing.T) {
 
 func TestAPIInfoLoadConfigError(t *testing.T) {
 	entry := types.ServiceCatalogEntry{DirectoryPath: t.TempDir(), ConfigFileName: "missing.yaml"}
-	if _, err := apiInfoLoadConfig(entry); err == nil || !strings.Contains(err.Error(), "loading service config") {
+	if _, err := apiInfoLoadConfig(&entry); err == nil || !strings.Contains(err.Error(), "loading service config") {
 		t.Errorf("expected wrapped 'loading service config' error, got: %v", err)
 	}
 }

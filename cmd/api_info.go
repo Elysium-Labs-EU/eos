@@ -83,7 +83,7 @@ func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceMana
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
-	config, err := apiInfoLoadConfig(registeredService)
+	config, err := apiInfoLoadConfig(&registeredService)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
@@ -103,7 +103,7 @@ func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceMana
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
-	serviceInfo := compileServiceInfoObject(registeredService, serviceInstance, config, logPath, errorLogPath)
+	serviceInfo := compileServiceInfoObject(&registeredService, serviceInstance, config, logPath, errorLogPath)
 	serviceInfo.Process = compileProcessInfoObject(processEntry)
 
 	return helpers.WriteJSON(cmd, serviceInfo)
@@ -120,7 +120,7 @@ func apiInfoLoadRegisteredService(mgr manager.ServiceManager, serviceName string
 	return registeredService, nil
 }
 
-func apiInfoLoadConfig(registeredService types.ServiceCatalogEntry) (*types.ServiceConfig, error) {
+func apiInfoLoadConfig(registeredService *types.ServiceCatalogEntry) (*types.ServiceConfig, error) {
 	configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
 	if err != nil {
@@ -157,7 +157,7 @@ func apiInfoLoadLogPaths(mgr manager.ServiceManager, serviceName string, instanc
 	return logPath, errorLogPath, nil
 }
 
-func compileServiceInfoObject(registeredService types.ServiceCatalogEntry, serviceInstance *types.ServiceInstance, config *types.ServiceConfig, logPath *string, errorLogPath *string) apiInfoResult {
+func compileServiceInfoObject(registeredService *types.ServiceCatalogEntry, serviceInstance *types.ServiceInstance, config *types.ServiceConfig, logPath *string, errorLogPath *string) apiInfoResult {
 	serviceInfo := apiInfoResult{
 		Name:         registeredService.Name,
 		Path:         registeredService.DirectoryPath,

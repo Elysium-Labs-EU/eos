@@ -161,7 +161,10 @@ func (hm *HealthMonitor) Start(ctx context.Context) {
 	}
 }
 
-// TODO: Do we want this to only do state? Or become a check for all relevant health properties, just divided per state arm?
+// checkAllServices is currently scoped to state transitions only; whether it
+// should grow into a general check for all relevant health properties
+// (memory, CPU, port reachability), divided per state arm, is an open
+// design question (see issue #160).
 func (hm *HealthMonitor) checkAllServices(ctx context.Context, services []types.ServiceCatalogEntry) {
 	for i := range services {
 		hm.checkService(ctx, &services[i])

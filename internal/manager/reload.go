@@ -142,7 +142,7 @@ func (m *LocalManager) reloadLaunchIncoming(name string, target *reloadTarget, l
 	}
 
 	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
-	return m.launchAndCapture(target.service, target.config, lio, target.resolvedSinks, launchSuccess, "reload command")
+	return m.launchAndCapture(&target.service, target.config, lio, target.resolvedSinks, launchSuccess, "reload command")
 }
 
 // reloadTarget is the resolved, validated input a cutover launches from: the

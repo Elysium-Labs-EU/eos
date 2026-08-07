@@ -44,7 +44,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			errorLogPath := infoFetchLogPath(cmd, mgr, serviceName, true, serviceInstance)
 
 			infoPrintProcessSection(cmd, processEntry)
-			infoPrintServiceSection(cmd, registeredService)
+			infoPrintServiceSection(cmd, &registeredService)
 			infoPrintLoggingSection(cmd, logPath, errorLogPath, config)
 			infoPrintInstanceSection(cmd, serviceInstance)
 			infoPrintConfigSection(cmd, config)
@@ -119,7 +119,7 @@ func infoPrintProcessSection(cmd *cobra.Command, processEntry *types.ProcessHist
 	}
 }
 
-func infoPrintServiceSection(cmd *cobra.Command, registeredService types.ServiceCatalogEntry) {
+func infoPrintServiceSection(cmd *cobra.Command, registeredService *types.ServiceCatalogEntry) {
 	helpers.PrintSection(cmd, "Service")
 	helpers.PrintKV(cmd, "name", registeredService.Name)
 	helpers.PrintKV(cmd, "path", registeredService.DirectoryPath)

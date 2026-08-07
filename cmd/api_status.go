@@ -87,7 +87,7 @@ func apiStatusCollectServices(mgr manager.ServiceManager) ([]apiStatusService, e
 	services := make([]apiStatusService, 0, len(registeredServices))
 
 	for _, reg := range registeredServices {
-		entry, err := apiStatusBuildServiceEntry(mgr, reg)
+		entry, err := apiStatusBuildServiceEntry(mgr, &reg)
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +97,7 @@ func apiStatusCollectServices(mgr manager.ServiceManager) ([]apiStatusService, e
 	return services, nil
 }
 
-func apiStatusBuildServiceEntry(mgr manager.ServiceManager, reg types.ServiceCatalogEntry) (apiStatusService, error) {
+func apiStatusBuildServiceEntry(mgr manager.ServiceManager, reg *types.ServiceCatalogEntry) (apiStatusService, error) {
 	entry := apiStatusService{Name: reg.Name}
 
 	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(reg.Name)

@@ -100,11 +100,18 @@ func bootPersistedServices(ctx context.Context, mgr *manager.LocalManager, logge
 	// its own max_wait instead of wedging the whole boot on a fixed sequence.
 	var wg sync.WaitGroup
 	for _, service := range allRegisteredServices {
+		if !service.Enabled {
+			// Stopped by hand (eos stop) before this boot; skip it rather than
+			// restarting every registered service unconditionally (issue #172).
+			// eos run re-enables it, at which point a later boot picks it back up.
+			logger.Debug("skipping disabled service", "service", service.Name)
+			continue
+		}
 		wg.Add(1)
-		go func(entry types.ServiceCatalogEntry) {
+		go func(entry *types.ServiceCatalogEntry) {
 			defer wg.Done()
 			bootService(ctx, mgr, logger, entry)
-		}(service)
+		}(&service)
 	}
 	wg.Wait()
 	return nil
@@ -114,7 +121,7 @@ func bootPersistedServices(ctx context.Context, mgr *manager.LocalManager, logge
 // starts it. Dependency-wait and start failures are logged and swallowed: one
 // service failing to come up must not abort the daemon or the other services'
 // boot, matching the pre-ordering "log and continue" behavior.
-func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger, entry types.ServiceCatalogEntry) {
+func bootService(ctx context.Context, mgr *manager.LocalManager, logger *slog.Logger, entry *types.ServiceCatalogEntry) {
 	logger.Debug("booting persisted service", "service", entry.Name)
 
 	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
@@ -991,6 +998,7 @@ var requestHandlers = map[types.MethodName]requestHandler{
 	types.MethodIsServiceRegistered:              handleIsServiceRegistered,
 	types.MethodRemoveServiceCatalogEntry:        handleRemoveServiceCatalogEntry,
 	types.MethodUpdateServiceCatalogEntry:        handleUpdateServiceCatalogEntry,
+	types.MethodSetServiceEnabled:                handleSetServiceEnabled,
 	types.MethodGetMostRecentProcessHistoryEntry: handleGetMostRecentProcessHistoryEntry,
 	types.MethodSetDependencyWaitStatus:          handleSetDependencyWaitStatus,
 	types.MethodClearDependencyWaitStatus:        handleClearDependencyWaitStatus,
@@ -1316,6 +1324,17 @@ func handleUpdateServiceCatalogEntry(mgr manager.ServiceManager, rawArgs json.Ra
 	}
 	err := mgr.UpdateServiceCatalogEntry(args.Name, args.NewDirectoryPath, args.NewConfigFileName)
 	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	return types.DaemonResponse{Success: true}
+}
+
+func handleSetServiceEnabled(mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.SetServiceEnabledArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodSetServiceEnabled args: %v", err))
+	}
+	if err := mgr.SetServiceEnabled(args.Name, args.Enabled); err != nil {
 		return sentinelErrorResponse(err)
 	}
 	return types.DaemonResponse{Success: true}

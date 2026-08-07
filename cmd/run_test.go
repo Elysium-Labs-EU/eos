@@ -31,7 +31,7 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -90,7 +90,7 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -145,6 +145,68 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "restarted with PGID:") {
 		t.Fatalf("didn't complete successfully, no PGID was returned, got: %v", secondOutput)
+	}
+}
+
+// TestRunCommandReEnablesAfterStop proves issue #172's fix: "eos run" clears
+// the disabled flag "eos stop" persisted, so the service is picked back up on
+// the next daemon boot.
+func TestRunCommandReEnablesAfterStop(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	var outBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&outBuf)
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"run", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"stop", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("stop should not return an error, got: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Fatal("expected Enabled=false after 'eos stop'")
+	}
+
+	cmd.SetArgs([]string{"run", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run should not return an error, got: %v", err)
+	}
+
+	entry, err = mgr.GetServiceCatalogEntry(testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after re-running with 'eos run'")
 	}
 }
 
@@ -214,7 +276,7 @@ func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -264,7 +326,7 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -340,7 +402,7 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -449,7 +511,7 @@ func TestRunWithUnreadableYamlFile(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -504,7 +566,7 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -595,7 +657,7 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -686,7 +748,7 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -1048,7 +1110,7 @@ func TestRunStartRegisteredServiceError(t *testing.T) {
 
 	fake := &runFakeManager{startErr: errors.New("spawn failed")}
 	entry := types.ServiceCatalogEntry{Name: "svc"}
-	if err := runStartRegisteredService(cmd, fake, 0, entry); !errors.Is(err, helpers.ErrCommandFailed) {
+	if err := runStartRegisteredService(cmd, fake, 0, &entry); !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 }

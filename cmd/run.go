@@ -39,7 +39,7 @@ type ServiceStartResult struct {
 	PGID      int
 }
 
-func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration, registeredService types.ServiceCatalogEntry) (ServiceStartResult, error) {
+func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) (ServiceStartResult, error) {
 	pgid, err := mgr.StartService(registeredService.Name)
 
 	if err == nil {
@@ -97,7 +97,7 @@ func registerServiceIfNeeded(mgr manager.ServiceManager, serviceYamlFile string,
 // depends_on reports healthy, or returns a loud error once its max_wait ceiling
 // is hit. A service with no depends_on returns immediately, taking the exact
 // same path as before ordering existed.
-func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.ServiceManager, entry types.ServiceCatalogEntry) error {
+func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.ServiceManager, entry *types.ServiceCatalogEntry) error {
 	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
 	if err != nil {
 		return fmt.Errorf("loading service config: %w", err)
@@ -293,7 +293,7 @@ func runGetRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, ser
 	return registeredService, nil
 }
 
-func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, entry types.ServiceCatalogEntry) error {
+func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, entry *types.ServiceCatalogEntry) error {
 	if depErr := gateDependencies(cmd.Context(), cmd, mgr, entry); depErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), depErr.Error())
 		return helpers.ErrCommandFailed
@@ -301,7 +301,7 @@ func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, 
 	return nil
 }
 
-func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService types.ServiceCatalogEntry) error {
+func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) error {
 	serviceRunResult, err := startOrRestartService(mgr, gracePeriod, registeredService)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
@@ -349,6 +349,14 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				return err
 			}
 
+			// Persist the run as this service's desired boot state, clearing any
+			// stop recorded by a prior "eos stop" — bootPersistedServices reads
+			// this flag on the next daemon start/reboot (issue #172).
+			if err = mgr.SetServiceEnabled(serviceName, true); err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
+				return helpers.ErrCommandFailed
+			}
+
 			skip, onceErr := runHandleOnceFlag(cmd, mgr, once, serviceName)
 			if onceErr != nil {
 				return onceErr
@@ -368,11 +376,11 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			// that the service will start but never leave 'starting'.
 			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
 
-			if depErr := runGateServiceDependencies(cmd, mgr, registeredService); depErr != nil {
+			if depErr := runGateServiceDependencies(cmd, mgr, &registeredService); depErr != nil {
 				return depErr
 			}
 
-			return runStartRegisteredService(cmd, mgr, cfg.Shutdown.GracePeriod, registeredService)
+			return runStartRegisteredService(cmd, mgr, cfg.Shutdown.GracePeriod, &registeredService)
 		},
 	}
 

@@ -52,7 +52,7 @@ func TestAPIStatusCollectServicesCatalogError(t *testing.T) {
 func TestAPIStatusBuildServiceEntryProcessError(t *testing.T) {
 	wantErr := errors.New("boom")
 	reg := types.ServiceCatalogEntry{Name: "svc"}
-	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{processErr: wantErr}, reg); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
+	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{processErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
 		t.Errorf("expected wrapped 'getting process for' error, got: %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestAPIStatusBuildServiceEntryProcessError(t *testing.T) {
 func TestAPIStatusBuildServiceEntryInstanceError(t *testing.T) {
 	wantErr := errors.New("boom")
 	reg := types.ServiceCatalogEntry{Name: "svc"}
-	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{instanceErr: wantErr}, reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
+	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{instanceErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
 		t.Errorf("expected wrapped 'getting instance for' error, got: %v", err)
 	}
 }

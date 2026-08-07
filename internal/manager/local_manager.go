@@ -462,6 +462,15 @@ func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath s
 	return nil
 }
 
+// SetServiceEnabled persists name's desired boot state. See the
+// ServiceManager interface doc for why this exists.
+func (m *LocalManager) SetServiceEnabled(name string, enabled bool) error {
+	if err := m.db.SetServiceCatalogEnabled(m.ctx, name, enabled); err != nil {
+		return fmt.Errorf("set service enabled %q: %w", name, err)
+	}
+	return nil
+}
+
 func newPipeForStd() (r *os.File, w *os.File, err error) {
 	r, w, err = os.Pipe()
 	if err != nil {
@@ -672,7 +681,7 @@ func (lio launchIO) closeAll(m *LocalManager, serviceName string) error {
 
 // buildLaunchCommand constructs the /bin/sh command that runs a service, wiring
 // its process group, working directory, environment, and stdout/stderr pipes.
-func (m *LocalManager) buildLaunchCommand(service types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO) (*exec.Cmd, error) {
+func (m *LocalManager) buildLaunchCommand(service *types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO) (*exec.Cmd, error) {
 	cmd := m.executor.CommandContext(m.ctx, "/bin/sh", "-c", config.Command) // #nosec G204 -- command is user-defined in their service.yaml config
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Without this, canceling m.ctx (daemon shutdown on SIGTERM/SIGINT) falls
@@ -834,7 +843,7 @@ func (m *LocalManager) loadServiceForLaunch(name string) (types.ServiceCatalogEn
 // and captures its process identity. On a successful Start it sets
 // *launchSuccess so the caller's deferred IO cleanup is skipped. startErrLabel
 // distinguishes "start command" from "restart command" in the error.
-func (m *LocalManager) launchAndCapture(service types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO, resolvedSinks []types.LogSink, launchSuccess *bool, startErrLabel string) (pgid int, startedAtTicks int64, err error) {
+func (m *LocalManager) launchAndCapture(service *types.ServiceCatalogEntry, config *types.ServiceConfig, lio launchIO, resolvedSinks []types.LogSink, launchSuccess *bool, startErrLabel string) (pgid int, startedAtTicks int64, err error) {
 	cmd, err := m.buildLaunchCommand(service, config, lio)
 	if err != nil {
 		return 0, 0, err
@@ -858,7 +867,7 @@ func (m *LocalManager) launchAndCapture(service types.ServiceCatalogEntry, confi
 
 // recordStartedInstance persists the service instance and process-history rows
 // for a freshly started service. On any DB failure it kills the process group.
-func (m *LocalManager) recordStartedInstance(service types.ServiceCatalogEntry, pgid int, startedAtTicks int64) (int, error) {
+func (m *LocalManager) recordStartedInstance(service *types.ServiceCatalogEntry, pgid int, startedAtTicks int64) (int, error) {
 	if regErr := m.db.RegisterServiceInstance(m.ctx, service.Name); regErr != nil {
 		return killAndWrap(pgid, regErr, "register service instance")
 	}
@@ -875,7 +884,7 @@ func (m *LocalManager) recordStartedInstance(service types.ServiceCatalogEntry, 
 
 // recordRestartedInstance bumps the restart count and records the new process
 // history row for a restarted service. On any DB failure it kills the group.
-func (m *LocalManager) recordRestartedInstance(service types.ServiceCatalogEntry, restartCount, pgid int, startedAtTicks int64) (int, error) {
+func (m *LocalManager) recordRestartedInstance(service *types.ServiceCatalogEntry, restartCount, pgid int, startedAtTicks int64) (int, error) {
 	if updErr := m.db.UpdateServiceInstance(m.ctx, service.Name, database.ServiceInstanceUpdate{
 		StartedAt:    new(time.Now()),
 		RestartCount: new(restartCount + 1),
@@ -889,10 +898,14 @@ func (m *LocalManager) recordRestartedInstance(service types.ServiceCatalogEntry
 }
 
 // lmCheckAlreadyRunning returns ErrAlreadyRunning if serviceInstance is on
-// record and processHistory shows a still-live process for it. A recorded
-// instance with nothing alive in its history is stale (e.g. the daemon was
-// killed out-of-band without a clean `eos stop`) and is not an error: the
-// caller self-heals by proceeding with the start.
+// record and processHistory shows a still-live process for it — intentionally
+// omitting the live PGID, since changing StartService's (pgid, err) contract
+// to carry one alongside an error would ripple to every caller, and callers
+// that need it already have GetServiceInstance. A recorded instance with
+// nothing alive in its history is stale (e.g. the daemon was killed
+// out-of-band without a clean `eos stop`, which never got the chance to
+// remove this row) and is not an error: the caller self-heals by proceeding
+// with the start.
 func lmCheckAlreadyRunning(serviceInstance *types.ServiceInstance, processHistory []types.ProcessHistory) error {
 	if serviceInstance == nil {
 		return nil
@@ -963,12 +976,12 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 	}
 
 	m.logger.Debug("launching service", "service", name, "cmd", config.Command)
-	pgid, startedAtTicks, err := m.launchAndCapture(service, config, lio, resolvedSinks, &launchSuccess, "start command")
+	pgid, startedAtTicks, err := m.launchAndCapture(&service, config, lio, resolvedSinks, &launchSuccess, "start command")
 	if err != nil {
 		return pgid, err
 	}
 
-	pgid, err = m.recordStartedInstance(service, pgid, startedAtTicks)
+	pgid, err = m.recordStartedInstance(&service, pgid, startedAtTicks)
 	if err != nil {
 		return pgid, err
 	}
@@ -1032,12 +1045,12 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 	}
 
 	m.logger.Debug("stop complete, launching restart", "service", name)
-	pgid, startedAtTicks, err := m.launchAndCapture(service, config, lio, resolvedSinks, &launchSuccess, "restart command")
+	pgid, startedAtTicks, err := m.launchAndCapture(&service, config, lio, resolvedSinks, &launchSuccess, "restart command")
 	if err != nil {
 		return pgid, err
 	}
 
-	return m.recordRestartedInstance(service, serviceInstance.RestartCount, pgid, startedAtTicks)
+	return m.recordRestartedInstance(&service, serviceInstance.RestartCount, pgid, startedAtTicks)
 }
 
 func (m *LocalManager) prepareLogFiles(serviceName string, config *types.ServiceConfig) (logFile *RotatingFileWriter, errorLogFile *RotatingFileWriter, err error) {

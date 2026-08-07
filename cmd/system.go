@@ -211,7 +211,12 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
 
 For systemd user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
 
-On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
+On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.
+
+Enabling this also revives every previously-registered service that wasn't
+stopped by hand: the daemon starts every service in its catalog on boot,
+skipping only those last stopped with "eos stop" — not just the eos daemon
+itself.`,
 		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)\n       eos system startup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
