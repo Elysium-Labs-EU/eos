@@ -34,6 +34,12 @@ type Database interface {
 	RegisterService(ctx context.Context, name string, directoryPath string, configFileName string) error
 	RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error)
 	UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error
+	// SetServiceCatalogEnabled persists a service's desired boot state: false
+	// once it's been stopped by hand (eos stop), true again once it's been
+	// re-run (eos run). bootPersistedServices reads this on daemon startup to
+	// skip a service the operator deliberately stopped, instead of restarting
+	// every registered service unconditionally (see issue #172).
+	SetServiceCatalogEnabled(ctx context.Context, name string, enabled bool) error
 
 	GetProcessHistoryEntriesByServiceName(ctx context.Context, serviceName string) ([]types.ProcessHistory, error)
 	GetMostRecentProcessHistoryEntryByName(ctx context.Context, serviceName string) (types.ProcessHistory, error)
@@ -218,7 +224,7 @@ func (db *DB) RegisterProcessHistoryEntry(ctx context.Context, pgid int, started
 
 func (db *DB) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error) {
 	query := `
-	SELECT name, path, config_file, created_at
+	SELECT name, path, config_file, created_at, enabled
 	FROM service_catalog
 	ORDER BY name
 	`
@@ -232,7 +238,7 @@ func (db *DB) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceC
 	var services []types.ServiceCatalogEntry
 	for rows.Next() {
 		var service types.ServiceCatalogEntry
-		err := rows.Scan(&service.Name, &service.DirectoryPath, &service.ConfigFileName, &service.CreatedAt)
+		err := rows.Scan(&service.Name, &service.DirectoryPath, &service.ConfigFileName, &service.CreatedAt, &service.Enabled)
 		if err != nil {
 			return nil, fmt.Errorf("could not scan service row: %w", err)
 		}
@@ -250,7 +256,7 @@ var ErrServiceNotFound = errors.New("service not found")
 
 func (db *DB) GetServiceCatalogEntry(ctx context.Context, name string) (types.ServiceCatalogEntry, error) {
 	query := `
-	SELECT name, path, config_file, created_at
+	SELECT name, path, config_file, created_at, enabled
 	FROM service_catalog
 	WHERE name = ?
 	`
@@ -258,7 +264,7 @@ func (db *DB) GetServiceCatalogEntry(ctx context.Context, name string) (types.Se
 	row := db.conn.QueryRowContext(ctx, query, name)
 	var svc types.ServiceCatalogEntry
 
-	err := row.Scan(&svc.Name, &svc.DirectoryPath, &svc.ConfigFileName, &svc.CreatedAt)
+	err := row.Scan(&svc.Name, &svc.DirectoryPath, &svc.ConfigFileName, &svc.CreatedAt, &svc.Enabled)
 	if err == sql.ErrNoRows {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
 	}
@@ -427,8 +433,8 @@ func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, servic
 
 func (db *DB) IsServiceRegistered(ctx context.Context, name string) (bool, error) {
 	query := `
-	SELECT COUNT(*) 
-	FROM service_catalog 
+	SELECT COUNT(*)
+	FROM service_catalog
 	WHERE name = ?
 	`
 
@@ -596,7 +602,13 @@ func (db *DB) UpdateProcessHistoryEntry(ctx context.Context, pgid int, updates P
 		}
 	}
 
-	// #nosec G201 - column names are from a validated allowlist
+	// #nosec G201 - Sonar go:S2077: fmt.Sprintf builds the SET clause, but only
+	// with the fixed string literals appended above ("error", "started_at", ...),
+	// each gated behind a compile-time struct field on ProcessHistoryUpdate. No
+	// caller, reflection, or external input (HTTP/CLI/config) can substitute a
+	// different column name here. The processHistoryValidColumns check above is
+	// belt-and-braces on top of that. Every *value* (updates.Error, pgid, ...)
+	// goes through args as a bind parameter via "?", never through Sprintf.
 	query := fmt.Sprintf("UPDATE process_history SET %s WHERE pgid = ?",
 		strings.Join(setParts, ", "))
 	args = append(args, pgid)
@@ -681,6 +693,24 @@ func (db *DB) ClearAllDependencyWaits(ctx context.Context) error {
 	return nil
 }
 
+// SetServiceCatalogEnabled updates a service's persisted desired boot state.
+// See the Database interface doc for why this exists.
+func (db *DB) SetServiceCatalogEnabled(ctx context.Context, name string, enabled bool) error {
+	result, err := db.conn.ExecContext(ctx, "UPDATE service_catalog SET enabled = ? WHERE name = ?", enabled, name)
+	if err != nil {
+		return fmt.Errorf("could not set service catalog enabled: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("could not check update result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: %s", ErrServiceNotFound, name)
+	}
+	return nil
+}
+
 func (db *DB) UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error {
 	query := `
 	UPDATE service_catalog
@@ -758,7 +788,14 @@ func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates Se
 		}
 	}
 
-	// #nosec G201 - column names are from a validated allowlist
+	// #nosec G201 - Sonar go:S2077: fmt.Sprintf builds the SET clause, but only
+	// with the fixed string literals appended above ("restart_count",
+	// "last_health_check", ...), each gated behind a compile-time struct field
+	// on ServiceInstanceUpdate. No caller, reflection, or external input
+	// (HTTP/CLI/config) can substitute a different column name here. The
+	// serviceInstanceValidColumns check above is belt-and-braces on top of
+	// that. Every *value* (updates.RestartCount, name, ...) goes through args
+	// as a bind parameter via "?", never through Sprintf.
 	query := fmt.Sprintf("UPDATE service_instances SET %s WHERE name = ?",
 		strings.Join(setParts, ", "))
 	args = append(args, name)

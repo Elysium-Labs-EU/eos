@@ -226,7 +226,12 @@ On systemd, auto-detects the unit scope based on how you invoke the command:
 
 For systemd user units, add boot-time autostart (without login) with: loginctl enable-linger <username>
 
-On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.`,
+On OpenRC, installs a system-wide init script at /etc/init.d/eos and requires root — OpenRC has no per-user service scope.
+
+Enabling this also revives every previously-registered service that wasn't
+stopped by hand: the daemon starts every service in its catalog on boot,
+skipping only those last stopped with "eos stop" — not just the eos daemon
+itself.`,
 		Example:       "  sudo eos system startup  # system unit (root, one per host)\n       eos system startup  # user unit (no root, per-user, systemd/launchd only)\n       eos system startup --yes  # skip confirmation (non-interactive)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -810,6 +815,13 @@ func isAccessibleDir(path string, uid int) bool {
 	return int(stat.Uid) == uid
 }
 
+// dirAccessCheckFn matches isAccessibleDir's signature; ensureUserBusAvailable takes it as a
+// parameter (isAccessibleDir in production) instead of calling isAccessibleDir directly, so tests
+// can inject a fake that doesn't depend on the real /run/user/<uid> — needed because on a root-run
+// CI job /run/user/0 genuinely exists and is root-owned, making the real check pass in an
+// environment a test wants to treat as "no bus available".
+type dirAccessCheckFn func(path string, uid int) bool
+
 // ensureUserBusAvailable diagnoses and, where possible, auto-fixes the "no systemd user bus"
 // condition that causes `systemctl --user ...` to fail with "Failed to connect to bus: Permission
 // denied". This happens when XDG_RUNTIME_DIR is unset/stale (fixable by correcting the env var) or
@@ -817,16 +829,18 @@ func isAccessibleDir(path string, uid int) bool {
 // expected is the runtime dir this process should be using (userRuntimeDir(uid) in production;
 // injected directly in tests so they don't depend on the real /run/user/<uid>). uid is the target
 // user's uid — the user the systemd --user session belongs to, resolved via
-// userutil.EffectiveUser() by the caller, not necessarily os.Getuid() (root under sudo).
-func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username string, uid int, expected string, run runCmdFn) error {
+// userutil.EffectiveUser() by the caller, not necessarily os.Getuid() (root under sudo). checkDir
+// is isAccessibleDir in production; tests inject a fake to stay deterministic regardless of what
+// runtime dirs genuinely exist in the environment running the test.
+func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose bool, username string, uid int, expected string, run runCmdFn, checkDir dirAccessCheckFn) error {
 	current := os.Getenv("XDG_RUNTIME_DIR")
 	helpers.Debugf(cmd, verbose, "XDG_RUNTIME_DIR=%q (expected %q)", current, expected)
 
-	if isAccessibleDir(current, uid) {
+	if checkDir(current, uid) {
 		return nil
 	}
 
-	if isAccessibleDir(expected, uid) {
+	if checkDir(expected, uid) {
 		helpers.Debugf(cmd, verbose, "correcting XDG_RUNTIME_DIR to %q", expected)
 		if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 			return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
@@ -853,7 +867,7 @@ func ensureUserBusAvailable(ctx context.Context, cmd *cobra.Command, verbose boo
 
 	for attempt := 1; attempt <= 5; attempt++ {
 		helpers.Debugf(cmd, verbose, "checking for %q (attempt %d/5)", expected, attempt)
-		if isAccessibleDir(expected, uid) {
+		if checkDir(expected, uid) {
 			if err := os.Setenv("XDG_RUNTIME_DIR", expected); err != nil {
 				return fmt.Errorf("setting XDG_RUNTIME_DIR: %w", err)
 			}
@@ -953,7 +967,7 @@ func prepareUserBus(ctx context.Context, cmd *cobra.Command, verbose bool, effec
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user credentials: %v", credErr))
 		return helpers.ErrCommandFailed
 	}
-	if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run); err != nil {
+	if err := ensureUserBusAvailable(ctx, cmd, verbose, effectiveUser.Username, int(effectiveUID), userRuntimeDir(int(effectiveUID)), run, isAccessibleDir); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("preparing user bus: %v", err))
 		return helpers.ErrCommandFailed
 	}
@@ -1579,9 +1593,25 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 	return binary, tempDir, nil
 }
 
+// installExecutablePerm returns the permission bits to apply to the freshly
+// installed binary: whatever the previously installed binary already had,
+// capped at 0755 so an update can never widen access beyond owner-rwx/
+// group-rx/other-rx, with owner-execute guaranteed even if the prior file
+// was somehow not executable. replaceBinary's os.Rename drops the old
+// inode's mode entirely, so this must be read from the file before it's
+// replaced.
+func installExecutablePerm(existing os.FileMode) os.FileMode {
+	return (existing.Perm() & 0o755) | 0o100
+}
+
 // installUpdatedBinary backs up the current binary, replaces it with the
 // downloaded one, and makes it executable, cleaning up on failure.
 func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempDir string) error {
+	perm := os.FileMode(0o755)
+	if info, statErr := os.Stat(binaryPath); statErr == nil {
+		perm = installExecutablePerm(info.Mode())
+	}
+
 	backupPath := fmt.Sprintf("%s.backup.%s", binaryPath, time.Now().Format("20060102_150405"))
 	if err := createDestinationFile(backupPath); err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("creating destination file: %v", err))
@@ -1600,7 +1630,7 @@ func installUpdatedBinary(cmd *cobra.Command, binary *os.File, binaryPath, tempD
 		cleanupTempDir(cmd, tempDir)
 		return helpers.ErrCommandFailed
 	}
-	if err := os.Chmod(binaryPath, 0755); err != nil { // #nosec G302 -- executable binary needs to be runnable by all users
+	if err := os.Chmod(binaryPath, perm); err != nil { // #nosec G302 -- perm is capped at 0755 by installExecutablePerm, never wider than the binary's own previous mode
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("setting permissions: %v", err))
 		return helpers.ErrCommandFailed
 	}

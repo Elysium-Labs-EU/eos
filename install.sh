@@ -36,7 +36,7 @@ readonly REQUIRE_RELEASE_SIGNATURE=true
 # with a warning (checksum-only integrity). Pure — reads only
 # REQUIRE_RELEASE_SIGNATURE, no I/O.
 decide_missing_signature_action() {
-    if [ "$REQUIRE_RELEASE_SIGNATURE" = "true" ]; then
+    if [[ "$REQUIRE_RELEASE_SIGNATURE" = "true" ]]; then
         printf 'refuse\n'
     else
         printf 'warn\n'
@@ -46,27 +46,33 @@ decide_missing_signature_action() {
 AUTO_YES=false
 
 info() {
-    echo -e "${BLUE}${BOLD}info${NC} $1"
+    local msg="$1"
+    echo -e "${BLUE}${BOLD}info${NC} $msg"
 }
 
 success() {
-    echo -e "${GREEN}${BOLD}✓${NC} $1"
+    local msg="$1"
+    echo -e "${GREEN}${BOLD}✓${NC} $msg"
 }
 
 warn() {
-    echo -e "${YELLOW}${BOLD}warning${NC} $1"
+    local msg="$1"
+    echo -e "${YELLOW}${BOLD}warning${NC} $msg"
 }
 
 error() {
-    echo -e "${RED}${BOLD}error${NC} $1" >&2
+    local msg="$1"
+    echo -e "${RED}${BOLD}error${NC} $msg" >&2
 }
 
 step() {
-    echo -e "\n${CYAN}${BOLD}→${NC} $1"
+    local msg="$1"
+    echo -e "\n${CYAN}${BOLD}→${NC} $msg"
 }
 
 dim() {
-    echo -e "${DIM}$1${NC}"
+    local msg="$1"
+    echo -e "${DIM}$msg${NC}"
 }
 
 usage() {
@@ -86,29 +92,29 @@ confirm() {
     local prompt="$1"
     local default="${2:-n}"
 
-    if [ "$AUTO_YES" = true ]; then
+    if [[ "$AUTO_YES" = true ]]; then
         [[ "$default" =~ ^[Yy]$ ]]
         return $?
     fi
 
 
     local response
-    
-    if [ "$default" = "y" ]; then
+
+    if [[ "$default" = "y" ]]; then
         prompt="$prompt [Y/n]"
     else
         prompt="$prompt [y/N]"
     fi
-    
+
     echo -ne "${YELLOW}?${NC} $prompt "
     read -r response
-    
+
     response=${response:-$default}
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
 check_root() {
-    if [ $EUID -ne 0 ]; then
+    if [[ $EUID -ne 0 ]]; then
         error "This script must be run as root"
         dim "  Try: sudo $0"
         exit 1
@@ -135,8 +141,8 @@ download_file() {
     local url="$1"
     local output="$2"
     local tool="$3"
-    
-    if [ "$tool" = "curl" ]; then
+
+    if [[ "$tool" = "curl" ]]; then
         curl -fsSL -o "$output" "$url" 2>&1 | sed 's/^/  /'
     else
         wget -q --show-progress -O "$output" "$url" 2>&1 | sed 's/^/  /'
@@ -167,7 +173,7 @@ pick_latest_tag() {
     printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*"([^"]+)"$/\1/' >"$scratch/tags"
     printf '%s' "$json" | grep -o '"prerelease"[[:space:]]*:[[:space:]]*[a-z]*' | sed -E 's/.*:[[:space:]]*//' >"$scratch/prerelease"
     stable="$(paste -d ' ' "$scratch/prerelease" "$scratch/tags" | awk '$1 == "false" { print $2 }' | sort -V | tail -1)"
-    if [ -n "$stable" ]; then
+    if [[ -n "$stable" ]]; then
         printf '%s' "$stable"
     else
         sort -V "$scratch/tags" | tail -1
@@ -189,19 +195,19 @@ fetch_latest_version() {
     api_base="${EOS_API_BASE:-${GITHUB_API_URL}/repos/${REPO}}"
 
     url="${api_base}/releases/latest"
-    if [ "$tool" = "curl" ]; then
+    if [[ "$tool" = "curl" ]]; then
         release_json=$(curl -fsSL "$url" 2>/dev/null) || true
     else
         release_json=$(wget -qO- "$url" 2>/dev/null) || true
     fi
 
-    if [ -n "$release_json" ]; then
+    if [[ -n "$release_json" ]]; then
         printf '%s' "$release_json" | extract_tag_name
         return
     fi
 
     url="${api_base}/releases?per_page=100"
-    if [ "$tool" = "curl" ]; then
+    if [[ "$tool" = "curl" ]]; then
         release_json=$(curl -fsSL "$url") || return 1
     else
         release_json=$(wget -qO- "$url") || return 1
@@ -257,8 +263,9 @@ detect_arch() {
 # from a downloaded binary. No-op on non-Darwin, and tolerant of the
 # attribute already being absent.
 strip_quarantine() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -d com.apple.quarantine "$1" 2>/dev/null || true
+    local path="$1"
+    if [[ "$(uname -s)" = "Darwin" ]]; then
+        xattr -d com.apple.quarantine "$path" 2>/dev/null || true
     fi
 }
 
@@ -273,8 +280,9 @@ strip_quarantine() {
 # Cheap, local, no network — re-sign unconditionally rather than rely on
 # root-causing exactly when the kernel cache goes stale. No-op on non-Darwin.
 resign_darwin_binary() {
-    if [ "$(uname -s)" = "Darwin" ] && command -v codesign &> /dev/null; then
-        codesign --force -s - "$1" 2>/dev/null || true
+    local path="$1"
+    if [[ "$(uname -s)" = "Darwin" ]] && command -v codesign &> /dev/null; then
+        codesign --force -s - "$path" 2>/dev/null || true
     fi
 }
 
@@ -300,26 +308,26 @@ check_sqlite3() {
     if ! command -v sqlite3 &> /dev/null; then
         return 1
     fi
-    
+
     if ! sqlite3 --version &> /dev/null; then
         return 1
     fi
-    
+
     local test_db="/tmp/sqlite_test_$$.db"
     if ! sqlite3 "$test_db" "SELECT 1;" &> /dev/null; then
         rm -f "$test_db"
         return 1
     fi
     rm -f "$test_db"
-    
+
     return 0
 }
 
 install_sqlite3() {
     local pkg_manager="$1"
-    
+
     step "Installing SQLite3..."
-    
+
     case $pkg_manager in
         apt)
             if apt-get update -qq && apt-get install -y -qq sqlite3 > /dev/null 2>&1; then
@@ -375,7 +383,7 @@ install_sqlite3() {
             return 1
             ;;
     esac
-    
+
     error "Failed to install SQLite3"
     return 1
 }
@@ -383,13 +391,13 @@ install_sqlite3() {
 stop_running_daemon() {
     local eos_bin="${INSTALL_DIR}/${BINARY_NAME}"
 
-    if [ ! -x "$eos_bin" ]; then
+    if [[ ! -x "$eos_bin" ]]; then
         return 0
     fi
 
     local pid
     pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
-    if [ -z "$pid" ]; then
+    if [[ -z "$pid" ]]; then
         return 0
     fi
 
@@ -401,23 +409,23 @@ stop_running_daemon() {
     if confirm "Stop eos daemon before installing?" "y"; then
         if "$eos_bin" daemon stop &>/dev/null; then
             local retries=5
-            while [ $retries -gt 0 ]; do
+            while [[ $retries -gt 0 ]]; do
                 pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
-                [ -z "$pid" ] && break
+                [[ -z "$pid" ]] && break
                 sleep 1
                 retries=$((retries - 1))
             done
         fi
 
         pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
-        if [ -n "$pid" ]; then
+        if [[ -n "$pid" ]]; then
             warn "Graceful stop timed out — force killing PID $pid"
             kill -9 "$pid" 2>/dev/null || true
             sleep 1
         fi
 
         pid=$(pgrep -x "$BINARY_NAME" 2>/dev/null || true)
-        if [ -n "$pid" ]; then
+        if [[ -n "$pid" ]]; then
             error "Failed to stop eos daemon (PID $pid)"
             if ! confirm "Continue anyway?" "n"; then
                 exit 1
@@ -436,7 +444,7 @@ refresh_completions() {
     local target_home
     target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
 
-    if [ -z "$target_home" ]; then
+    if [[ -z "$target_home" ]]; then
         return 0
     fi
 
@@ -446,27 +454,27 @@ refresh_completions() {
     local fish_completion="${target_home}/.config/fish/completions/${BINARY_NAME}.fish"
 
     local refreshed=false
-    if [ -f "$bash_completion" ] && "$eos_bin" completion bash > "$bash_completion" 2>/dev/null; then
+    if [[ -f "$bash_completion" ]] && "$eos_bin" completion bash > "$bash_completion" 2>/dev/null; then
         refreshed=true
     fi
-    if [ -f "$zsh_completion" ] && "$eos_bin" completion zsh > "$zsh_completion" 2>/dev/null; then
+    if [[ -f "$zsh_completion" ]] && "$eos_bin" completion zsh > "$zsh_completion" 2>/dev/null; then
         refreshed=true
     fi
-    if [ -f "$fish_completion" ] && "$eos_bin" completion fish > "$fish_completion" 2>/dev/null; then
+    if [[ -f "$fish_completion" ]] && "$eos_bin" completion fish > "$fish_completion" 2>/dev/null; then
         refreshed=true
     fi
 
-    if [ "$refreshed" = true ]; then
+    if [[ "$refreshed" = true ]]; then
         success "Refreshed shell completion for ${target_user}"
     fi
 }
 
 setup_sqlite3() {
     local pkg_manager="$1"
-    
+
     echo ""
     step "Checking SQLite3..."
-    
+
     if check_sqlite3; then
         local version
         version=$(sqlite3 --version | cut -d' ' -f1)
@@ -474,12 +482,12 @@ setup_sqlite3() {
         dim "  Location: $(command -v sqlite3)"
         return 0
     fi
-    
+
     info "SQLite3 is not installed"
     dim "  SQLite3 is required for storing service state and configuration"
     echo ""
-    
-    if [ "$pkg_manager" = "unknown" ]; then
+
+    if [[ "$pkg_manager" = "unknown" ]]; then
         warn "Cannot install automatically (unknown package manager)"
         echo ""
         if ! confirm "Continue without SQLite3? (not recommended)" "n"; then
@@ -488,7 +496,7 @@ setup_sqlite3() {
         fi
         return 1
     fi
-    
+
     if confirm "Install SQLite3 now?" "y"; then
         if install_sqlite3 "$pkg_manager"; then
             if check_sqlite3; then
@@ -513,9 +521,10 @@ setup_sqlite3() {
             dnf) dim "    sudo dnf install sqlite" ;;
             apk) dim "    sudo apk add sqlite" ;;
             pacman) dim "    sudo pacman -S sqlite" ;;
+            *) ;;
         esac
         echo ""
-        
+
         if ! confirm "Continue without SQLite3? (not recommended)" "n"; then
             error "Installation cancelled"
             exit 1
@@ -529,7 +538,8 @@ main() {
     local local_binary=""
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        local arg="$1"
+        case "$arg" in
             --local)
                 if [[ $# -lt 2 ]]; then
                     error "--local requires a path argument"
@@ -540,7 +550,7 @@ main() {
                 shift 2
                 ;;
             --local=*)
-                local_binary="${1#*=}"
+                local_binary="${arg#*=}"
                 shift
                 ;;
             --help|-h)
@@ -552,31 +562,29 @@ main() {
                 shift
                 ;;
             *)
-                error "Unknown option: $1"
+                error "Unknown option: $arg"
                 usage
                 exit 1
                 ;;
         esac
     done
 
-    if [ -n "$local_binary" ]; then
-        if [ ! -f "$local_binary" ]; then
-            error "Local binary not found: $local_binary"
-            exit 1
-        fi
+    if [[ -n "$local_binary" && ! -f "$local_binary" ]]; then
+        error "Local binary not found: $local_binary"
+        exit 1
     fi
 
     echo ""
     echo -e "${BOLD}eos installer${NC}"
     echo ""
-    
+
     info "Running pre-flight checks..."
     check_root
-    
+
     local download_tool
     download_tool=$(detect_download_tool)
     dim "  Download tool: $download_tool"
-    
+
     local os
     os=$(detect_os)
     dim "  OS: $os"
@@ -588,26 +596,26 @@ main() {
     local pkg_manager
     pkg_manager=$(detect_package_manager)
     dim "  Package manager: $pkg_manager"
-    
-    if [ "$INSTALL_DIR" != "/usr/local/bin" ]; then
+
+    if [[ "$INSTALL_DIR" != "/usr/local/bin" ]]; then
         dim "  Install directory: $INSTALL_DIR (custom)"
     fi
 
     echo ""
 
     local version=""
-    if [ -z "$local_binary" ]; then
+    if [[ -z "$local_binary" ]]; then
         version="${EOS_VERSION:-}"
-        if [ -z "$version" ]; then
+        if [[ -z "$version" ]]; then
             step "Fetching latest version..."
             version=$(fetch_latest_version "$download_tool") || true
 
-            if [ -z "$version" ]; then
+            if [[ -z "$version" ]]; then
                 error "Failed to fetch latest version"
                 dim "  Set EOS_VERSION environment variable to specify manually"
                 exit 1
             fi
-            
+
             info "Latest version: ${BOLD}$version${NC}"
         else
             info "Using version: ${BOLD}$version${NC}"
@@ -615,11 +623,11 @@ main() {
     else
         info "Using local binary: ${BOLD}$local_binary${NC}"
     fi
-    
+
     echo ""
-    
+
     echo -e "${BOLD}Installation plan:${NC}"
-    if [ -n "$local_binary" ]; then
+    if [[ -n "$local_binary" ]]; then
         echo "  1. Use local binary: ${local_binary}"
     else
         echo "  1. Download binary from GitHub"
@@ -628,14 +636,14 @@ main() {
     echo "  3. Install SQLite3 (if needed)"
     echo "  4. Create home directory at ${HOME_DIR}"
     echo ""
-    
+
     if ! confirm "Continue with installation?" "y"; then
         info "Installation cancelled"
         exit 0
     fi
-    
+
     local tmp_binary
-    if [ -n "$local_binary" ]; then
+    if [[ -n "$local_binary" ]]; then
         tmp_binary="$local_binary"
         success "Using local binary"
     else
@@ -648,14 +656,14 @@ main() {
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
         trap 'rm -rf "${tmp_dir:-}"' EXIT
         tmp_binary="${tmp_dir}/${BINARY_NAME}"
-        
+
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
             error "Download failed"
             dim "  URL: $download_url"
             exit 1
         fi
 
-        if [ ! -f "$tmp_binary" ]; then
+        if [[ ! -f "$tmp_binary" ]]; then
             error "Binary not found after download"
             exit 1
         fi
@@ -676,7 +684,7 @@ main() {
         local expected_checksum
         expected_checksum=$(grep "  ${binary_name}$" "$tmp_checksums" | awk '{print $1}')
 
-        if [ -z "$expected_checksum" ]; then
+        if [[ -z "$expected_checksum" ]]; then
             error "No checksum found for ${binary_name} in sha256sums.txt"
             exit 1
         fi
@@ -684,7 +692,7 @@ main() {
         local actual_checksum
         actual_checksum=$(sha256sum "$tmp_binary" | awk '{print $1}')
 
-        if [ "$expected_checksum" != "$actual_checksum" ]; then
+        if [[ "$expected_checksum" != "$actual_checksum" ]]; then
             error "Checksum mismatch — binary may be corrupted"
             dim "  expected: $expected_checksum"
             dim "  got:      $actual_checksum"
@@ -698,7 +706,7 @@ main() {
         local sig_url="${GITHUB_URL}/${REPO}/releases/download/${version}/sha256sums.txt.sig"
         local tmp_sig="${tmp_dir}/${BINARY_NAME}_sha256sums.txt.sig"
 
-        if download_file "$sig_url" "$tmp_sig" "$download_tool" && [ -s "$tmp_sig" ]; then
+        if download_file "$sig_url" "$tmp_sig" "$download_tool" && [[ -s "$tmp_sig" ]]; then
             if ! command -v openssl &> /dev/null; then
                 error "sha256sums.txt.sig is present but openssl is not installed — cannot verify it"
                 dim "  Install openssl or use --local with a binary you've verified yourself"
@@ -716,7 +724,7 @@ main() {
                 rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig" "$tmp_pubkey"
                 exit 1
             fi
-        elif [ "$(decide_missing_signature_action)" = "refuse" ]; then
+        elif [[ "$(decide_missing_signature_action)" = "refuse" ]]; then
             error "Release has no sha256sums.txt.sig — refusing to install (release may be tampered, or signing was disabled for this release)"
             rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
             exit 1
@@ -726,7 +734,7 @@ main() {
 
         rm -f "$tmp_checksums"
     fi
-    
+
     stop_running_daemon
 
     step "Installing binary..."

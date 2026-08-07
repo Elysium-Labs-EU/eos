@@ -3,10 +3,6 @@
 package procutil
 
 import (
-	"fmt"
-	"os"
-	"runtime"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -15,11 +11,17 @@ import (
 //
 // On Linux, kill(-pgid, 0) returns nil even when the only remaining process is
 // a zombie — a process that has exited but has not yet been reaped by its
-// parent's Wait call. A zombie is not running, so we read /proc/<pgid>/stat and
-// treat state 'Z' as dead.
+// parent's Wait call. A zombie is not running, so anyProcessRunning checks
+// every member of the group for a non-zombie state, not just the pgid PID
+// itself: pgid is the group leader's own pid (the /bin/sh -c wrapper eos
+// launches every command through), and the leader can exit well before a
+// child it spawned that installed its own SIGTERM handler and is mid graceful
+// shutdown — checking only pgid's own /proc entry would read that as "dead"
+// while the child is still very much alive and, e.g., still holding a
+// listening socket open.
 //
 // On macOS, kill(-pgid, 0) returns EPERM for zombies (caught by the err != nil
-// check below), so the /proc path is not needed there.
+// check below), so anyProcessRunning is a no-op there.
 func IsAlive(pgid int) bool {
 	if pgid <= 1 {
 		return false
@@ -27,18 +29,7 @@ func IsAlive(pgid int) bool {
 	if err := syscall.Kill(-pgid, 0); err != nil {
 		return false
 	}
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pgid))
-		if err != nil {
-			return false
-		}
-		statStr := string(data)
-		// Format: pid (comm) state ... — find state char after the last ')' in comm
-		if i := strings.LastIndex(statStr, ")"); i >= 0 && i+2 < len(statStr) {
-			return statStr[i+2] != 'Z'
-		}
-	}
-	return true
+	return anyProcessRunning(pgid)
 }
 
 // StartTime returns an opaque, platform-specific integer identifying when the

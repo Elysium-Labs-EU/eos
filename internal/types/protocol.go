@@ -26,6 +26,7 @@ const (
 	MethodIsServiceRegistered         = "IsServiceRegistered"
 	MethodRemoveServiceCatalogEntry   = "RemoveServiceCatalogEntry"
 	MethodUpdateServiceCatalogEntry   = "UpdateServiceCatalogEntry"
+	MethodSetServiceEnabled           = "SetServiceEnabled"
 
 	MethodGetMostRecentProcessHistoryEntry = "GetMostRecentProcessHistoryEntry"
 
@@ -56,6 +57,7 @@ var ValidMethods = map[MethodName]bool{
 	MethodIsServiceRegistered:         true,
 	MethodRemoveServiceCatalogEntry:   true,
 	MethodUpdateServiceCatalogEntry:   true,
+	MethodSetServiceEnabled:           true,
 
 	MethodGetMostRecentProcessHistoryEntry: true,
 
@@ -166,6 +168,13 @@ type UpdateServiceCatalogEntryArgs struct {
 	Name              string `json:"name"`
 	NewDirectoryPath  string `json:"new_directory_path"`
 	NewConfigFileName string `json:"new_config_file_name"`
+}
+
+// SetServiceEnabledArgs carries a service's persisted desired boot state
+// (see manager.ServiceManager.SetServiceEnabled).
+type SetServiceEnabledArgs struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
 }
 
 type GetMostRecentProcessHistoryEntryArgs struct {

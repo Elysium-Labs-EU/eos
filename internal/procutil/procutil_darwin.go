@@ -24,6 +24,13 @@ var nanosPerTick = sync.OnceValue(func() float64 {
 	return 1e9 / float64(freq)
 })
 
+// anyProcessRunning always reports true on macOS: kill(-pgid, 0) — the caller
+// in IsAlive — already returns EPERM when the only remaining group member is
+// a zombie, so no further per-member scan is needed here.
+func anyProcessRunning(_ int) bool {
+	return true
+}
+
 // platformStartTime reads p_starttime from the kernel's kinfo_proc for pid
 // via sysctl (kern.proc.pid.<pid>) — macOS has no procfs equivalent, so this
 // is the cheap, non-procfs mechanism the kernel exposes for a process's start

@@ -39,7 +39,7 @@ type ServiceStartResult struct {
 	PGID      int
 }
 
-func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration, registeredService types.ServiceCatalogEntry) (ServiceStartResult, error) {
+func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) (ServiceStartResult, error) {
 	pgid, err := mgr.StartService(registeredService.Name)
 
 	if err == nil {
@@ -97,7 +97,7 @@ func registerServiceIfNeeded(mgr manager.ServiceManager, serviceYamlFile string,
 // depends_on reports healthy, or returns a loud error once its max_wait ceiling
 // is hit. A service with no depends_on returns immediately, taking the exact
 // same path as before ordering existed.
-func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.ServiceManager, entry types.ServiceCatalogEntry) error {
+func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.ServiceManager, entry *types.ServiceCatalogEntry) error {
 	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
 	if err != nil {
 		return fmt.Errorf("loading service config: %w", err)
@@ -137,14 +137,14 @@ func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, err
 	return false, fmt.Errorf("getting service instance: %w", err)
 }
 
-func printStartedSuccessOuput(cmd *cobra.Command, serviceName string, pgid int) {
+func printStartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("started with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
 	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
 }
 
-func printRestartedSuccessOuput(cmd *cobra.Command, serviceName string, pgid int) {
+func printRestartedSuccessOutput(cmd *cobra.Command, serviceName string, pgid int) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("restarted with PGID: %d", pgid))
 	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("→ view service info"))
 	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("→ view logs"))
@@ -266,6 +266,14 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				serviceName = registeredServiceName
 			}
 
+			// Persist the run as this service's desired boot state, clearing any
+			// stop recorded by a prior "eos stop" — bootPersistedServices reads
+			// this flag on the next daemon start/reboot (issue #172).
+			if err = mgr.SetServiceEnabled(serviceName, true); err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
+				return helpers.ErrCommandFailed
+			}
+
 			if once {
 				running, runningCheckErr := isServiceRunning(mgr, serviceName)
 				if runningCheckErr != nil {
@@ -290,20 +298,20 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			// that the service will start but never leave 'starting'.
 			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
 
-			if depErr := gateDependencies(cmd.Context(), cmd, mgr, registeredService); depErr != nil {
+			if depErr := gateDependencies(cmd.Context(), cmd, mgr, &registeredService); depErr != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), depErr.Error())
 				return helpers.ErrCommandFailed
 			}
 
-			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, registeredService)
+			serviceRunResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, &registeredService)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
 				return helpers.ErrCommandFailed
 			}
 			if serviceRunResult.Restarted {
-				printRestartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
+				printRestartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 			} else {
-				printStartedSuccessOuput(cmd, registeredService.Name, serviceRunResult.PGID)
+				printStartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 			}
 			return nil
 		},

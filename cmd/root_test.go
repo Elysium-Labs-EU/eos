@@ -14,6 +14,51 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestCleanupTestDaemonTempDirs proves testDaemonConfig's os.MkdirTemp dirs
+// actually get swept: it drives a real "daemon info" through newTestRootCmd
+// (the only path that calls testDaemonConfig), confirms the dir it registers
+// exists, then calls cleanupTestDaemonTempDirs directly — the same function
+// TestMain invokes via goleak.Cleanup — and confirms both the directory and
+// the registry entry are gone. Calling this via TestMain's post-m.Run() hook
+// can't be measured by go test -cover (coverage is flushed before that hook
+// runs), so this direct call is what makes the cleanup path count as tested.
+func TestCleanupTestDaemonTempDirs(t *testing.T) {
+	testDaemonTempDirsMu.Lock()
+	before := len(testDaemonTempDirs)
+	testDaemonTempDirsMu.Unlock()
+
+	cmd := newTestRootCmd(nil)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"daemon", "info"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("daemon info: %v", err)
+	}
+
+	testDaemonTempDirsMu.Lock()
+	dirs := append([]string(nil), testDaemonTempDirs...)
+	testDaemonTempDirsMu.Unlock()
+	if len(dirs) <= before {
+		t.Fatalf("expected testDaemonConfig to register a new temp dir, had %d now have %d", before, len(dirs))
+	}
+	newDir := dirs[len(dirs)-1]
+	if _, err := os.Stat(newDir); err != nil {
+		t.Fatalf("expected temp dir %s to exist before cleanup: %v", newDir, err)
+	}
+
+	cleanupTestDaemonTempDirs()
+
+	if _, err := os.Stat(newDir); !os.IsNotExist(err) {
+		t.Errorf("expected temp dir %s to be removed after cleanup, stat err=%v", newDir, err)
+	}
+	testDaemonTempDirsMu.Lock()
+	remaining := len(testDaemonTempDirs)
+	testDaemonTempDirsMu.Unlock()
+	if remaining != 0 {
+		t.Errorf("expected testDaemonTempDirs to be cleared after cleanup, got %d entries", remaining)
+	}
+}
+
 func TestNewDaemonConfigOpenRC(t *testing.T) {
 	logCfg := config.EosLogConfig{}
 

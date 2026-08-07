@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,6 +87,36 @@ func TestLogsCommand(t *testing.T) {
 	}
 	if !strings.Contains(output, "showing logs for") {
 		t.Errorf("Expected logs to be shown, got: %v", output)
+	}
+}
+
+func TestLogsCommandUnresolvableTail(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupCmd(t)
+
+	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
+	path := writeServiceYAML(t, tempDir, cfg)
+
+	cmd.SetArgs([]string{"add", path})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Add command should not return an error, got : %v", err)
+	}
+
+	cmd.SetArgs([]string{"run", cfg.Name})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("Run command should not return an error, got : %v", err)
+	}
+
+	t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
+
+	// --output selects the single-stream path, which shells out to tail;
+	// the default combined mode reads log files directly and never does.
+	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false", "--output"})
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+
+	if !strings.Contains(errBuf.String(), "resolving tail") {
+		t.Errorf("expected a 'resolving tail' message, got: %s", errBuf.String())
 	}
 }
 
@@ -234,8 +265,27 @@ func TestLogsCommandSingleStreamModes(t *testing.T) {
 	}
 }
 
+// syncBuffer is a mutex-guarded bytes.Buffer safe for a writer goroutine and
+// a reader goroutine to share, unlike bytes.Buffer itself.
+type syncBuffer struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
 func TestLogsCommandFollow(t *testing.T) {
-	cmd, outBuf, _, tempDir := setupCmd(t)
+	cmd, _, _, tempDir := setupCmd(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -253,16 +303,33 @@ func TestLogsCommandFollow(t *testing.T) {
 		t.Fatalf("Run command failed: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	var followOut syncBuffer
+	cmd.SetOut(&followOut)
+
+	// Bound the wait generously (this is what a loaded CI runner needs headroom
+	// for — spawning the tail subprocess and picking up the write can lag well
+	// past a fixed couple hundred ms), but poll for the actual condition and
+	// cancel the moment it's observed instead of always burning the full
+	// timeout on a single-shot wait.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=true"})
-	if err := cmd.ExecuteContext(ctx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	done := make(chan error, 1)
+	go func() { done <- cmd.ExecuteContext(ctx) }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(followOut.String(), "followed-line") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+
+	if err := <-done; err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Fatalf("follow should exit cleanly on context cancellation, got: %v", err)
 	}
 
-	if !strings.Contains(outBuf.String(), "followed-line") {
-		t.Errorf("expected the followed line to appear in streamed output, got: %s", outBuf.String())
+	if !strings.Contains(followOut.String(), "followed-line") {
+		t.Errorf("expected the followed line to appear in streamed output, got: %s", followOut.String())
 	}
 }
 
@@ -352,6 +419,25 @@ func TestStartTailGoroutineReportsStartFailure(t *testing.T) {
 		}
 		if !msg.isErr {
 			t.Errorf("expected the failure message to be flagged as an error stream message")
+		}
+	case <-ctx.Done():
+		t.Fatal("expected a failure message before the context timeout")
+	}
+}
+
+func TestStartTailGoroutineReportsUnresolvableTail(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	ch := make(chan followMsg, 4)
+	startTailGoroutine(ctx, filepath.Join(t.TempDir(), "some.log"), false, ch)
+
+	select {
+	case msg := <-ch:
+		if !strings.Contains(msg.text, "failed to tail") {
+			t.Errorf("expected a 'failed to tail' message, got: %q", msg.text)
 		}
 	case <-ctx.Done():
 		t.Fatal("expected a failure message before the context timeout")

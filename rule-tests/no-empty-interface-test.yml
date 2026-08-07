@@ -1,0 +1,10 @@
+id: no-empty-interface
+valid:
+  - "func f(v any) any { return v }"
+  - |
+    type Reader interface {
+      Read(p []byte) (n int, err error)
+    }
+invalid:
+  - "func f(v interface{}) interface{} { return v }"
+  - "var m map[string]interface{}"
