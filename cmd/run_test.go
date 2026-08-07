@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -188,7 +189,7 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatalf("stop should not return an error, got: %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -201,7 +202,7 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v", err)
 	}
 
-	entry, err = mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -961,7 +962,7 @@ func TestRunWithFileAlreadyRegisteredKeepsOriginalConfig(t *testing.T) {
 		t.Fatalf("expected warning to suggest 'eos update', got: %v", errOutput)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry("cms")
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("failed to get catalog entry: %v", err)
 	}
@@ -997,7 +998,7 @@ func TestRunWithDependsOnMaxWaitFailsLoud(t *testing.T) {
 		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
-	if err = registerService(mgr, yamlPath, cfg.Name); err != nil {
+	if err = registerService(t.Context(), mgr, yamlPath, cfg.Name); err != nil {
 		t.Fatalf("failed to register service: %v", err)
 	}
 
@@ -1034,23 +1035,23 @@ type runFakeManager struct {
 	registered    bool
 }
 
-func (f *runFakeManager) IsServiceRegistered(_ string) (bool, error) {
+func (f *runFakeManager) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.registered, f.registeredErr
 }
 
-func (f *runFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+func (f *runFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.instance, f.instanceErr
 }
 
-func (f *runFakeManager) GetServiceCatalogEntry(_ string) (types.ServiceCatalogEntry, error) {
+func (f *runFakeManager) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return f.catalogEntry, f.catalogErr
 }
 
-func (f *runFakeManager) StartService(_ string) (int, error) {
+func (f *runFakeManager) StartService(context.Context, string) (int, error) {
 	return f.startPGID, f.startErr
 }
 
-func (f *runFakeManager) RestartService(_ string, _ time.Duration, _ time.Duration) (int, error) {
+func (f *runFakeManager) RestartService(_ context.Context, _ string, _ time.Duration, _ time.Duration) (int, error) {
 	return f.restartPGID, f.restartErr
 }
 
@@ -1124,6 +1125,12 @@ func TestRunValidArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not find run command: %v", err)
 	}
+	// Find (unlike ExecuteContext) never sets a context on the returned
+	// command, and runValidArgs -> ServiceNameCompletions now reads
+	// cmd.Context() to thread through the manager call: an unset context
+	// is a literal nil interface, which panics inside database/sql rather
+	// than behaving like context.Background().
+	runCmd.SetContext(t.Context())
 
 	t.Run("args already present skips completion", func(t *testing.T) {
 		completions, directive := runValidArgs(runCmd, []string{"already-set"}, "", func() manager.ServiceManager { return mgr })
@@ -1146,7 +1153,7 @@ func TestRunValidArgs(t *testing.T) {
 
 	t.Run("no args and no file flag completes registered service names", func(t *testing.T) {
 		testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
-		if err := registerService(mgr, filepath.Join(tempDir, "service.yaml"), testFile.Name); err != nil {
+		if err := registerService(t.Context(), mgr, filepath.Join(tempDir, "service.yaml"), testFile.Name); err != nil {
 			t.Fatalf("failed to register service: %v", err)
 		}
 

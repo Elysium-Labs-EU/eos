@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -83,23 +84,23 @@ type removeCmdFakeManager struct {
 	removedCatalog    bool
 }
 
-func (f *removeCmdFakeManager) IsServiceRegistered(_ string) (bool, error) {
+func (f *removeCmdFakeManager) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.registered, f.registeredErr
 }
 
-func (f *removeCmdFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *removeCmdFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.history, f.historyErr
 }
 
-func (f *removeCmdFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+func (f *removeCmdFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.instance, f.instanceErr
 }
 
-func (f *removeCmdFakeManager) RemoveServiceInstance(_ string) (bool, error) {
+func (f *removeCmdFakeManager) RemoveServiceInstance(context.Context, string) (bool, error) {
 	return f.removedInstance, f.removeInstanceErr
 }
 
-func (f *removeCmdFakeManager) RemoveServiceCatalogEntry(_ string) (bool, error) {
+func (f *removeCmdFakeManager) RemoveServiceCatalogEntry(context.Context, string) (bool, error) {
 	return f.removedCatalog, f.removeCatalogErr
 }
 

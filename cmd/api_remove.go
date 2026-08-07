@@ -41,7 +41,7 @@ Exit codes:
 			serviceName := args[0]
 			mgr := getManager()
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("checking service: %w", err))
 			}
@@ -49,18 +49,18 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
 			}
 
-			serviceInstance, err := mgr.GetServiceInstance(serviceName)
+			serviceInstance, err := mgr.GetServiceInstance(cmd.Context(), serviceName)
 			if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("checking service instance: %w", err))
 			}
 			if serviceInstance != nil {
-				_, instanceErr := mgr.RemoveServiceInstance(serviceName)
+				_, instanceErr := mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 				if instanceErr != nil {
 					return helpers.WriteJSONErr(cmd, fmt.Errorf("removing service instance: %w", instanceErr))
 				}
 			}
 
-			removed, err := mgr.RemoveServiceCatalogEntry(serviceName)
+			removed, err := mgr.RemoveServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("removing service: %w", err))
 			}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -68,7 +69,7 @@ Exit codes:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			services, err := apiStatusCollectServices(getManager())
+			services, err := apiStatusCollectServices(cmd.Context(), getManager())
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
@@ -78,8 +79,8 @@ Exit codes:
 	}
 }
 
-func apiStatusCollectServices(mgr manager.ServiceManager) ([]apiStatusService, error) {
-	registeredServices, err := mgr.GetAllServiceCatalogEntries()
+func apiStatusCollectServices(ctx context.Context, mgr manager.ServiceManager) ([]apiStatusService, error) {
+	registeredServices, err := mgr.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting services: %w", err)
 	}
@@ -87,7 +88,7 @@ func apiStatusCollectServices(mgr manager.ServiceManager) ([]apiStatusService, e
 	services := make([]apiStatusService, 0, len(registeredServices))
 
 	for _, reg := range registeredServices {
-		entry, err := apiStatusBuildServiceEntry(mgr, &reg)
+		entry, err := apiStatusBuildServiceEntry(ctx, mgr, &reg)
 		if err != nil {
 			return nil, err
 		}
@@ -97,16 +98,16 @@ func apiStatusCollectServices(mgr manager.ServiceManager) ([]apiStatusService, e
 	return services, nil
 }
 
-func apiStatusBuildServiceEntry(mgr manager.ServiceManager, reg *types.ServiceCatalogEntry) (apiStatusService, error) {
+func apiStatusBuildServiceEntry(ctx context.Context, mgr manager.ServiceManager, reg *types.ServiceCatalogEntry) (apiStatusService, error) {
 	entry := apiStatusService{Name: reg.Name}
 
-	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(reg.Name)
+	mostRecentProcess, err := mgr.GetMostRecentProcessHistoryEntry(ctx, reg.Name)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		return apiStatusService{}, fmt.Errorf("getting process for %q: %w", reg.Name, err)
 	}
 	apiStatusApplyProcessMetrics(&entry, mostRecentProcess, reg.DirectoryPath, reg.ConfigFileName)
 
-	serviceInstance, err := mgr.GetServiceInstance(reg.Name)
+	serviceInstance, err := mgr.GetServiceInstance(ctx, reg.Name)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 		return apiStatusService{}, fmt.Errorf("getting instance for %q: %w", reg.Name, err)
 	}
@@ -115,7 +116,7 @@ func apiStatusBuildServiceEntry(mgr manager.ServiceManager, reg *types.ServiceCa
 	// Overrides whatever ProcessHistory-derived status was set above: a
 	// service blocked on depends_on has no process yet, so without this
 	// it's indistinguishable from one that was simply never started.
-	apiStatusApplyDependencyWait(mgr, reg.Name, &entry)
+	apiStatusApplyDependencyWait(ctx, mgr, reg.Name, &entry)
 
 	return entry, nil
 }
@@ -148,8 +149,8 @@ func apiStatusApplyServiceInstance(entry *apiStatusService, serviceInstance *typ
 	entry.RestartCount = serviceInstance.RestartCount
 }
 
-func apiStatusApplyDependencyWait(mgr manager.ServiceManager, name string, entry *apiStatusService) {
-	pending := helpers.ResolveDependencyWaitStatus(mgr, name)
+func apiStatusApplyDependencyWait(ctx context.Context, mgr manager.ServiceManager, name string, entry *apiStatusService) {
+	pending := helpers.ResolveDependencyWaitStatus(ctx, mgr, name)
 	if len(pending) == 0 {
 		return
 	}

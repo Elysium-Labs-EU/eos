@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -27,29 +28,29 @@ type apiLogsFakeManager struct {
 	registered    bool
 }
 
-func (f *apiLogsFakeManager) IsServiceRegistered(_ string) (bool, error) {
+func (f *apiLogsFakeManager) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.registered, f.registeredErr
 }
 
-func (f *apiLogsFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *apiLogsFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
 }
 
-func (f *apiLogsFakeManager) GetServiceLogFilePath(_ string, _ bool) (*string, error) {
+func (f *apiLogsFakeManager) GetServiceLogFilePath(context.Context, string, bool) (*string, error) {
 	return f.logPath, f.logPathErr
 }
 
 func TestAPILogsEnsureServiceRegistered(t *testing.T) {
 	t.Run("registration check fails", func(t *testing.T) {
 		wantErr := errors.New("db unavailable")
-		err := apiLogsEnsureServiceRegistered(&apiLogsFakeManager{registeredErr: wantErr}, "svc")
+		err := apiLogsEnsureServiceRegistered(t.Context(), &apiLogsFakeManager{registeredErr: wantErr}, "svc")
 		if err == nil || !errors.Is(err, wantErr) {
 			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
 		}
 	})
 
 	t.Run("registered", func(t *testing.T) {
-		err := apiLogsEnsureServiceRegistered(&apiLogsFakeManager{registered: true}, "svc")
+		err := apiLogsEnsureServiceRegistered(t.Context(), &apiLogsFakeManager{registered: true}, "svc")
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -59,21 +60,21 @@ func TestAPILogsEnsureServiceRegistered(t *testing.T) {
 func TestAPILogsEnsureServiceStarted(t *testing.T) {
 	t.Run("process history lookup fails", func(t *testing.T) {
 		wantErr := errors.New("db unavailable")
-		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processErr: wantErr}, "svc")
+		err := apiLogsEnsureServiceStarted(t.Context(), &apiLogsFakeManager{processErr: wantErr}, "svc")
 		if err == nil || !errors.Is(err, wantErr) {
 			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
 		}
 	})
 
 	t.Run("never started", func(t *testing.T) {
-		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processErr: manager.ErrProcessNotFound}, "svc")
+		err := apiLogsEnsureServiceStarted(t.Context(), &apiLogsFakeManager{processErr: manager.ErrProcessNotFound}, "svc")
 		if err == nil || !strings.Contains(err.Error(), "never been started") {
 			t.Fatalf("expected 'never been started' error, got %v", err)
 		}
 	})
 
 	t.Run("started", func(t *testing.T) {
-		err := apiLogsEnsureServiceStarted(&apiLogsFakeManager{processEntry: &types.ProcessHistory{}}, "svc")
+		err := apiLogsEnsureServiceStarted(t.Context(), &apiLogsFakeManager{processEntry: &types.ProcessHistory{}}, "svc")
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -83,7 +84,7 @@ func TestAPILogsEnsureServiceStarted(t *testing.T) {
 func TestAPILogsFetchLines(t *testing.T) {
 	t.Run("log path lookup fails", func(t *testing.T) {
 		wantErr := errors.New("path unavailable")
-		_, _, err := apiLogsFetchLines(&apiLogsFakeManager{logPathErr: wantErr}, "svc", false, 10)
+		_, _, err := apiLogsFetchLines(t.Context(), &apiLogsFakeManager{logPathErr: wantErr}, "svc", false, 10)
 		if err == nil || !errors.Is(err, wantErr) {
 			t.Fatalf("expected wrapped %v, got %v", wantErr, err)
 		}
@@ -91,7 +92,7 @@ func TestAPILogsFetchLines(t *testing.T) {
 
 	t.Run("log file missing", func(t *testing.T) {
 		missing := "/nonexistent/path/does-not-exist.log"
-		_, _, err := apiLogsFetchLines(&apiLogsFakeManager{logPath: &missing}, "svc", false, 10)
+		_, _, err := apiLogsFetchLines(t.Context(), &apiLogsFakeManager{logPath: &missing}, "svc", false, 10)
 		if err == nil {
 			t.Fatalf("expected error reading missing log file, got nil")
 		}
@@ -159,7 +160,7 @@ func TestAPILogsWithNoService(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
@@ -206,7 +207,7 @@ func TestAPILogsErrorWithNoService(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
@@ -233,7 +234,7 @@ func TestAPILogsWithExceedingLineNumber(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(&errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(&errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {

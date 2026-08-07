@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -352,11 +353,11 @@ type infoFakeManager struct {
 	processErr   error
 }
 
-func (f *infoFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+func (f *infoFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.instance, f.instanceErr
 }
 
-func (f *infoFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *infoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
 }
 
@@ -371,7 +372,7 @@ func TestInfoFetchServiceInstanceGenericError(t *testing.T) {
 	cmd, errBuf := infoNewTestCmd()
 	wantErr := errors.New("boom")
 
-	instance := infoFetchServiceInstance(cmd, &infoFakeManager{instanceErr: wantErr}, "svc")
+	instance := infoFetchServiceInstance(cmd, t.Context(), &infoFakeManager{instanceErr: wantErr}, "svc")
 
 	if instance != nil {
 		t.Errorf("expected nil instance on error, got: %+v", instance)
@@ -385,7 +386,7 @@ func TestInfoFetchProcessEntryGenericError(t *testing.T) {
 	cmd, errBuf := infoNewTestCmd()
 	wantErr := errors.New("boom")
 
-	entry := infoFetchProcessEntry(cmd, &infoFakeManager{processErr: wantErr}, "svc")
+	entry := infoFetchProcessEntry(cmd, t.Context(), &infoFakeManager{processErr: wantErr}, "svc")
 
 	if entry != nil {
 		t.Errorf("expected nil process entry on error, got: %+v", entry)

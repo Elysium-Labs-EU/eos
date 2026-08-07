@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -53,17 +54,17 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 			serviceName := args[0]
 			mgr := getManager()
 
-			if err := apiLogsEnsureServiceRegistered(mgr, serviceName); err != nil {
+			if err := apiLogsEnsureServiceRegistered(cmd.Context(), mgr, serviceName); err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
-			if err := apiLogsEnsureServiceStarted(mgr, serviceName); err != nil {
+			if err := apiLogsEnsureServiceStarted(cmd.Context(), mgr, serviceName); err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 			if err := apiLogsValidateLineCount(lines); err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			logPath, tailedLines, err := apiLogsFetchLines(mgr, serviceName, errorLog, lines)
+			logPath, tailedLines, err := apiLogsFetchLines(cmd.Context(), mgr, serviceName, errorLog, lines)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
@@ -81,8 +82,8 @@ Note: --follow is not supported in the API version; use the log_path to tail dir
 	return cmd
 }
 
-func apiLogsEnsureServiceRegistered(mgr manager.ServiceManager, serviceName string) error {
-	exists, err := mgr.IsServiceRegistered(serviceName)
+func apiLogsEnsureServiceRegistered(ctx context.Context, mgr manager.ServiceManager, serviceName string) error {
+	exists, err := mgr.IsServiceRegistered(ctx, serviceName)
 	if err != nil {
 		return fmt.Errorf("checking service: %w", err)
 	}
@@ -92,8 +93,8 @@ func apiLogsEnsureServiceRegistered(mgr manager.ServiceManager, serviceName stri
 	return nil
 }
 
-func apiLogsEnsureServiceStarted(mgr manager.ServiceManager, serviceName string) error {
-	processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+func apiLogsEnsureServiceStarted(ctx context.Context, mgr manager.ServiceManager, serviceName string) error {
+	processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		return fmt.Errorf("getting process history: %w", err)
 	}
@@ -110,8 +111,8 @@ func apiLogsValidateLineCount(lines int) error {
 	return nil
 }
 
-func apiLogsFetchLines(mgr manager.ServiceManager, serviceName string, errorLog bool, lines int) (string, []string, error) {
-	logPath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
+func apiLogsFetchLines(ctx context.Context, mgr manager.ServiceManager, serviceName string, errorLog bool, lines int) (string, []string, error) {
+	logPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, errorLog)
 	if err != nil {
 		return "", nil, fmt.Errorf("getting log file path: %w", err)
 	}

@@ -15,7 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func NewServiceCatalogEntry(name string, path string, configFile string) (*types.ServiceCatalogEntry, error) {
+func NewServiceCatalogEntry(name, path, configFile string) (*types.ServiceCatalogEntry, error) {
 	if err := ValidateServiceName(name); err != nil {
 		return nil, err
 	}

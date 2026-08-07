@@ -168,7 +168,7 @@ func (m *LocalManager) prepareReloadTarget(name string) (reloadTarget, error) {
 		return reloadTarget{}, err
 	}
 
-	instance, err := m.GetServiceInstance(name)
+	instance, err := m.GetServiceInstance(m.ctx, name)
 	if err != nil {
 		return reloadTarget{}, fmt.Errorf("get service instance for %s: %w", name, err)
 	}

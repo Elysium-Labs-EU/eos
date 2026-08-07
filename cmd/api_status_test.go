@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,21 +31,21 @@ type apiStatusFakeManager struct {
 	catalog      []types.ServiceCatalogEntry
 }
 
-func (f *apiStatusFakeManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
+func (f *apiStatusFakeManager) GetAllServiceCatalogEntries(context.Context) ([]types.ServiceCatalogEntry, error) {
 	return f.catalog, f.catalogErr
 }
 
-func (f *apiStatusFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *apiStatusFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
 }
 
-func (f *apiStatusFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+func (f *apiStatusFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.instance, f.instanceErr
 }
 
 func TestAPIStatusCollectServicesCatalogError(t *testing.T) {
 	wantErr := errors.New("boom")
-	if _, err := apiStatusCollectServices(&apiStatusFakeManager{catalogErr: wantErr}); err == nil || !strings.Contains(err.Error(), "getting services") {
+	if _, err := apiStatusCollectServices(t.Context(), &apiStatusFakeManager{catalogErr: wantErr}); err == nil || !strings.Contains(err.Error(), "getting services") {
 		t.Errorf("expected wrapped 'getting services' error, got: %v", err)
 	}
 }
@@ -52,7 +53,7 @@ func TestAPIStatusCollectServicesCatalogError(t *testing.T) {
 func TestAPIStatusBuildServiceEntryProcessError(t *testing.T) {
 	wantErr := errors.New("boom")
 	reg := types.ServiceCatalogEntry{Name: "svc"}
-	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{processErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
+	if _, err := apiStatusBuildServiceEntry(t.Context(), &apiStatusFakeManager{processErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
 		t.Errorf("expected wrapped 'getting process for' error, got: %v", err)
 	}
 }
@@ -60,7 +61,7 @@ func TestAPIStatusBuildServiceEntryProcessError(t *testing.T) {
 func TestAPIStatusBuildServiceEntryInstanceError(t *testing.T) {
 	wantErr := errors.New("boom")
 	reg := types.ServiceCatalogEntry{Name: "svc"}
-	if _, err := apiStatusBuildServiceEntry(&apiStatusFakeManager{instanceErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
+	if _, err := apiStatusBuildServiceEntry(t.Context(), &apiStatusFakeManager{instanceErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
 		t.Errorf("expected wrapped 'getting instance for' error, got: %v", err)
 	}
 }
@@ -68,7 +69,7 @@ func TestAPIStatusBuildServiceEntryInstanceError(t *testing.T) {
 func TestAPIStatusCollectServicesPropagatesEntryError(t *testing.T) {
 	wantErr := errors.New("boom")
 	catalog := []types.ServiceCatalogEntry{{Name: "svc"}}
-	if _, err := apiStatusCollectServices(&apiStatusFakeManager{catalog: catalog, processErr: wantErr}); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
+	if _, err := apiStatusCollectServices(t.Context(), &apiStatusFakeManager{catalog: catalog, processErr: wantErr}); err == nil || !strings.Contains(err.Error(), `getting process for "svc"`) {
 		t.Errorf("expected propagated 'getting process for' error, got: %v", err)
 	}
 }
@@ -245,7 +246,7 @@ func TestAPIStatusWithDependencyWait(t *testing.T) {
 		t.Fatalf("failed to register: %v\n%s", err, errBuf.String())
 	}
 
-	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy", "cache"}, time.Now().Add(5*time.Minute)); err != nil {
+	if err := mgr.SetDependencyWaitStatus(t.Context(), testFile.Name, []string{"proxy", "cache"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 

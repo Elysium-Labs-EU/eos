@@ -219,7 +219,7 @@ func IsUnderSystemd() bool {
 	return os.Getenv("INVOCATION_ID") != ""
 }
 
-func IsSystemdManaged(systemdTargetDir string, systemdTargetFileName string) (bool, error) {
+func IsSystemdManaged(systemdTargetDir, systemdTargetFileName string) (bool, error) {
 	_, err := os.Stat(filepath.Join(systemdTargetDir, systemdTargetFileName))
 	if err == nil {
 		return true, nil
@@ -299,7 +299,7 @@ func IsUnderLaunchd() bool {
 	return os.Getenv("XPC_SERVICE_NAME") != ""
 }
 
-func IsLaunchdManaged(launchdTargetDir string, launchdPlistFileName string) (bool, error) {
+func IsLaunchdManaged(launchdTargetDir, launchdPlistFileName string) (bool, error) {
 	_, err := os.Stat(filepath.Join(launchdTargetDir, launchdPlistFileName))
 	if err == nil {
 		return true, nil

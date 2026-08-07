@@ -521,15 +521,15 @@ type logsCmdFakeManager struct {
 	registered    bool
 }
 
-func (f *logsCmdFakeManager) IsServiceRegistered(_ string) (bool, error) {
+func (f *logsCmdFakeManager) IsServiceRegistered(context.Context, string) (bool, error) {
 	return f.registered, f.registeredErr
 }
 
-func (f *logsCmdFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *logsCmdFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.history, f.historyErr
 }
 
-func (f *logsCmdFakeManager) GetServiceLogFilePath(_ string, errorLog bool) (*string, error) {
+func (f *logsCmdFakeManager) GetServiceLogFilePath(_ context.Context, _ string, errorLog bool) (*string, error) {
 	if errorLog {
 		return f.errLogPath, f.errLogPathErr
 	}

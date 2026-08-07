@@ -86,7 +86,7 @@ In combined mode --lines applies per stream, so up to 2x lines may be shown. Eac
 }
 
 func logsCmdCheckRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
-	exists, err := mgr.IsServiceRegistered(serviceName)
+	exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 		return helpers.ErrCommandFailed
@@ -100,7 +100,7 @@ func logsCmdCheckRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serv
 }
 
 func logsCmdCheckStarted(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
-	processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	processHistoryEntry, err := mgr.GetMostRecentProcessHistoryEntry(cmd.Context(), serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 		return helpers.ErrCommandFailed
@@ -130,12 +130,12 @@ func logsCmdPrintHeader(cmd *cobra.Command, serviceName string, follow bool) {
 }
 
 func logsCmdRunCombined(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, follow bool, lines int) error {
-	outPath, outErr := mgr.GetServiceLogFilePath(serviceName, false)
+	outPath, outErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, false)
 	if outErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", outErr))
 		return helpers.ErrCommandFailed
 	}
-	errPath, errPathErr := mgr.GetServiceLogFilePath(serviceName, true)
+	errPath, errPathErr := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, true)
 	if errPathErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log file path: %v", errPathErr))
 		return helpers.ErrCommandFailed
@@ -149,7 +149,7 @@ func logsCmdRunCombined(cmd *cobra.Command, mgr manager.ServiceManager, serviceN
 }
 
 func logsCmdRunSingleStream(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, errorOnly, follow bool, lines int) error {
-	logPath, err := mgr.GetServiceLogFilePath(serviceName, errorOnly)
+	logPath, err := mgr.GetServiceLogFilePath(cmd.Context(), serviceName, errorOnly)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log file path: %v", err))
 		return helpers.ErrCommandFailed

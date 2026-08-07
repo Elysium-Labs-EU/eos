@@ -34,17 +34,42 @@ type cpuSample struct {
 	cpu time.Duration
 }
 
+// memorySample bundles one tick's RSS/CPU readings for dispatchMemoryAction:
+// the PGID they were measured against, the readings themselves, and whether
+// each was actually sampled this tick (measureRSS/measureCPU throttle to
+// hm.memSampleInterval, so a tick can carry a stale/absent reading).
+type memorySample struct {
+	pgid       int
+	rssKb      int64
+	cpuPct     float64
+	sampled    bool
+	cpuSampled bool
+}
+
+// memoryRestartAction bundles restartOnMemoryThreshold's inputs beyond the
+// service/process/instance/pgid it acts on: the RSS reading that triggered
+// the restart (already resolved to nil-able pointers by the caller), and the
+// grace/ticker periods and log label appropriate to the threshold's urgency.
+type memoryRestartAction struct {
+	rssPtr       *int64
+	peakPtr      *int64
+	label        string
+	rssKb        int64
+	gracePeriod  time.Duration
+	tickerPeriod time.Duration
+}
+
 type Monitor interface {
 	Start(ctx context.Context)
 }
 
 type monitorManager interface {
-	GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error)
-	GetServiceInstance(name string) (*types.ServiceInstance, error)
-	GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error)
+	GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error)
+	GetServiceInstance(ctx context.Context, name string) (*types.ServiceInstance, error)
+	GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error)
 	LogToServiceStdout(serviceName string, message string) error
 	LogToServiceStderr(serviceName string, message string) error
-	RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
+	RestartService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
 	// GetServiceLastErrorLine returns the most recent non-empty line captured
 	// from the service's own stderr, or ok=false if none is available.
 	GetServiceLastErrorLine(serviceName string) (line string, ok bool)
@@ -147,7 +172,7 @@ func (hm *HealthMonitor) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			services, err := hm.mgr.GetAllServiceCatalogEntries()
+			services, err := hm.mgr.GetAllServiceCatalogEntries(ctx)
 
 			if err != nil {
 				hm.logger.Error("failed to get services", "error", err)
@@ -192,7 +217,7 @@ func (hm *HealthMonitor) checkService(ctx context.Context, service *types.Servic
 		return
 	}
 
-	instance, processHistoryEntry, ok := hm.hmFetchServiceState(serviceName)
+	instance, processHistoryEntry, ok := hm.hmFetchServiceState(ctx, serviceName)
 	if !ok {
 		return
 	}
@@ -205,13 +230,13 @@ func (hm *HealthMonitor) checkService(ctx context.Context, service *types.Servic
 // hmFetchServiceState loads the instance and most recent process-history entry
 // needed to dispatch a health check, reporting ok=false when either is
 // unavailable so the caller can skip the tick for this service.
-func (hm *HealthMonitor) hmFetchServiceState(serviceName string) (*types.ServiceInstance, *types.ProcessHistory, bool) {
-	instance, err := hm.mgr.GetServiceInstance(serviceName)
+func (hm *HealthMonitor) hmFetchServiceState(ctx context.Context, serviceName string) (*types.ServiceInstance, *types.ProcessHistory, bool) {
+	instance, err := hm.mgr.GetServiceInstance(ctx, serviceName)
 	if err != nil || instance == nil {
 		return nil, nil, false
 	}
 
-	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(serviceName)
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
 	if err != nil || processHistoryEntry == nil {
 		return nil, nil, false
 	}
@@ -350,7 +375,13 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	cpuPct, cpuSampled := hm.measureCPU(ctx, pgid, serviceName)
 
 	action := hm.evaluateMemoryThresholds(config.MemoryLimitMb, rssKb)
-	hm.dispatchMemoryAction(ctx, service, process, instance, action, pgid, rssKb, sampled, cpuPct, cpuSampled)
+	hm.dispatchMemoryAction(ctx, service, process, instance, action, memorySample{
+		pgid:       pgid,
+		rssKb:      rssKb,
+		sampled:    sampled,
+		cpuPct:     cpuPct,
+		cpuSampled: cpuSampled,
+	})
 }
 
 // checkCronRestart restarts a running service when its cron_restart schedule
@@ -380,7 +411,7 @@ func (hm *HealthMonitor) checkCronRestart(ctx context.Context, service *types.Se
 		hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 	}
 
-	if _, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond); err != nil {
+	if _, err := hm.mgr.RestartService(ctx, serviceName, hm.shutdownGracePeriod, 200*time.Millisecond); err != nil {
 		hm.logger.Error("cron restart failed", "service", serviceName, "error", err)
 		return
 	}
@@ -473,30 +504,36 @@ func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, servic
 
 // dispatchMemoryAction acts on the outcome of evaluateMemoryThresholds: log-only for
 // warnings, a graduated restart for soft/force thresholds, or a plain history update.
-func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, pgid int, rssKb int64, sampled bool, cpuPct float64, cpuSampled bool) {
+func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, action RestartReason, sample memorySample) {
 	serviceName := service.Name
-	rssPtr := rssKbPtr(rssKb, sampled)
-	peakPtr := peakRssKbPtr(process.PeakRssMemoryKb, rssKb, sampled)
-	cpuPtr := cpuPctPtr(cpuPct, cpuSampled)
+	rssPtr := rssKbPtr(sample.rssKb, sample.sampled)
+	peakPtr := peakRssKbPtr(process.PeakRssMemoryKb, sample.rssKb, sample.sampled)
+	cpuPtr := cpuPctPtr(sample.cpuPct, sample.cpuSampled)
 
 	switch action {
 	case ReasonWarning:
 		warnMsg := fmt.Sprintf("[%s] memory usage warning", serviceName)
 		hm.logger.Warn(warnMsg)
-		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", rssKb)
+		hm.logger.Debug("memory threshold: warning", "service", serviceName, "mem_kb", sample.rssKb)
 		if logErr := hm.mgr.LogToServiceStdout(serviceName, warnMsg); logErr != nil {
 			hm.logger.Error("failed to log service output", "service", serviceName, "error", logErr)
 		}
-		hm.updateProcessEntry(ctx, pgid, rssPtr, peakPtr, cpuPtr, serviceName)
+		hm.updateProcessEntry(ctx, sample.pgid, rssPtr, peakPtr, cpuPtr, serviceName)
 	case ReasonSoftRestart:
-		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, peakPtr, "soft", 5*time.Second, 200*time.Millisecond)
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, sample.pgid, memoryRestartAction{
+			rssKb: sample.rssKb, rssPtr: rssPtr, peakPtr: peakPtr,
+			label: "soft", gracePeriod: 5 * time.Second, tickerPeriod: 200 * time.Millisecond,
+		})
 	case ReasonForceRestart:
-		hm.restartOnMemoryThreshold(ctx, service, process, instance, pgid, rssKb, rssPtr, peakPtr, "force", 1*time.Second, 10*time.Millisecond)
+		hm.restartOnMemoryThreshold(ctx, service, process, instance, sample.pgid, memoryRestartAction{
+			rssKb: sample.rssKb, rssPtr: rssPtr, peakPtr: peakPtr,
+			label: "force", gracePeriod: 1 * time.Second, tickerPeriod: 10 * time.Millisecond,
+		})
 	case ReasonNone:
 		// Reaffirm State=Running every tick (not just on fresh RSS/CPU samples,
 		// which are throttled to ~30s) so updated_at stays fresh and `eos
 		// status` never flags a healthy service as stale.
-		err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+		err := hm.db.UpdateProcessHistoryEntry(ctx, sample.pgid, database.ProcessHistoryUpdate{
 			State:           new(types.ProcessStateRunning),
 			RssMemoryKb:     rssPtr,
 			PeakRssMemoryKb: peakPtr,
@@ -510,22 +547,22 @@ func (hm *HealthMonitor) dispatchMemoryAction(ctx context.Context, service *type
 
 // restartOnMemoryThreshold restarts a service that crossed a soft or force memory
 // threshold, using the grace/ticker periods appropriate to that threshold's urgency.
-func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, rssKb int64, rssPtr, peakPtr *int64, label string, gracePeriod, tickerPeriod time.Duration) {
+func (hm *HealthMonitor) restartOnMemoryThreshold(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, pgid int, restart memoryRestartAction) {
 	serviceName := service.Name
 
 	if !canRestart(instance.RestartCount, process.StartedAt, hm.backoff) {
 		return
 	}
 
-	hm.logger.Debug("memory threshold: "+label+" restart", "service", serviceName, "mem_kb", rssKb, "attempt", instance.RestartCount+1)
-	newPgid, err := hm.mgr.RestartService(service.Name, gracePeriod, tickerPeriod)
+	hm.logger.Debug("memory threshold: "+restart.label+" restart", "service", serviceName, "mem_kb", restart.rssKb, "attempt", instance.RestartCount+1)
+	newPgid, err := hm.mgr.RestartService(ctx, service.Name, restart.gracePeriod, restart.tickerPeriod)
 	if err != nil {
-		hm.updateProcessEntry(ctx, pgid, rssPtr, peakPtr, nil, serviceName)
-		hm.logger.Error("restarting on "+label+" restart threshold", "service", serviceName, "error", err)
+		hm.updateProcessEntry(ctx, pgid, restart.rssPtr, restart.peakPtr, nil, serviceName)
+		hm.logger.Error("restarting on "+restart.label+" restart threshold", "service", serviceName, "error", err)
 		return
 	}
 
-	restartMsg := fmt.Sprintf("[%s] auto %s restarted due to memory limits", serviceName, label)
+	restartMsg := fmt.Sprintf("[%s] auto %s restarted due to memory limits", serviceName, restart.label)
 	hm.logger.Warn(restartMsg)
 	if logErr := hm.mgr.LogToServiceStderr(serviceName, restartMsg); logErr != nil {
 		hm.logger.Error("failed to log service error output", "service", serviceName, "error", logErr)
@@ -612,7 +649,7 @@ func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *ty
 	if err := hm.mgr.LogToServiceStderr(serviceName, errorString); err != nil {
 		hm.logger.Error("failed to log service error output", "service", serviceName, "error", err)
 	}
-	_, err := hm.mgr.RestartService(serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
+	_, err := hm.mgr.RestartService(ctx, serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
 	if err != nil {
 		hm.handleRestartFailure(ctx, serviceName, pgid, restartCount, err, lastErrLine, hadLastErrLine)

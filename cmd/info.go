@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -27,7 +28,7 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			mgr := getManager()
 
-			registeredService, err := infoFetchRegisteredService(cmd, mgr, serviceName)
+			registeredService, err := infoFetchRegisteredService(cmd, cmd.Context(), mgr, serviceName)
 			if err != nil {
 				return err
 			}
@@ -35,13 +36,13 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			configPath := filepath.Join(registeredService.DirectoryPath, registeredService.ConfigFileName)
 			config := infoLoadConfig(cmd, configPath)
 
-			serviceInstance := infoFetchServiceInstance(cmd, mgr, serviceName)
-			processEntry := infoFetchProcessEntry(cmd, mgr, serviceName)
+			serviceInstance := infoFetchServiceInstance(cmd, cmd.Context(), mgr, serviceName)
+			processEntry := infoFetchProcessEntry(cmd, cmd.Context(), mgr, serviceName)
 
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
-			logPath := infoFetchLogPath(cmd, mgr, serviceName, false, serviceInstance)
+			logPath := infoFetchLogPath(cmd, cmd.Context(), mgr, serviceName, false, serviceInstance)
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
-			errorLogPath := infoFetchLogPath(cmd, mgr, serviceName, true, serviceInstance)
+			errorLogPath := infoFetchLogPath(cmd, cmd.Context(), mgr, serviceName, true, serviceInstance)
 
 			infoPrintProcessSection(cmd, processEntry)
 			infoPrintServiceSection(cmd, &registeredService)
@@ -54,8 +55,8 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		}}
 }
 
-func infoFetchRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
-	registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+func infoFetchRegisteredService(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
+	registeredService, err := mgr.GetServiceCatalogEntry(ctx, serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 		return types.ServiceCatalogEntry{}, helpers.ErrCommandFailed
@@ -71,8 +72,8 @@ func infoLoadConfig(cmd *cobra.Command, configPath string) *types.ServiceConfig 
 	return config
 }
 
-func infoFetchServiceInstance(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) *types.ServiceInstance {
-	serviceInstance, err := mgr.GetServiceInstance(serviceName)
+func infoFetchServiceInstance(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) *types.ServiceInstance {
+	serviceInstance, err := mgr.GetServiceInstance(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting service instance: %v", err))
 	}
@@ -80,16 +81,16 @@ func infoFetchServiceInstance(cmd *cobra.Command, mgr manager.ServiceManager, se
 	return serviceInstance
 }
 
-func infoFetchProcessEntry(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) *types.ProcessHistory {
-	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+func infoFetchProcessEntry(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) *types.ProcessHistory {
+	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 	}
 	return processEntry
 }
 
-func infoFetchLogPath(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, errorLog bool, serviceInstance *types.ServiceInstance) *string {
-	logPath, err := mgr.GetServiceLogFilePath(serviceName, errorLog)
+func infoFetchLogPath(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string, errorLog bool, serviceInstance *types.ServiceInstance) *string {
+	logPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, errorLog)
 	if err != nil && serviceInstance != nil {
 		label := "getting log path"
 		if errorLog {

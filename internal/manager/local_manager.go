@@ -224,8 +224,8 @@ func (m *LocalManager) IsReloadInProgress(name string) bool {
 // RecordDependencyWait around WaitForDependencies; it exists purely so
 // status-reading callers see this instead of name looking like a service
 // that was simply never started.
-func (m *LocalManager) SetDependencyWaitStatus(name string, pending []string, deadline time.Time) error {
-	if err := m.db.SetDependencyWaitStatus(m.ctx, name, pending, deadline); err != nil {
+func (m *LocalManager) SetDependencyWaitStatus(ctx context.Context, name string, pending []string, deadline time.Time) error {
+	if err := m.db.SetDependencyWaitStatus(ctx, name, pending, deadline); err != nil {
 		return fmt.Errorf("set dependency wait status for %s: %w", name, err)
 	}
 	return nil
@@ -233,8 +233,8 @@ func (m *LocalManager) SetDependencyWaitStatus(name string, pending []string, de
 
 // ClearDependencyWaitStatus removes name's recorded wait, called once its
 // WaitForDependencies call returns (ready, timed out, or context canceled).
-func (m *LocalManager) ClearDependencyWaitStatus(name string) error {
-	if err := m.db.ClearDependencyWaitStatus(m.ctx, name); err != nil {
+func (m *LocalManager) ClearDependencyWaitStatus(ctx context.Context, name string) error {
+	if err := m.db.ClearDependencyWaitStatus(ctx, name); err != nil {
 		return fmt.Errorf("clear dependency wait status for %s: %w", name, err)
 	}
 	return nil
@@ -250,8 +250,8 @@ func (m *LocalManager) ClearDependencyWaitStatus(name string) error {
 // Deadline rather than a fixed window from Since means a wait with a long
 // max_wait (no upper bound is enforced) is never misreported as orphaned
 // while still legitimately in progress.
-func (m *LocalManager) GetDependencyWaitStatus(name string) (types.DependencyWaitStatus, bool, error) {
-	status, waiting, err := m.db.GetDependencyWaitStatus(m.ctx, name)
+func (m *LocalManager) GetDependencyWaitStatus(ctx context.Context, name string) (types.DependencyWaitStatus, bool, error) {
+	status, waiting, err := m.db.GetDependencyWaitStatus(ctx, name)
 	if err != nil {
 		return types.DependencyWaitStatus{}, false, fmt.Errorf("get dependency wait status for %s: %w", name, err)
 	}
@@ -259,7 +259,7 @@ func (m *LocalManager) GetDependencyWaitStatus(name string) (types.DependencyWai
 		return types.DependencyWaitStatus{}, false, nil
 	}
 	if dependencyWaitIsStale(status.Deadline) {
-		if clearErr := m.db.ClearDependencyWaitStatus(m.ctx, name); clearErr != nil {
+		if clearErr := m.db.ClearDependencyWaitStatus(ctx, name); clearErr != nil {
 			return types.DependencyWaitStatus{}, false, fmt.Errorf("clearing stale dependency wait status for %s: %w", name, clearErr)
 		}
 		return types.DependencyWaitStatus{}, false, nil
@@ -318,8 +318,8 @@ func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logge
 	return m
 }
 
-func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.ServiceCatalogEntry) error {
-	isRegistered, err := m.db.IsServiceRegistered(m.ctx, newServiceCatalogEntry.Name)
+func (m *LocalManager) AddServiceCatalogEntry(ctx context.Context, newServiceCatalogEntry *types.ServiceCatalogEntry) error {
+	isRegistered, err := m.db.IsServiceRegistered(ctx, newServiceCatalogEntry.Name)
 	if err != nil {
 		return fmt.Errorf("check service registration: %w", err)
 	}
@@ -332,7 +332,7 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 	// "Foo" and "foo" alias onto one log file on case-insensitive filesystems
 	// (macOS APFS), silently intermingling the two services' output. Distinct
 	// catalog identities must map to distinct log files. See issue #10.
-	existing, conflict, err := m.db.FindServiceNameCaseInsensitive(m.ctx, newServiceCatalogEntry.Name)
+	existing, conflict, err := m.db.FindServiceNameCaseInsensitive(ctx, newServiceCatalogEntry.Name)
 	if err != nil {
 		return fmt.Errorf("check service name case collision: %w", err)
 	}
@@ -340,7 +340,7 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 		return fmt.Errorf("%w: %q conflicts with registered service %q", ErrServiceNameCaseConflict, newServiceCatalogEntry.Name, existing)
 	}
 
-	err = m.db.RegisterService(m.ctx, newServiceCatalogEntry.Name, newServiceCatalogEntry.DirectoryPath, newServiceCatalogEntry.ConfigFileName)
+	err = m.db.RegisterService(ctx, newServiceCatalogEntry.Name, newServiceCatalogEntry.DirectoryPath, newServiceCatalogEntry.ConfigFileName)
 	if err != nil {
 		return fmt.Errorf("failed to register service: %w", err)
 	}
@@ -348,24 +348,24 @@ func (m *LocalManager) AddServiceCatalogEntry(newServiceCatalogEntry *types.Serv
 
 }
 
-func (m *LocalManager) RemoveServiceInstance(name string) (bool, error) {
-	removed, err := m.db.RemoveServiceInstance(m.ctx, name)
+func (m *LocalManager) RemoveServiceInstance(ctx context.Context, name string) (bool, error) {
+	removed, err := m.db.RemoveServiceInstance(ctx, name)
 	if err != nil {
 		return false, fmt.Errorf("remove service instance: %w", err)
 	}
 	return removed, nil
 }
 
-func (m *LocalManager) RemoveServiceCatalogEntry(name string) (bool, error) {
-	removed, err := m.db.RemoveServiceCatalogEntry(m.ctx, name)
+func (m *LocalManager) RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error) {
+	removed, err := m.db.RemoveServiceCatalogEntry(ctx, name)
 	if err != nil {
 		return false, fmt.Errorf("remove service catalog entry: %w", err)
 	}
 	return removed, nil
 }
 
-func (m *LocalManager) IsServiceRegistered(name string) (bool, error) {
-	isRegistered, err := m.db.IsServiceRegistered(m.ctx, name)
+func (m *LocalManager) IsServiceRegistered(ctx context.Context, name string) (bool, error) {
+	isRegistered, err := m.db.IsServiceRegistered(ctx, name)
 	if err != nil {
 		return false, fmt.Errorf("check service registration: %w", err)
 	}
@@ -383,13 +383,13 @@ func isNotFound(err error) bool {
 		strings.Contains(err.Error(), database.ErrServiceNotFound.Error())
 }
 
-func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceInstance, error) {
-	_, err := m.db.IsServiceRegistered(m.ctx, name)
+func (m *LocalManager) GetServiceInstance(ctx context.Context, name string) (*types.ServiceInstance, error) {
+	_, err := m.db.IsServiceRegistered(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("service %q not registered: %w", name, err)
 	}
 
-	serviceInstance, err := m.db.GetServiceInstance(m.ctx, name)
+	serviceInstance, err := m.db.GetServiceInstance(ctx, name)
 	if isNotFound(err) {
 		return nil, ErrServiceNotRunning
 	}
@@ -400,8 +400,8 @@ func (m *LocalManager) GetServiceInstance(name string) (*types.ServiceInstance, 
 	return &serviceInstance, nil
 }
 
-func (m *LocalManager) GetAllServiceInstances() ([]types.ServiceInstance, error) {
-	serviceInstances, err := m.db.GetAllServiceInstances(m.ctx)
+func (m *LocalManager) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstance, error) {
+	serviceInstances, err := m.db.GetAllServiceInstances(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get all service runtime entries: %w", err)
 	}
@@ -411,7 +411,7 @@ func (m *LocalManager) GetAllServiceInstances() ([]types.ServiceInstance, error)
 // GetVersion returns this process's own buildinfo. It always succeeds — the
 // error return exists only to satisfy ServiceManager, whose DaemonManager
 // implementation can fail on the socket round-trip.
-func (m *LocalManager) GetVersion() (types.GetVersionResponse, error) {
+func (m *LocalManager) GetVersion(_ context.Context) (types.GetVersionResponse, error) {
 	return types.GetVersionResponse{
 		Version:   buildinfo.Version,
 		GitCommit: buildinfo.GitCommit,
@@ -419,13 +419,13 @@ func (m *LocalManager) GetVersion() (types.GetVersionResponse, error) {
 	}, nil
 }
 
-func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalogEntry, error) {
-	_, err := m.db.IsServiceRegistered(m.ctx, name)
+func (m *LocalManager) GetServiceCatalogEntry(ctx context.Context, name string) (types.ServiceCatalogEntry, error) {
+	_, err := m.db.IsServiceRegistered(ctx, name)
 	if err != nil {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("service %q not registered: %w", name, err)
 	}
 
-	registeredService, err := m.db.GetServiceCatalogEntry(m.ctx, name)
+	registeredService, err := m.db.GetServiceCatalogEntry(ctx, name)
 	if isNotFound(err) {
 		return types.ServiceCatalogEntry{}, ErrServiceNotRegistered
 	}
@@ -435,16 +435,16 @@ func (m *LocalManager) GetServiceCatalogEntry(name string) (types.ServiceCatalog
 	return registeredService, nil
 }
 
-func (m *LocalManager) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
-	services, err := m.db.GetAllServiceCatalogEntries(m.ctx)
+func (m *LocalManager) GetAllServiceCatalogEntries(ctx context.Context) ([]types.ServiceCatalogEntry, error) {
+	services, err := m.db.GetAllServiceCatalogEntries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get all service catalog entries: %w", err)
 	}
 	return services, nil
 }
 
-func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.ProcessHistory, error) {
-	entry, err := m.db.GetMostRecentProcessHistoryEntryByName(m.ctx, name)
+func (m *LocalManager) GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error) {
+	entry, err := m.db.GetMostRecentProcessHistoryEntryByName(ctx, name)
 	if errors.Is(err, database.ErrProcessHistoryNotFound) {
 		return nil, ErrProcessNotFound
 	}
@@ -454,8 +454,8 @@ func (m *LocalManager) GetMostRecentProcessHistoryEntry(name string) (*types.Pro
 	return &entry, nil
 }
 
-func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath string, newConfigFileName string) error {
-	err := m.db.UpdateServiceCatalogEntry(m.ctx, name, newDirectoryPath, newConfigFileName)
+func (m *LocalManager) UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error {
+	err := m.db.UpdateServiceCatalogEntry(ctx, name, newDirectoryPath, newConfigFileName)
 	if err != nil {
 		return fmt.Errorf("update service catalog entry %q: %w", name, err)
 	}
@@ -464,8 +464,8 @@ func (m *LocalManager) UpdateServiceCatalogEntry(name string, newDirectoryPath s
 
 // SetServiceEnabled persists name's desired boot state. See the
 // ServiceManager interface doc for why this exists.
-func (m *LocalManager) SetServiceEnabled(name string, enabled bool) error {
-	if err := m.db.SetServiceCatalogEnabled(m.ctx, name, enabled); err != nil {
+func (m *LocalManager) SetServiceEnabled(ctx context.Context, name string, enabled bool) error {
+	if err := m.db.SetServiceCatalogEnabled(ctx, name, enabled); err != nil {
 		return fmt.Errorf("set service enabled %q: %w", name, err)
 	}
 	return nil
@@ -817,7 +817,7 @@ func (m *LocalManager) lmMarkStaleHistoryEntry(name string, pgid int, newState t
 // resolved log sinks shared by Start and Restart. An unregistered service is
 // normalized into a plain error.
 func (m *LocalManager) loadServiceForLaunch(name string) (types.ServiceCatalogEntry, *types.ServiceConfig, []types.LogSink, error) {
-	service, err := m.GetServiceCatalogEntry(name)
+	service, err := m.GetServiceCatalogEntry(m.ctx, name)
 	if errors.Is(err, ErrServiceNotRegistered) {
 		return types.ServiceCatalogEntry{}, nil, nil, fmt.Errorf("service %s not registered", name)
 	}
@@ -930,7 +930,7 @@ func lmDeferCleanupIO(m *LocalManager, lio launchIO, serviceName string, launchS
 	}
 }
 
-func (m *LocalManager) StartService(name string) (pgid int, err error) {
+func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int, err error) {
 	unlock := m.lockService(name)
 	defer unlock()
 
@@ -945,12 +945,12 @@ func (m *LocalManager) StartService(name string) (pgid int, err error) {
 		return 0, err
 	}
 
-	serviceInstance, err := m.GetServiceInstance(name)
+	serviceInstance, err := m.GetServiceInstance(ctx, name)
 	if err != nil && !errors.Is(err, ErrServiceNotRunning) {
 		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
 	}
 
-	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(m.ctx, name)
+	processHistory, err := m.db.GetProcessHistoryEntriesByServiceName(ctx, name)
 	if err != nil {
 		return 0, fmt.Errorf("get process history for %s: %w", name, err)
 	}
@@ -1005,7 +1005,7 @@ func (m *LocalManager) lmStopForRestart(name string, gracePeriod, tickerPeriod t
 	return nil
 }
 
-func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
+func (m *LocalManager) RestartService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (pgid int, err error) {
 	unlock := m.lockService(name)
 	defer unlock()
 
@@ -1020,7 +1020,7 @@ func (m *LocalManager) RestartService(name string, gracePeriod time.Duration, ti
 		return 0, err
 	}
 
-	serviceInstance, err := m.GetServiceInstance(name)
+	serviceInstance, err := m.GetServiceInstance(ctx, name)
 	if err != nil {
 		return 0, fmt.Errorf("get service instance for %s: %w", name, err)
 	}
@@ -1135,7 +1135,7 @@ func lmPollPendingExits(pending map[int]bool, stopped map[int]bool) {
 	}
 }
 
-func (m *LocalManager) StopService(name string, gracePeriod time.Duration, tickerPeriod time.Duration) (result StopServiceResult, err error) {
+func (m *LocalManager) StopService(_ context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (result StopServiceResult, err error) {
 	unlock := m.lockService(name)
 	defer unlock()
 	return m.stopServiceLocked(name, gracePeriod, tickerPeriod)
@@ -1217,7 +1217,7 @@ func isProcessAlive(pgid int) bool {
 	return procutil.IsAlive(pgid)
 }
 
-func (m *LocalManager) ForceStopService(name string) (result StopServiceResult, err error) {
+func (m *LocalManager) ForceStopService(_ context.Context, name string) (result StopServiceResult, err error) {
 	unlock := m.lockService(name)
 	defer unlock()
 

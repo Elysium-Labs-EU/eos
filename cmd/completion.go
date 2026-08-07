@@ -114,7 +114,7 @@ func refreshInstalledCompletions(ctx context.Context, cmd *cobra.Command, binary
 	}
 }
 
-func runInteractiveCompletion(cmd *cobra.Command, root *cobra.Command) error {
+func runInteractiveCompletion(cmd, root *cobra.Command) error {
 	shell := detectShell()
 	if shell == "" {
 		cmd.PrintErrln("  could not detect shell; run 'eos completion bash|zsh|fish' to print the script manually")

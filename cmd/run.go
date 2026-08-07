@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func registerService(mgr manager.ServiceManager, yamlFile string, name string) error {
+func registerService(ctx context.Context, mgr manager.ServiceManager, yamlFile string, name string) error {
 	absPath, err := filepath.Abs(filepath.Dir(yamlFile))
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
@@ -27,7 +27,7 @@ func registerService(mgr manager.ServiceManager, yamlFile string, name string) e
 		return fmt.Errorf("creating service catalog entry: %w", err)
 	}
 
-	err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
+	err = mgr.AddServiceCatalogEntry(ctx, serviceCatalogEntry)
 	if err != nil {
 		return fmt.Errorf("adding service catalog entry: %w", err)
 	}
@@ -39,8 +39,8 @@ type ServiceStartResult struct {
 	PGID      int
 }
 
-func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) (ServiceStartResult, error) {
-	pgid, err := mgr.StartService(registeredService.Name)
+func startOrRestartService(ctx context.Context, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) (ServiceStartResult, error) {
+	pgid, err := mgr.StartService(ctx, registeredService.Name)
 
 	if err == nil {
 		return ServiceStartResult{Restarted: false, PGID: pgid}, nil
@@ -50,7 +50,7 @@ func startOrRestartService(mgr manager.ServiceManager, gracePeriod time.Duration
 		return ServiceStartResult{}, fmt.Errorf("starting service: %w", err)
 	}
 
-	pgid, err = mgr.RestartService(registeredService.Name, gracePeriod, 200*time.Millisecond)
+	pgid, err = mgr.RestartService(ctx, registeredService.Name, gracePeriod, 200*time.Millisecond)
 	if err != nil {
 		return ServiceStartResult{}, fmt.Errorf("restarting service: %w", err)
 	}
@@ -81,8 +81,8 @@ type ServiceFileRequestResult struct {
 	AlreadyExists bool
 }
 
-func registerServiceIfNeeded(mgr manager.ServiceManager, serviceYamlFile string, serviceName string) (ServiceFileRequestResult, error) {
-	err := registerService(mgr, serviceYamlFile, serviceName)
+func registerServiceIfNeeded(ctx context.Context, mgr manager.ServiceManager, serviceYamlFile string, serviceName string) (ServiceFileRequestResult, error) {
+	err := registerService(ctx, mgr, serviceYamlFile, serviceName)
 
 	if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 		return ServiceFileRequestResult{Name: serviceName, AlreadyExists: true}, nil
@@ -115,8 +115,8 @@ func gateDependencies(ctx context.Context, cmd *cobra.Command, mgr manager.Servi
 
 var ErrServiceNonExistent = errors.New("service non existent")
 
-func isServiceRegistered(mgr manager.ServiceManager, serviceName string) (string, error) {
-	exists, err := mgr.IsServiceRegistered(serviceName)
+func isServiceRegistered(ctx context.Context, mgr manager.ServiceManager, serviceName string) (string, error) {
+	exists, err := mgr.IsServiceRegistered(ctx, serviceName)
 	if err != nil {
 		return "", fmt.Errorf("checking service: %w", err)
 	}
@@ -126,8 +126,8 @@ func isServiceRegistered(mgr manager.ServiceManager, serviceName string) (string
 	return serviceName, nil
 }
 
-func isServiceRunning(mgr manager.ServiceManager, serviceName string) (bool, error) {
-	_, err := mgr.GetServiceInstance(serviceName)
+func isServiceRunning(ctx context.Context, mgr manager.ServiceManager, serviceName string) (bool, error) {
+	_, err := mgr.GetServiceInstance(ctx, serviceName)
 	if err == nil {
 		return true, nil
 	}
@@ -209,7 +209,7 @@ func runResolveServiceNameFromFile(cmd *cobra.Command, mgr manager.ServiceManage
 
 	printSelfDetachWarnings(cmd, parsedService.Config.Command)
 
-	registerResult, registerErr := registerServiceIfNeeded(mgr, parsedService.YamlFile, parsedService.Config.Name)
+	registerResult, registerErr := registerServiceIfNeeded(cmd.Context(), mgr, parsedService.YamlFile, parsedService.Config.Name)
 	if registerErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("handling service file: %v", registerErr))
 		return "", helpers.ErrCommandFailed
@@ -224,7 +224,7 @@ func runResolveServiceNameFromFile(cmd *cobra.Command, mgr manager.ServiceManage
 func runResolveServiceNameFromArgs(cmd *cobra.Command, mgr manager.ServiceManager, serviceNameArg string) (string, error) {
 	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), "starting", ui.TextBold.Render(serviceNameArg))
 
-	registeredServiceName, registeredCheckErr := isServiceRegistered(mgr, serviceNameArg)
+	registeredServiceName, registeredCheckErr := isServiceRegistered(cmd.Context(), mgr, serviceNameArg)
 	if errors.Is(registeredCheckErr, ErrServiceNonExistent) {
 		cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceNameArg), "is not registered")
 		cmd.PrintErrf("  %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos run -f <path>"))
@@ -242,7 +242,7 @@ func runHandleOnceFlag(cmd *cobra.Command, mgr manager.ServiceManager, once bool
 		return false, nil
 	}
 
-	running, runningCheckErr := isServiceRunning(mgr, serviceName)
+	running, runningCheckErr := isServiceRunning(cmd.Context(), mgr, serviceName)
 	if runningCheckErr != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("check service running status: %v", runningCheckErr))
 		return false, helpers.ErrCommandFailed
@@ -285,7 +285,7 @@ func runResolveServiceSelector(cmd *cobra.Command, mgr manager.ServiceManager, a
 }
 
 func runGetRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
-	registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+	registeredService, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting registered service: %v", err))
 		return types.ServiceCatalogEntry{}, helpers.ErrCommandFailed
@@ -302,7 +302,7 @@ func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, 
 }
 
 func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) error {
-	serviceRunResult, err := startOrRestartService(mgr, gracePeriod, registeredService)
+	serviceRunResult, err := startOrRestartService(cmd.Context(), mgr, gracePeriod, registeredService)
 	if err != nil {
 		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
 		return helpers.ErrCommandFailed
@@ -352,7 +352,7 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 			// Persist the run as this service's desired boot state, clearing any
 			// stop recorded by a prior "eos stop" — bootPersistedServices reads
 			// this flag on the next daemon start/reboot (issue #172).
-			if err = mgr.SetServiceEnabled(serviceName, true); err != nil {
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
 				return helpers.ErrCommandFailed
 			}

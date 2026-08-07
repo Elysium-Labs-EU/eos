@@ -65,7 +65,7 @@ func registerServiceOnManager(t *testing.T, mgr *LocalManager, baseDir, name, co
 	if err != nil {
 		t.Fatalf("catalog entry: %v", err)
 	}
-	if err := mgr.AddServiceCatalogEntry(entry); err != nil {
+	if err := mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
 		t.Fatalf("add catalog entry: %v", err)
 	}
 }
@@ -155,7 +155,7 @@ func TestReloadLaunchIncoming(t *testing.T) {
 func TestReloadServiceCutover(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-cutover")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestReloadServiceCutover(t *testing.T) {
 func TestReloadServiceAbortKeepsOld(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-abort")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestReloadServiceAbortKeepsOld(t *testing.T) {
 	// most-recent row would make the health monitor restart the service and kill
 	// the old instance the abort just protected. Most-recent must be the old,
 	// still-Running instance.
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestReloadServiceAbortKeepsOld(t *testing.T) {
 func TestReloadServiceReadinessTimeoutBelowProbeInterval(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-fast-timeout")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -298,7 +298,7 @@ func waitForFile(path string, within time.Duration) bool {
 func TestDrainInstanceAlreadyGone(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "drain-gone")
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestDrainInstanceAlreadyGone(t *testing.T) {
 	if drainErr := mgr.drainInstance(name, pgid, time.Second, 20*time.Millisecond); drainErr != nil {
 		t.Fatalf("drainInstance: %v", drainErr)
 	}
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestDrainInstanceForceKillsOnGraceTimeout(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "trap-ready")
 	mgr := registerServiceWithCommand(t, name, sigtermIgnoringCommand(marker))
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestDrainInstanceForceKillsOnGraceTimeout(t *testing.T) {
 	if !waitGone(pgid) {
 		t.Errorf("process group %d should have been force-killed after the grace period", pgid)
 	}
-	recent, err := mgr.GetMostRecentProcessHistoryEntry(name)
+	recent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), name)
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestDrainInstanceCanceledLeavesRow(t *testing.T) {
 	marker := filepath.Join(tempDir, name, "trap-ready")
 	registerServiceOnManager(t, mgr, tempDir, name, sigtermIgnoringCommand(marker))
 
-	pgid, err := mgr.StartService(name)
+	pgid, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestReloadServiceNotRunning(t *testing.T) {
 func TestReloadServiceNilProbe(t *testing.T) {
 	mgr, name := registerLongRunningService(t, "reload-nilprobe")
 
-	oldPGID, err := mgr.StartService(name)
+	oldPGID, err := mgr.StartService(t.Context(), name)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}

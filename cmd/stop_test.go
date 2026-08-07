@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -316,7 +317,7 @@ func TestStopCommandPersistsDisabled(t *testing.T) {
 		t.Fatalf("Stop command should not return an error, got : %v", err)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry(testFile.Name)
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("GetServiceCatalogEntry: %v", err)
 	}
@@ -480,11 +481,11 @@ type stopCmdFakeManager struct {
 	removedInstance   bool
 }
 
-func (f *stopCmdFakeManager) ForceStopService(_ string) (manager.StopServiceResult, error) {
+func (f *stopCmdFakeManager) ForceStopService(context.Context, string) (manager.StopServiceResult, error) {
 	return f.forceStopResult, f.forceStopErr
 }
 
-func (f *stopCmdFakeManager) RemoveServiceInstance(_ string) (bool, error) {
+func (f *stopCmdFakeManager) RemoveServiceInstance(context.Context, string) (bool, error) {
 	return f.removedInstance, f.removeInstanceErr
 }
 

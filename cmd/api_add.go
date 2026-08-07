@@ -49,7 +49,7 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
+			result, err := registerServiceIfNeeded(cmd.Context(), mgr, parsed.YamlFile, parsed.Config.Name)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("registering service: %w", err))
 			}

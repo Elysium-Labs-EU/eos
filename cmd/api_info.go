@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -73,12 +74,12 @@ Exit codes:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return apiInfoRunE(cmd, args[0], getManager())
+			return apiInfoRunE(cmd, cmd.Context(), args[0], getManager())
 		}}
 }
 
-func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceManager) error {
-	registeredService, err := apiInfoLoadRegisteredService(mgr, serviceName)
+func apiInfoRunE(cmd *cobra.Command, ctx context.Context, serviceName string, mgr manager.ServiceManager) error {
+	registeredService, err := apiInfoLoadRegisteredService(ctx, mgr, serviceName)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
@@ -88,17 +89,17 @@ func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceMana
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
-	serviceInstance, err := apiInfoLoadServiceInstance(mgr, serviceName)
+	serviceInstance, err := apiInfoLoadServiceInstance(ctx, mgr, serviceName)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
-	processEntry, err := apiInfoLoadProcessEntry(mgr, serviceName)
+	processEntry, err := apiInfoLoadProcessEntry(ctx, mgr, serviceName)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
-	logPath, errorLogPath, err := apiInfoLoadLogPaths(mgr, serviceName, serviceInstance != nil)
+	logPath, errorLogPath, err := apiInfoLoadLogPaths(ctx, mgr, serviceName, serviceInstance != nil)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
@@ -109,8 +110,8 @@ func apiInfoRunE(cmd *cobra.Command, serviceName string, mgr manager.ServiceMana
 	return helpers.WriteJSON(cmd, serviceInfo)
 }
 
-func apiInfoLoadRegisteredService(mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
-	registeredService, err := mgr.GetServiceCatalogEntry(serviceName)
+func apiInfoLoadRegisteredService(ctx context.Context, mgr manager.ServiceManager, serviceName string) (types.ServiceCatalogEntry, error) {
+	registeredService, err := mgr.GetServiceCatalogEntry(ctx, serviceName)
 	if errors.Is(err, manager.ErrServiceNotRegistered) {
 		return types.ServiceCatalogEntry{}, fmt.Errorf("service %q not found", serviceName)
 	}
@@ -129,28 +130,28 @@ func apiInfoLoadConfig(registeredService *types.ServiceCatalogEntry) (*types.Ser
 	return config, nil
 }
 
-func apiInfoLoadServiceInstance(mgr manager.ServiceManager, serviceName string) (*types.ServiceInstance, error) {
-	serviceInstance, err := mgr.GetServiceInstance(serviceName)
+func apiInfoLoadServiceInstance(ctx context.Context, mgr manager.ServiceManager, serviceName string) (*types.ServiceInstance, error) {
+	serviceInstance, err := mgr.GetServiceInstance(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
 		return nil, fmt.Errorf("getting service instance: %w", err)
 	}
 	return serviceInstance, nil
 }
 
-func apiInfoLoadProcessEntry(mgr manager.ServiceManager, serviceName string) (*types.ProcessHistory, error) {
-	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(serviceName)
+func apiInfoLoadProcessEntry(ctx context.Context, mgr manager.ServiceManager, serviceName string) (*types.ProcessHistory, error) {
+	processEntry, err := mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		return nil, fmt.Errorf("getting process history: %w", err)
 	}
 	return processEntry, nil
 }
 
-func apiInfoLoadLogPaths(mgr manager.ServiceManager, serviceName string, instanceRunning bool) (*string, *string, error) {
-	logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
+func apiInfoLoadLogPaths(ctx context.Context, mgr manager.ServiceManager, serviceName string, instanceRunning bool) (*string, *string, error) {
+	logPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, false)
 	if err != nil && instanceRunning {
 		return nil, nil, fmt.Errorf("getting log path: %w", err)
 	}
-	errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
+	errorLogPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, true)
 	if err != nil && instanceRunning {
 		return nil, nil, fmt.Errorf("getting error log path: %w", err)
 	}

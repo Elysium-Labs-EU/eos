@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -17,7 +18,7 @@ type apiRunResult struct {
 	Skipped   bool   `json:"skipped"`
 }
 
-func apiRunResolveServiceName(mgr manager.ServiceManager, serviceFile string, args []string) (string, error) {
+func apiRunResolveServiceName(ctx context.Context, mgr manager.ServiceManager, serviceFile string, args []string) (string, error) {
 	if serviceFile == "" && len(args) == 0 {
 		return "", errors.New("must specify either -f <file> or a service name")
 	}
@@ -27,21 +28,21 @@ func apiRunResolveServiceName(mgr manager.ServiceManager, serviceFile string, ar
 		if err != nil {
 			return "", err
 		}
-		result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
+		result, err := registerServiceIfNeeded(ctx, mgr, parsed.YamlFile, parsed.Config.Name)
 		if err != nil {
 			return "", err
 		}
 		return result.Name, nil
 	}
 
-	return isServiceRegistered(mgr, args[0])
+	return isServiceRegistered(ctx, mgr, args[0])
 }
 
-func apiRunShouldSkip(mgr manager.ServiceManager, once bool, serviceName string) (bool, error) {
+func apiRunShouldSkip(ctx context.Context, mgr manager.ServiceManager, once bool, serviceName string) (bool, error) {
 	if !once {
 		return false, nil
 	}
-	return isServiceRunning(mgr, serviceName)
+	return isServiceRunning(ctx, mgr, serviceName)
 }
 
 func newAPIRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
@@ -80,18 +81,18 @@ Exit codes:
 			serviceFile, _ := cmd.Flags().GetString("file")
 			once, _ := cmd.Flags().GetBool("once")
 
-			serviceName, err := apiRunResolveServiceName(mgr, serviceFile, args)
+			serviceName, err := apiRunResolveServiceName(cmd.Context(), mgr, serviceFile, args)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
 			// Persist the run as this service's desired boot state; see the
 			// identical call in newRunCmd for why (issue #172).
-			if err = mgr.SetServiceEnabled(serviceName, true); err != nil {
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting run state: %w", err))
 			}
 
-			skip, err := apiRunShouldSkip(mgr, once, serviceName)
+			skip, err := apiRunShouldSkip(cmd.Context(), mgr, once, serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
@@ -99,12 +100,12 @@ Exit codes:
 				return helpers.WriteJSON(cmd, apiRunResult{Name: serviceName, Skipped: true})
 			}
 
-			entry, err := mgr.GetServiceCatalogEntry(serviceName)
+			entry, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			startResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, &entry)
+			startResult, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, &entry)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}

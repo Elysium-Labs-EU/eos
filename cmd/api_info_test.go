@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -33,19 +34,19 @@ type apiInfoFakeManager struct {
 	catalogEntry    types.ServiceCatalogEntry
 }
 
-func (f *apiInfoFakeManager) GetServiceCatalogEntry(_ string) (types.ServiceCatalogEntry, error) {
+func (f *apiInfoFakeManager) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
 	return f.catalogEntry, f.catalogErr
 }
 
-func (f *apiInfoFakeManager) GetServiceInstance(_ string) (*types.ServiceInstance, error) {
+func (f *apiInfoFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
 	return f.instance, f.instanceErr
 }
 
-func (f *apiInfoFakeManager) GetMostRecentProcessHistoryEntry(_ string) (*types.ProcessHistory, error) {
+func (f *apiInfoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
 }
 
-func (f *apiInfoFakeManager) GetServiceLogFilePath(_ string, errorLog bool) (*string, error) {
+func (f *apiInfoFakeManager) GetServiceLogFilePath(_ context.Context, _ string, errorLog bool) (*string, error) {
 	if errorLog {
 		return f.errorLogPath, f.errorLogPathErr
 	}
@@ -53,12 +54,12 @@ func (f *apiInfoFakeManager) GetServiceLogFilePath(_ string, errorLog bool) (*st
 }
 
 func TestAPIInfoLoadRegisteredServiceErrors(t *testing.T) {
-	if _, err := apiInfoLoadRegisteredService(&apiInfoFakeManager{catalogErr: manager.ErrServiceNotRegistered}, "svc"); err == nil || !strings.Contains(err.Error(), "not found") {
+	if _, err := apiInfoLoadRegisteredService(t.Context(), &apiInfoFakeManager{catalogErr: manager.ErrServiceNotRegistered}, "svc"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' error, got: %v", err)
 	}
 
 	wantErr := errors.New("boom")
-	if _, err := apiInfoLoadRegisteredService(&apiInfoFakeManager{catalogErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting registered service") {
+	if _, err := apiInfoLoadRegisteredService(t.Context(), &apiInfoFakeManager{catalogErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting registered service") {
 		t.Errorf("expected wrapped 'getting registered service' error, got: %v", err)
 	}
 }
@@ -72,11 +73,11 @@ func TestAPIInfoLoadConfigError(t *testing.T) {
 
 func TestAPIInfoLoadServiceInstanceError(t *testing.T) {
 	wantErr := errors.New("boom")
-	if _, err := apiInfoLoadServiceInstance(&apiInfoFakeManager{instanceErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting service instance") {
+	if _, err := apiInfoLoadServiceInstance(t.Context(), &apiInfoFakeManager{instanceErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting service instance") {
 		t.Errorf("expected wrapped 'getting service instance' error, got: %v", err)
 	}
 
-	instance, err := apiInfoLoadServiceInstance(&apiInfoFakeManager{instanceErr: manager.ErrServiceNotRunning}, "svc")
+	instance, err := apiInfoLoadServiceInstance(t.Context(), &apiInfoFakeManager{instanceErr: manager.ErrServiceNotRunning}, "svc")
 	if err != nil {
 		t.Errorf("expected no error for ErrServiceNotRunning, got: %v", err)
 	}
@@ -87,11 +88,11 @@ func TestAPIInfoLoadServiceInstanceError(t *testing.T) {
 
 func TestAPIInfoLoadProcessEntryError(t *testing.T) {
 	wantErr := errors.New("boom")
-	if _, err := apiInfoLoadProcessEntry(&apiInfoFakeManager{processErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting process history") {
+	if _, err := apiInfoLoadProcessEntry(t.Context(), &apiInfoFakeManager{processErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting process history") {
 		t.Errorf("expected wrapped 'getting process history' error, got: %v", err)
 	}
 
-	entry, err := apiInfoLoadProcessEntry(&apiInfoFakeManager{processErr: manager.ErrProcessNotFound}, "svc")
+	entry, err := apiInfoLoadProcessEntry(t.Context(), &apiInfoFakeManager{processErr: manager.ErrProcessNotFound}, "svc")
 	if err != nil {
 		t.Errorf("expected no error for ErrProcessNotFound, got: %v", err)
 	}
@@ -103,15 +104,15 @@ func TestAPIInfoLoadProcessEntryError(t *testing.T) {
 func TestAPIInfoLoadLogPathsErrors(t *testing.T) {
 	wantErr := errors.New("boom")
 
-	if _, _, err := apiInfoLoadLogPaths(&apiInfoFakeManager{logPathErr: wantErr}, "svc", true); err == nil || !strings.Contains(err.Error(), "getting log path") {
+	if _, _, err := apiInfoLoadLogPaths(t.Context(), &apiInfoFakeManager{logPathErr: wantErr}, "svc", true); err == nil || !strings.Contains(err.Error(), "getting log path") {
 		t.Errorf("expected wrapped 'getting log path' error, got: %v", err)
 	}
 
-	if _, _, err := apiInfoLoadLogPaths(&apiInfoFakeManager{errorLogPathErr: wantErr}, "svc", true); err == nil || !strings.Contains(err.Error(), "getting error log path") {
+	if _, _, err := apiInfoLoadLogPaths(t.Context(), &apiInfoFakeManager{errorLogPathErr: wantErr}, "svc", true); err == nil || !strings.Contains(err.Error(), "getting error log path") {
 		t.Errorf("expected wrapped 'getting error log path' error, got: %v", err)
 	}
 
-	if _, _, err := apiInfoLoadLogPaths(&apiInfoFakeManager{logPathErr: wantErr, errorLogPathErr: wantErr}, "svc", false); err != nil {
+	if _, _, err := apiInfoLoadLogPaths(t.Context(), &apiInfoFakeManager{logPathErr: wantErr, errorLogPathErr: wantErr}, "svc", false); err != nil {
 		t.Errorf("expected no error when instance isn't running, got: %v", err)
 	}
 }
@@ -146,7 +147,7 @@ func TestAPIInfoRunEConfigLoadError(t *testing.T) {
 	entry := types.ServiceCatalogEntry{DirectoryPath: t.TempDir(), ConfigFileName: "missing.yaml"}
 	mgr := &apiInfoFakeManager{catalogEntry: entry}
 
-	if err := apiInfoRunE(cmd, "svc", mgr); err == nil {
+	if err := apiInfoRunE(cmd, t.Context(), "svc", mgr); err == nil {
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(errBuf.String(), "loading service config") {
@@ -159,7 +160,7 @@ func TestAPIInfoRunEServiceInstanceError(t *testing.T) {
 	entry := apiInfoWriteValidConfig(t, t.TempDir())
 	mgr := &apiInfoFakeManager{catalogEntry: entry, instanceErr: errors.New("boom")}
 
-	if err := apiInfoRunE(cmd, entry.Name, mgr); err == nil {
+	if err := apiInfoRunE(cmd, t.Context(), entry.Name, mgr); err == nil {
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(errBuf.String(), "getting service instance") {
@@ -172,7 +173,7 @@ func TestAPIInfoRunEProcessHistoryError(t *testing.T) {
 	entry := apiInfoWriteValidConfig(t, t.TempDir())
 	mgr := &apiInfoFakeManager{catalogEntry: entry, processErr: errors.New("boom")}
 
-	if err := apiInfoRunE(cmd, entry.Name, mgr); err == nil {
+	if err := apiInfoRunE(cmd, t.Context(), entry.Name, mgr); err == nil {
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(errBuf.String(), "getting process history") {
@@ -186,7 +187,7 @@ func TestAPIInfoRunELogPathError(t *testing.T) {
 	instance := &types.ServiceInstance{}
 	mgr := &apiInfoFakeManager{catalogEntry: entry, instance: instance, logPathErr: errors.New("boom")}
 
-	if err := apiInfoRunE(cmd, entry.Name, mgr); err == nil {
+	if err := apiInfoRunE(cmd, t.Context(), entry.Name, mgr); err == nil {
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(errBuf.String(), "getting log path") {
