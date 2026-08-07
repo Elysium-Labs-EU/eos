@@ -433,8 +433,8 @@ func (db *DB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, servic
 
 func (db *DB) IsServiceRegistered(ctx context.Context, name string) (bool, error) {
 	query := `
-	SELECT COUNT(*) 
-	FROM service_catalog 
+	SELECT COUNT(*)
+	FROM service_catalog
 	WHERE name = ?
 	`
 

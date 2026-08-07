@@ -95,7 +95,7 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -162,7 +162,7 @@ func TestStopCommandGracePeriod(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	stubbornScript := `#!/bin/bash 
+	stubbornScript := `#!/bin/bash
 						# stubborn-service.sh - ignores SIGTERM, only dies to SIGKILL
 trap '' SIGTERM   # <-- this is the key line: empty handler = ignore
 echo "Stubborn service running with PGID $$"

@@ -28,7 +28,7 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -87,7 +87,7 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -273,7 +273,7 @@ func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -323,7 +323,7 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -399,7 +399,7 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -508,7 +508,7 @@ func TestRunWithUnreadableYamlFile(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -563,7 +563,7 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -654,7 +654,7 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -745,7 +745,7 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")

@@ -54,12 +54,10 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting process history: %v", err))
 			}
 
-			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			logPath, err := mgr.GetServiceLogFilePath(serviceName, false)
 			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting log path: %v", err))
 			}
-			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			errorLogPath, err := mgr.GetServiceLogFilePath(serviceName, true)
 			if err != nil && serviceInstance != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting error log path: %v", err))

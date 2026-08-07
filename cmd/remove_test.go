@@ -62,6 +62,6 @@ func TestRemoveCommand(t *testing.T) {
 // TestRemoveCommandServiceNotRegistered, TestRemoveCommandMissingArgs, and
 // TestRemoveCommandWithActiveInstance_{Decline,Confirm} live in remove_gaps_test.go.
 //
-// TODO: func TestRemoveCommandIsRegisteredError (requires mock manager)
-// TODO: func TestRemoveCommandRemoveInstanceError (requires mock manager)
-// TODO: func TestRemoveCommandRemoveCatalogError (requires mock manager)
+// TestRemoveCommandIsRegisteredError, TestRemoveCommandRemoveInstanceError,
+// and TestRemoveCommandRemoveCatalogError need a mock Manager to force these
+// error paths (see issue #158).
