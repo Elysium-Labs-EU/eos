@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
@@ -14,6 +16,33 @@ type apiRunResult struct {
 	PGID      int    `json:"pgid"`
 	Restarted bool   `json:"restarted"`
 	Skipped   bool   `json:"skipped"`
+}
+
+func apiRunResolveServiceName(ctx context.Context, mgr manager.ServiceManager, serviceFile string, args []string) (string, error) {
+	if serviceFile == "" && len(args) == 0 {
+		return "", errors.New("must specify either -f <file> or a service name")
+	}
+
+	if serviceFile != "" {
+		parsed, err := parseServiceFile(serviceFile)
+		if err != nil {
+			return "", err
+		}
+		result, err := registerServiceIfNeeded(ctx, mgr, parsed.YamlFile, parsed.Config.Name)
+		if err != nil {
+			return "", err
+		}
+		return result.Name, nil
+	}
+
+	return isServiceRegistered(ctx, mgr, args[0])
+}
+
+func apiRunShouldSkip(ctx context.Context, mgr manager.ServiceManager, once bool, serviceName string) (bool, error) {
+	if !once {
+		return false, nil
+	}
+	return isServiceRunning(ctx, mgr, serviceName)
 }
 
 func newAPIRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
@@ -52,46 +81,31 @@ Exit codes:
 			serviceFile, _ := cmd.Flags().GetString("file")
 			once, _ := cmd.Flags().GetBool("once")
 
-			if serviceFile == "" && len(args) == 0 {
-				return helpers.WriteJSONErr(cmd, errors.New("must specify either -f <file> or a service name"))
-			}
-
-			var serviceName string
-
-			if serviceFile != "" {
-				parsed, err := parseServiceFile(serviceFile)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				result, err := registerServiceIfNeeded(mgr, parsed.YamlFile, parsed.Config.Name)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				serviceName = result.Name
-			} else {
-				name, err := isServiceRegistered(mgr, args[0])
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				serviceName = name
-			}
-
-			if once {
-				running, err := isServiceRunning(mgr, serviceName)
-				if err != nil {
-					return helpers.WriteJSONErr(cmd, err)
-				}
-				if running {
-					return helpers.WriteJSON(cmd, apiRunResult{Name: serviceName, Skipped: true})
-				}
-			}
-
-			entry, err := mgr.GetServiceCatalogEntry(serviceName)
+			serviceName, err := apiRunResolveServiceName(cmd.Context(), mgr, serviceFile, args)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			startResult, err := startOrRestartService(mgr, cfg.Shutdown.GracePeriod, entry)
+			// Persist the run as this service's desired boot state; see the
+			// identical call in newRunCmd for why (issue #172).
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
+				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting run state: %w", err))
+			}
+
+			skip, err := apiRunShouldSkip(cmd.Context(), mgr, once, serviceName)
+			if err != nil {
+				return helpers.WriteJSONErr(cmd, err)
+			}
+			if skip {
+				return helpers.WriteJSON(cmd, apiRunResult{Name: serviceName, Skipped: true})
+			}
+
+			entry, err := mgr.GetServiceCatalogEntry(cmd.Context(), serviceName)
+			if err != nil {
+				return helpers.WriteJSONErr(cmd, err)
+			}
+
+			startResult, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, &entry)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}

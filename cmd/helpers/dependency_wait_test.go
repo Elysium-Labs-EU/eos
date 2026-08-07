@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -19,13 +20,13 @@ type fakeWaitStatusMgr struct {
 	waiting bool
 }
 
-func (f *fakeWaitStatusMgr) GetDependencyWaitStatus(string) (types.DependencyWaitStatus, bool, error) {
+func (f *fakeWaitStatusMgr) GetDependencyWaitStatus(context.Context, string) (types.DependencyWaitStatus, bool, error) {
 	return f.status, f.waiting, f.err
 }
 
 func TestResolveDependencyWaitStatus_waiting(t *testing.T) {
 	mgr := &fakeWaitStatusMgr{waiting: true, status: types.DependencyWaitStatus{ServiceName: "web", Pending: []string{"db", "cache"}}}
-	got := ResolveDependencyWaitStatus(mgr, "web")
+	got := ResolveDependencyWaitStatus(t.Context(), mgr, "web")
 	if !slices.Equal(got, []string{"db", "cache"}) {
 		t.Errorf("expected [db cache], got %v", got)
 	}
@@ -33,14 +34,14 @@ func TestResolveDependencyWaitStatus_waiting(t *testing.T) {
 
 func TestResolveDependencyWaitStatus_notWaiting(t *testing.T) {
 	mgr := &fakeWaitStatusMgr{waiting: false}
-	if got := ResolveDependencyWaitStatus(mgr, "web"); got != nil {
+	if got := ResolveDependencyWaitStatus(t.Context(), mgr, "web"); got != nil {
 		t.Errorf("expected nil when not waiting, got %v", got)
 	}
 }
 
 func TestResolveDependencyWaitStatus_readerErrors(t *testing.T) {
 	mgr := &fakeWaitStatusMgr{err: errors.New("boom")}
-	if got := ResolveDependencyWaitStatus(mgr, "web"); got != nil {
+	if got := ResolveDependencyWaitStatus(t.Context(), mgr, "web"); got != nil {
 		t.Errorf("expected nil on reader error, got %v", got)
 	}
 }
@@ -50,7 +51,7 @@ func TestResolveDependencyWaitStatus_readerErrors(t *testing.T) {
 // gracefully instead of panicking.
 func TestResolveDependencyWaitStatus_unsupportedManager(t *testing.T) {
 	mgr := &fakeCatalogMgr{}
-	if got := ResolveDependencyWaitStatus(mgr, "web"); got != nil {
+	if got := ResolveDependencyWaitStatus(t.Context(), mgr, "web"); got != nil {
 		t.Errorf("expected nil for a manager without dependency-wait support, got %v", got)
 	}
 }

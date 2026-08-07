@@ -37,9 +37,9 @@ func TestStatusCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestStatusCommandGetCatalogError (requires mock manager)
-// TODO: func TestStatusCommandGetInstanceError (requires mock manager)
-// TODO: func TestStatusCommandGetProcessHistoryError (requires mock manager)
+// TestStatusCommandGetCatalogError, TestStatusCommandGetInstanceError, and
+// TestStatusCommandGetProcessHistoryError need a mock Manager to force these
+// error paths (see issue #158).
 
 func TestStatusCommandWithRegisteredService(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)
@@ -128,7 +128,7 @@ func TestStatusCommandWithRunningService(t *testing.T) {
 		t.Fatalf("run should not return an error, got: %v", err)
 	}
 
-	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(testFile.Name)
+	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("failed to get process history entry: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestStatusCommandWithDependencyWait(t *testing.T) {
 		t.Fatalf("add should not return an error, got: %v", err)
 	}
 
-	if err := mgr.SetDependencyWaitStatus(testFile.Name, []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
+	if err := mgr.SetDependencyWaitStatus(t.Context(), testFile.Name, []string{"proxy"}, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("SetDependencyWaitStatus: %v", err)
 	}
 
@@ -513,7 +513,7 @@ func TestPrintStatusTable_StaleRow(t *testing.T) {
 	// the current time; sleep afterward so it reads as stale against a
 	// deliberately tiny checkInterval, without needing to wait out a real
 	// health-check interval.
-	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(testFile.Name)
+	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), testFile.Name)
 	if err != nil {
 		t.Fatalf("failed to get process history entry: %v", err)
 	}
@@ -614,6 +614,7 @@ func TestRenderWatchFrame(t *testing.T) {
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 	cmd := newTestRootCmd(mgr)
+	cmd.SetContext(t.Context())
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)

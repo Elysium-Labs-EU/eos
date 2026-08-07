@@ -15,7 +15,11 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "add <path>",
 		Short: "Register a service from a directory",
-		Long:  `Register a service by providing the path to a directory containing a service configuration.`,
+		Long: `Register a service by providing the path to a directory containing a service configuration.
+
+Registering a service also enables it: it auto-starts on every future daemon
+boot (reboot, "eos daemon start", "eos system update") until it's stopped by
+hand with "eos stop".`,
 		Example: `  eos add ./path/to/project            # find service.yaml automatically in the directory
  eos add ./path/to/project/service.yaml  # point directly to the config file`,
 		Args:          cobra.ExactArgs(1),
@@ -51,7 +55,7 @@ func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return helpers.ErrCommandFailed
 			}
 
-			err = mgr.AddServiceCatalogEntry(serviceCatalogEntry)
+			err = mgr.AddServiceCatalogEntry(cmd.Context(), serviceCatalogEntry)
 
 			if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(config.Name), "is already registered")

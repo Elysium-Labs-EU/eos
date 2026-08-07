@@ -255,11 +255,11 @@ func runningReusePortService(t *testing.T) (mgr *manager.LocalManager, serviceNa
 	if err != nil {
 		t.Fatalf("catalog entry: %v", err)
 	}
-	if regErr := mgr.AddServiceCatalogEntry(entry); regErr != nil {
+	if regErr := mgr.AddServiceCatalogEntry(t.Context(), entry); regErr != nil {
 		t.Fatalf("register service: %v", regErr)
 	}
 
-	pgid, err = mgr.StartService(serviceName)
+	pgid, err = mgr.StartService(t.Context(), serviceName)
 	if err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestReloadDaemonDispatch(t *testing.T) {
 		t.Fatalf("marshal args: %v", err)
 	}
 
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodReloadService, Args: args})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodReloadService, Args: args})
 	if !resp.Success {
 		t.Fatalf("reload dispatch failed: %s", resp.Error)
 	}
@@ -419,7 +419,7 @@ func TestReloadDispatchInvalidDuration(t *testing.T) {
 		t.Fatalf("marshal args: %v", err)
 	}
 
-	resp := executeRequest(mgr, types.DaemonRequest{Method: types.MethodReloadService, Args: args})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodReloadService, Args: args})
 	if resp.Success {
 		t.Fatal("reload dispatch should reject an invalid grace period")
 	}

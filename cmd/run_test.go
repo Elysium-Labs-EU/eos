@@ -2,16 +2,20 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +32,7 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -87,7 +91,7 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -142,6 +146,68 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 	secondOutput := outBuf.String()
 	if !strings.Contains(secondOutput, "restarted with PGID:") {
 		t.Fatalf("didn't complete successfully, no PGID was returned, got: %v", secondOutput)
+	}
+}
+
+// TestRunCommandReEnablesAfterStop proves issue #172's fix: "eos run" clears
+// the disabled flag "eos stop" persisted, so the service is picked back up on
+// the next daemon boot.
+func TestRunCommandReEnablesAfterStop(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+	fullDirPath := filepath.Join(tempDir, "test-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v", err)
+	}
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	var outBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&outBuf)
+
+	cmd.SetArgs([]string{"add", fullPathYaml})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"run", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run should not return an error, got: %v", err)
+	}
+	cmd.SetArgs([]string{"stop", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("stop should not return an error, got: %v", err)
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Fatal("expected Enabled=false after 'eos stop'")
+	}
+
+	cmd.SetArgs([]string{"run", testFile.Name})
+	if err = cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run should not return an error, got: %v", err)
+	}
+
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after re-running with 'eos run'")
 	}
 }
 
@@ -211,7 +277,7 @@ func TestRunWithOnceFlagFreshServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -261,7 +327,7 @@ func TestRunWithOnceFlagExistingServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -337,7 +403,7 @@ func TestRunWithOnceFlagServiceNameCommand(t *testing.T) {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -446,7 +512,7 @@ func TestRunWithUnreadableYamlFile(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -501,7 +567,7 @@ func TestRunWithOnceFlagStoppedServiceFileCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -592,7 +658,7 @@ func TestRunWithOnceFlagStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -683,7 +749,7 @@ func TestRunWithStoppedServiceNameCommand(t *testing.T) {
 		t.Fatalf("Failed to marshal test config: %v", err)
 	}
 
-	testStartScript := `#!/bin/bash 
+	testStartScript := `#!/bin/bash
 						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
@@ -896,11 +962,213 @@ func TestRunWithFileAlreadyRegisteredKeepsOriginalConfig(t *testing.T) {
 		t.Fatalf("expected warning to suggest 'eos update', got: %v", errOutput)
 	}
 
-	entry, err := mgr.GetServiceCatalogEntry("cms")
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "cms")
 	if err != nil {
 		t.Fatalf("failed to get catalog entry: %v", err)
 	}
 	if entry.DirectoryPath != originalDir {
 		t.Errorf("expected catalog entry to keep original dir %q, got: %q", originalDir, entry.DirectoryPath)
 	}
+}
+
+// Exercises the run command's dependency-gating error path end to end: a
+// registered service whose depends_on target never starts must fail loud
+// once max_wait elapses, surfaced through the standard "error" output.
+func TestRunWithDependsOnMaxWaitFailsLoud(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	cmd := newTestRootCmd(mgr)
+
+	dir := filepath.Join(tempDir, "web")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("could not create web directory: %v\n", err)
+	}
+
+	cfg := &types.ServiceConfig{
+		Name: "web", Command: "/bin/true", DependsOn: []string{"never-started"}, MaxWait: "150ms",
+	}
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+
+	yamlPath := filepath.Join(dir, "service.yaml")
+	if err = os.WriteFile(yamlPath, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
+	}
+
+	if err = registerService(t.Context(), mgr, yamlPath, cfg.Name); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"run", cfg.Name})
+
+	err = cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+
+	output := errBuf.String()
+	if !strings.Contains(output, "never-started") {
+		t.Fatalf("expected the unmet dependency named in the error output, got: %v", output)
+	}
+}
+
+// runFakeManager implements manager.ServiceManager by embedding a nil
+// interface and overriding only the methods run.go's helpers call, so
+// error branches unreachable through the real LocalManager can be exercised.
+type runFakeManager struct {
+	manager.ServiceManager
+	registeredErr error
+	instanceErr   error
+	catalogErr    error
+	startErr      error
+	restartErr    error
+	instance      *types.ServiceInstance
+	catalogEntry  types.ServiceCatalogEntry
+	startPGID     int
+	restartPGID   int
+	registered    bool
+}
+
+func (f *runFakeManager) IsServiceRegistered(context.Context, string) (bool, error) {
+	return f.registered, f.registeredErr
+}
+
+func (f *runFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
+	return f.instance, f.instanceErr
+}
+
+func (f *runFakeManager) GetServiceCatalogEntry(context.Context, string) (types.ServiceCatalogEntry, error) {
+	return f.catalogEntry, f.catalogErr
+}
+
+func (f *runFakeManager) StartService(context.Context, string) (int, error) {
+	return f.startPGID, f.startErr
+}
+
+func (f *runFakeManager) RestartService(_ context.Context, _ string, _ time.Duration, _ time.Duration) (int, error) {
+	return f.restartPGID, f.restartErr
+}
+
+func TestRunParseFlagsErrors(t *testing.T) {
+	bare := &cobra.Command{}
+
+	if _, _, err := runParseFlags(bare); err == nil {
+		t.Fatal("expected an error parsing the unregistered file flag, got nil")
+	}
+
+	bare.Flags().StringP("file", "f", "", "")
+	if _, _, err := runParseFlags(bare); err == nil {
+		t.Fatal("expected an error parsing the unregistered once flag, got nil")
+	}
+}
+
+func TestRunGetRegisteredServiceError(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	fake := &runFakeManager{catalogErr: errors.New("boom")}
+	if _, err := runGetRegisteredService(cmd, fake, "svc"); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+}
+
+func TestRunResolveServiceNameFromArgsError(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	fake := &runFakeManager{registeredErr: errors.New("db down")}
+	if _, err := runResolveServiceNameFromArgs(cmd, fake, "svc"); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+}
+
+func TestRunHandleOnceFlagError(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	fake := &runFakeManager{instanceErr: errors.New("db down")}
+	if _, err := runHandleOnceFlag(cmd, fake, true, "svc"); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+}
+
+func TestRunStartRegisteredServiceError(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+
+	fake := &runFakeManager{startErr: errors.New("spawn failed")}
+	entry := types.ServiceCatalogEntry{Name: "svc"}
+	if err := runStartRegisteredService(cmd, fake, 0, &entry); !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+}
+
+func TestRunValidArgs(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	rootCmd := newTestRootCmd(mgr)
+	runCmd, _, err := rootCmd.Find([]string{"run"})
+	if err != nil {
+		t.Fatalf("could not find run command: %v", err)
+	}
+	// Find (unlike ExecuteContext) never sets a context on the returned
+	// command, and runValidArgs -> ServiceNameCompletions now reads
+	// cmd.Context() to thread through the manager call: an unset context
+	// is a literal nil interface, which panics inside database/sql rather
+	// than behaving like context.Background().
+	runCmd.SetContext(t.Context())
+
+	t.Run("args already present skips completion", func(t *testing.T) {
+		completions, directive := runValidArgs(runCmd, []string{"already-set"}, "", func() manager.ServiceManager { return mgr })
+		if completions != nil || directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Fatalf("expected (nil, NoFileComp), got (%v, %v)", completions, directive)
+		}
+	})
+
+	t.Run("file flag set defers to shell file completion", func(t *testing.T) {
+		if err := runCmd.Flags().Set("file", "some/path.yaml"); err != nil {
+			t.Fatalf("failed to set file flag: %v", err)
+		}
+		t.Cleanup(func() { _ = runCmd.Flags().Set("file", "") })
+
+		completions, directive := runValidArgs(runCmd, nil, "", func() manager.ServiceManager { return mgr })
+		if completions != nil || directive != cobra.ShellCompDirectiveDefault {
+			t.Fatalf("expected (nil, Default), got (%v, %v)", completions, directive)
+		}
+	})
+
+	t.Run("no args and no file flag completes registered service names", func(t *testing.T) {
+		testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
+		if err := registerService(t.Context(), mgr, filepath.Join(tempDir, "service.yaml"), testFile.Name); err != nil {
+			t.Fatalf("failed to register service: %v", err)
+		}
+
+		completions, directive := runValidArgs(runCmd, nil, "", func() manager.ServiceManager { return mgr })
+		if directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Fatalf("expected NoFileComp directive, got: %v", directive)
+		}
+		found := false
+		for _, c := range completions {
+			if c == testFile.Name {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected completions to include %q, got: %v", testFile.Name, completions)
+		}
+	})
 }

@@ -48,10 +48,10 @@ func newTestDaemonWithService(t *testing.T, gracePeriod time.Duration, serviceNa
 	if err != nil {
 		t.Fatalf("NewServiceCatalogEntry: %v", err)
 	}
-	if addErr := d.mgr.AddServiceCatalogEntry(catalogEntry); addErr != nil {
+	if addErr := d.mgr.AddServiceCatalogEntry(t.Context(), catalogEntry); addErr != nil {
 		t.Fatalf("AddServiceCatalogEntry: %v", addErr)
 	}
-	if _, startErr := d.mgr.StartService(serviceName); startErr != nil {
+	if _, startErr := d.mgr.StartService(t.Context(), serviceName); startErr != nil {
 		t.Fatalf("StartService: %v", startErr)
 	}
 
@@ -105,7 +105,7 @@ func TestDaemonShutdown_ForceKillsServiceThatIgnoresSIGTERM(t *testing.T) {
 	gracePeriod := 500 * time.Millisecond
 	d := newTestDaemonWithService(t, gracePeriod, "stubborn", `trap '' TERM; echo READY; while true; do sleep 0.1; done`)
 
-	history, err := d.mgr.GetMostRecentProcessHistoryEntry("stubborn")
+	history, err := d.mgr.GetMostRecentProcessHistoryEntry(t.Context(), "stubborn")
 	if err != nil {
 		t.Fatalf("GetMostRecentProcessHistoryEntry: %v", err)
 	}

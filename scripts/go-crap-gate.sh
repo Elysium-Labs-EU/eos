@@ -118,21 +118,21 @@ def _is_cobra_builder(e):
 # the JSON "function" key (Receiver is emitted separately too, but "function"
 # -- what this script actually reads -- is always the combined dotted form).
 OS_INTEGRATION_EXEMPT = {
-    ("internal/process/daemon.go", "*daemon.wait", 507),
+    ("internal/process/daemon.go", "*daemon.wait", 526),
     ("internal/procutil/procutil_linux.go", "procCPUTicksForPGID", 85),
     ("internal/procutil/procutil_linux.go", "platformCPUTime", 107),
-    ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 669),
-    ("internal/ownership/ownership.go", "Align", 48),
-    ("cmd/system.go", "installUpdatedBinary", 1585),
-    ("internal/process/daemon.go", "StartStandaloneDaemon", 55),
-    ("internal/process/daemon.go", "bootService", 117),
-    ("internal/process/daemon.go", "newStandaloneDaemon", 336),
+    ("internal/monitor/health_monitor.go", "*HealthMonitor.isProcessAlive", 758),
+    ("internal/ownership/ownership.go", "Align", 83),
+    ("cmd/system.go", "installUpdatedBinary", 1706),
+    ("internal/process/daemon.go", "StartStandaloneDaemon", 67),
+    ("internal/process/daemon.go", "bootService", 132),
+    ("internal/process/daemon.go", "newStandaloneDaemon", 355),
     ("internal/process/peercred_linux.go", "peerUID", 16),
     ("internal/process/peercred_darwin.go", "peerUID", 16),
     ("internal/process/peercred_other.go", "peerUID", 15),
-    ("internal/manager/local_manager.go", "*LocalManager.pipeToLogFile", 424),
-    ("internal/manager/local_manager.go", "*LocalManager.pipeToErrorLogFile", 457),
-    ("cmd/daemon.go", "systemdDaemonController.Stop", 188),
+    ("internal/manager/local_manager.go", "*LocalManager.pipeToLogFile", 528),
+    ("internal/manager/local_manager.go", "*LocalManager.pipeToErrorLogFile", 561),
+    ("cmd/daemon.go", "systemdDaemonController.Stop", 193),
     ("internal/manager/sink_process.go", "*sinkProcess.runOnce", 122),
 }
 

@@ -32,7 +32,7 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			cmd.Printf("%s %s → %s\n", ui.LabelInfo.Render("updating"), ui.TextBold.Render(serviceName), newProjectPath)
 
-			exists, err := mgr.IsServiceRegistered(serviceName)
+			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking service: %v", err))
 				return helpers.ErrCommandFailed
@@ -64,7 +64,7 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				return helpers.ErrCommandFailed
 			}
 
-			err = mgr.UpdateServiceCatalogEntry(serviceName, absPath, filepath.Base(yamlFile))
+			err = mgr.UpdateServiceCatalogEntry(cmd.Context(), serviceName, absPath, filepath.Base(yamlFile))
 			if err != nil {
 				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("updating service: %v", err))
 				return helpers.ErrCommandFailed

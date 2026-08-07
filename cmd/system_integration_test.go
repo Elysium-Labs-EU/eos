@@ -65,12 +65,15 @@ func TestStartupCmdIntegration(t *testing.T) {
 	setStdin(c, "y\nn\n")
 
 	startupCmd(
-		t.Context(), c, installDir,
-		&config.StandaloneDaemonConfig{
-			PIDFile:    filepath.Join(tempDir, "eos.pid"),
-			SocketPath: filepath.Join(tempDir, "eos.sock"),
+		t.Context(), c, systemdStartupParams{
+			InstallDir: installDir,
+			DaemonConfig: &config.StandaloneDaemonConfig{
+				PIDFile:    filepath.Join(tempDir, "eos.pid"),
+				SocketPath: filepath.Join(tempDir, "eos.sock"),
+			},
+			SystemdDir:  systemdDir,
+			SystemdFile: systemdFile,
 		},
-		systemdDir, systemdFile, false, false, false,
 		detectActiveSystemRuntime, execRunCmd,
 	)
 
@@ -137,10 +140,12 @@ WantedBy=multi-user.target`
 		t.Fatalf("resolving identity: %v", err)
 	}
 
-	unstartupCmd(ctx, c, config.SystemdConfig{
-		SystemdTargetDir:      systemdDir,
-		SystemdTargetFileName: systemdFile,
-	}, false, false, false, detectActiveSystemRuntime, execRunCmd, identity)
+	unstartupCmd(ctx, c, systemdUnstartupParams{
+		DaemonConfig: config.SystemdConfig{
+			SystemdTargetDir:      systemdDir,
+			SystemdTargetFileName: systemdFile,
+		},
+	}, detectActiveSystemRuntime, execRunCmd, identity)
 
 	if errBuf.Len() > 0 {
 		t.Errorf("unexpected stderr:\n%s", errBuf.String())
