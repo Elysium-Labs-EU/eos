@@ -82,21 +82,21 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, p openrcStartupPa
 	helpers.Debugf(cmd, p.Verbose, "target init script: %s", fullTargetName)
 
 	if err := checkWritable(cmd, p.InitDir); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checking destination file: %v", err))
 		helpers.PrintSudoHint(cmd)
 		return helpers.ErrCommandFailed
 	}
 
 	effectiveUser, effectiveUserErr := userutil.EffectiveUser()
 	if effectiveUserErr != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting current user: %v", effectiveUserErr))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, p.Verbose, "effective user: %s", effectiveUser.Username)
 
 	script, err := renderOpenRCScript(p.InstallDir, effectiveUser.Username)
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("rendering init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("rendering init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
 
@@ -105,20 +105,20 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, p openrcStartupPa
 	}
 
 	if err = os.WriteFile(fullTargetName, []byte(script), 0755); err != nil { // #nosec G306 -- OpenRC requires init scripts to be executable
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("writing init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("writing init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s %s\n\n", ui.LabelInfo.Render("info"), ui.TextMuted.Render("init script created, at:"), fullTargetName)
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("init script created, at:"), fullTargetName)
 
 	unit := p.InitFile
 	helpers.Debugf(cmd, p.Verbose, "running: rc-update add %s default", unit)
 	out, err := run(ctx, "rc-update", "add", unit, "default")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("enabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, p.Verbose, "rc-update output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service enabled, eos will start on boot")
 
 	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon now? (y/n):", "daemon will be managed by OpenRC on next start") {
 		return nil
@@ -129,13 +129,13 @@ func openrcStartupCmd(ctx context.Context, cmd *cobra.Command, p openrcStartupPa
 	}
 
 	helpers.Debugf(cmd, p.Verbose, "running: rc-service %s start", unit)
-	out, err = run(ctx, "rc-service", unit, "start")
+	out, err = run(ctx, rcServiceCmdName, unit, "start")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("starting service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
 	helpers.Debugf(cmd, p.Verbose, "rc-service output: %s", strings.TrimSpace(string(out)))
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
+	cmd.Printf(fmtLabelMsgLn, ui.LabelInfo.Render("info"), "daemon started in background")
 	return nil
 }
 
@@ -160,37 +160,27 @@ func openrcUnstartupCmd(ctx context.Context, cmd *cobra.Command, p openrcUnstart
 
 	unit := p.InitFile
 	helpers.Debugf(cmd, p.Verbose, "running: rc-service %s stop", unit)
-	out, err := run(ctx, "rc-service", unit, "stop")
+	out, err := run(ctx, rcServiceCmdName, unit, "stop")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service stopped")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service stopped")
 
 	helpers.Debugf(cmd, p.Verbose, "running: rc-update del %s default", unit)
 	out, err = run(ctx, "rc-update", "del", unit, "default")
 	if err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("disabling service: %v", string(out)))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("disabling service: %v", string(out)))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelInfo.Render("info"), "service disabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "service disabled")
 
 	fullTargetName := filepath.Join(p.InitDir, p.InitFile)
 	if err = os.Remove(fullTargetName); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("removing init script: %v", err))
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("removing init script: %v", err))
 		return helpers.ErrCommandFailed
 	}
-	cmd.Printf("%s %s\n\n", ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
+	cmd.Printf(fmtLabelMsg, ui.LabelSuccess.Render("success"), "init script removed, startup disabled")
 
-	if !confirmOrDecline(cmd, p.FlagYes, "restart daemon standalone? (y/n):", "") {
-		return nil
-	}
-
-	if err := forkDaemon(ctx, &config.StandaloneDaemonConfig{PIDFile: config.DaemonPIDFile, SocketPath: config.DaemonSocketPath}, false, identity); err != nil {
-		cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("starting daemon: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos daemon logs") + ui.TextMuted.Render(" → check daemon logs") + "\n")
-		return helpers.ErrCommandFailed
-	}
-	cmd.Printf("%s %s\n", ui.LabelInfo.Render("info"), "daemon started in background")
-	return nil
+	return restartDaemonStandaloneIfConfirmed(ctx, cmd, p.FlagYes, identity)
 }
