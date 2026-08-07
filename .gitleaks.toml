@@ -4,19 +4,31 @@ title = "eos gitleaks config"
 [extend]
 useDefault = true
 
-# Narrowly-scoped global allowlist: these two regexes match only the exact,
+# Narrowly-scoped global allowlist: these regexes match only the exact,
 # deliberately-fake credential strings used as test fixtures in
-# cmd/diagnose_test.go's TestDiagnoseScrubLine, which proves the `eos
-# diagnose` command's redactor scrubs realistic secret shapes (a generic
-# api_key assignment, an AWS-access-key-shaped token) before they're ever
-# written into a diagnostic bundle. Neither string is a real credential.
+# cmd/diagnose_test.go, which prove the `eos diagnose` command's redactor
+# scrubs realistic secret shapes before they're ever written into a
+# diagnostic bundle. None of these strings are real credentials:
+#   - sk-abc123def456           a generic api_key assignment
+#     (TestDiagnoseScrubLine, "api key assignment" case)
+#   - AKIAABCDEFGHIJKLMNOP      an AWS-access-key-shaped token
+#     (TestDiagnoseScrubLine, "aws key" case)
+#   - MIIBOgIBAAJBAK8z9x8example1 / example2
+#     the fake PEM key body content reused by the multi-line-redaction
+#     regression tests (TestDiagnoseScrubLines_MultiLinePrivateKey,
+#     TestDiagnoseCmd_MultiLinePrivateKeyRedactedInRealServiceLog), which
+#     prove a real PEM key logged one line at a time is still redacted.
+#     Content-based (not commit-SHA-keyed like a .gitleaksignore fingerprint
+#     would be), so it survives history rewrites, rebases, and squashes.
 #
 # Deliberately not a path-based exemption for the whole test file: that would
 # risk silently masking a real secret accidentally added to it later. These
-# regexes match only the two known-fake literal values.
+# regexes match only the four known-fake literal values.
 [allowlist]
-description = "Fake credential fixtures in TestDiagnoseScrubLine (cmd/diagnose_test.go) — not real secrets"
+description = "Fake credential fixtures in cmd/diagnose_test.go — not real secrets"
 regexes = [
   '''sk-abc123def456''',
   '''AKIAABCDEFGHIJKLMNOP''',
+  '''MIIBOgIBAAJBAK8z9x8example1''',
+  '''MIIBOgIBAAJBAK8z9x8example2''',
 ]
