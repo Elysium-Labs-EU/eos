@@ -90,6 +90,43 @@ func TestAPIRunWithServiceName(t *testing.T) {
 	}
 }
 
+// TestAPIRunReEnablesAfterStop proves "eos api run" clears the disabled flag
+// "eos api stop" persisted, mirroring the plain run/stop CLI (issue #172).
+func TestAPIRunReEnablesAfterStop(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+
+	serviceName := startServiceForStopTest(t, mgr, tempDir)
+
+	c := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	c.SetOut(&outBuf)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{"api", "stop", serviceName})
+	if err := c.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("stop failed: %v\n%s", err, errBuf.String())
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
+	c = newTestRootCmd(mgr)
+	c.SetOut(&outBuf)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{"api", "run", serviceName})
+	if err := c.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("run failed: %v\n%s", err, errBuf.String())
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after 'eos api run'")
+	}
+}
+
 func TestAPIRunWithOnceFlag_AlreadyRunning(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -162,7 +199,7 @@ func TestAPIRunNoArgsNoFile(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
@@ -181,7 +218,7 @@ func TestAPIRunWithUnregisteredName(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
@@ -200,7 +237,7 @@ func TestAPIRunWithFileNotFound(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {

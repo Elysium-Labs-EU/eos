@@ -283,6 +283,195 @@ func TestInitCmd_RuntimeDetection_NVM(t *testing.T) {
 	}
 }
 
+func TestInitCmd_RuntimeDetection_Deno(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "deno.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	// advanced mode; press enter on runtime fields to accept detected defaults
+	root.SetIn(&slowReader{strings.NewReader("svc\nmain.ts\na\n\n\n\n\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "service.yaml"))
+	if !strings.Contains(string(data), "deno") {
+		t.Errorf("expected deno runtime in output, got: %s", string(data))
+	}
+}
+
+func TestInitCmd_RuntimeDetection_Python(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(""), 0644); err != nil {
+		t.Fatalf("setup pyproject.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.11.4\n"), 0644); err != nil {
+		t.Fatalf("setup .python-version: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&slowReader{strings.NewReader("api\nmain.py\na\n\n\n\n\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "service.yaml"))
+	if !strings.Contains(string(data), "3.11.4") {
+		t.Errorf("expected python version in runtime path, got: %s", string(data))
+	}
+}
+
+func TestInitCmd_RuntimeDetection_NodeVersionNoPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("setup package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".node-version"), []byte("18.0.0\n"), 0644); err != nil {
+		t.Fatalf("setup .node-version: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&slowReader{strings.NewReader("api\nserver.js\na\n\n\n\n\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "service.yaml"))
+	if !strings.Contains(string(data), "v18.0.0") {
+		t.Errorf("expected v-prefixed node version in runtime path, got: %s", string(data))
+	}
+}
+
+func TestInitCmd_RuntimeDetection_NodeNoVersionFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("setup package.json: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	// name, command, mode, port, runtime type=node, runtime path blank (no pinned version to suggest)
+	root.SetIn(&slowReader{strings.NewReader("api\nserver.js\na\n\nnode\n\n\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "service.yaml"))
+	if err != nil {
+		t.Fatalf("service.yaml not written: %v", err)
+	}
+
+	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n")
+	var cfg types.ServiceConfig
+	if err := yaml.Unmarshal([]byte(yamlOnly), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.Runtime.Type != "" {
+		t.Errorf("expected no runtime set when path is blank, got type %q", cfg.Runtime.Type)
+	}
+}
+
+func TestInitCmd_RuntimeDetection_PythonNoVersionFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte(""), 0644); err != nil {
+		t.Fatalf("setup requirements.txt: %v", err)
+	}
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&slowReader{strings.NewReader("api\nmain.py\na\n\npython3\n\n\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "service.yaml"))
+	if err != nil {
+		t.Fatalf("service.yaml not written: %v", err)
+	}
+
+	yamlOnly := strings.TrimPrefix(string(data), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/service.schema.json\n\n")
+	var cfg types.ServiceConfig
+	if err := yaml.Unmarshal([]byte(yamlOnly), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.Runtime.Type != "" {
+		t.Errorf("expected no runtime set when path is blank, got type %q", cfg.Runtime.Type)
+	}
+}
+
+func TestInitCmd_WriteFile_PermissionError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root; permission checks do not apply")
+	}
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer func() {
+		if err := os.Chmod(dir, 0755); err != nil {
+			t.Fatalf("cleanup: %v", err)
+		}
+	}()
+
+	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tmpBase, t.Context(), testutil.NewTestLogger(t))
+	root := newTestRootCmd(mgr)
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&slowReader{strings.NewReader("svc\napp.js\ns\n\n")})
+	root.SetArgs([]string{"init", dir})
+
+	if err := root.ExecuteContext(t.Context()); err == nil {
+		t.Fatalf("expected error writing to read-only directory, got nil")
+	}
+	if !strings.Contains(buf.String(), "writing file") {
+		t.Errorf("expected 'writing file' error in output, got: %s", buf.String())
+	}
+}
+
 func TestInitCmd_SkippedCommand(t *testing.T) {
 	dir := t.TempDir()
 	db, _, tmpBase := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)

@@ -81,7 +81,9 @@ eos is a service supervisor.
 	// Tests run against an in-memory mock manager, not a real daemon, so the
 	// liveness probe is a no-op here — otherwise every status/logs test would
 	// probe the host's real daemon and print a spurious banner.
-	noopWarnDaemonDown := func(*cobra.Command) {}
+	noopWarnDaemonDown := func(*cobra.Command) {
+		// intentional no-op: see comment above
+	}
 
 	rootCmd.AddCommand(newAddCmd(getManager))
 	rootCmd.AddCommand(newInfoCmd(getManager))
@@ -90,7 +92,6 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
-	rootCmd.AddCommand(newSnapshotCmd(getManager, getConfig))
 	rootCmd.AddCommand(newStatusCmd(getManager, noopWarnDaemonDown, getConfig))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
@@ -201,7 +202,6 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newRemoveCmd(getManager))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
 	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
-	rootCmd.AddCommand(newSnapshotCmd(getManager, getConfig))
 	rootCmd.AddCommand(newStatusCmd(getManager, warnIfDaemonDown, getConfig))
 	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
 	rootCmd.AddCommand(newUpdateCmd(getManager))
@@ -412,7 +412,7 @@ func newSystemConfig() (installDir string, baseDir string, systemConfig *config.
 	return installDir, baseDir, systemConfig, identity, nil
 }
 
-func overrideStringConfigValue(envKey string, defaultValue string) string {
+func overrideStringConfigValue(envKey, defaultValue string) string {
 	if override := os.Getenv(envKey); override != "" {
 		return override
 	}

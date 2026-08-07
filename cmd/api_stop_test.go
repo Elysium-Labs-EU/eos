@@ -58,6 +58,33 @@ func TestAPIStopRunningService(t *testing.T) {
 	}
 }
 
+// TestAPIStopPersistsDisabled proves "eos api stop" persists the same
+// desired-boot-state flag the plain "eos stop" command does (issue #172).
+func TestAPIStopPersistsDisabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+
+	serviceName := startServiceForStopTest(t, mgr, tempDir)
+
+	c := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	c.SetOut(&outBuf)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{"api", "stop", serviceName})
+	if err := c.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("expected no error, got: %v\n%s", err, errBuf.String())
+	}
+
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after 'eos api stop'")
+	}
+}
+
 func TestAPIStopNonexistentService(t *testing.T) {
 	cmd, _, errBuf, _ := setupAPICmd(t)
 
@@ -69,7 +96,7 @@ func TestAPIStopNonexistentService(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {

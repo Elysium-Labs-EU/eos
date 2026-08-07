@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -18,7 +19,7 @@ type fakeCatalogMgr struct {
 	entries []types.ServiceCatalogEntry
 }
 
-func (f *fakeCatalogMgr) GetAllServiceCatalogEntries() ([]types.ServiceCatalogEntry, error) {
+func (f *fakeCatalogMgr) GetAllServiceCatalogEntries(context.Context) ([]types.ServiceCatalogEntry, error) {
 	return f.entries, f.err
 }
 

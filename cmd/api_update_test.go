@@ -66,7 +66,7 @@ func TestAPIUpdateNonexistentService(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
@@ -104,7 +104,7 @@ func TestAPIUpdateInvalidNewPath(t *testing.T) {
 	}
 
 	var errResult map[string]string
-	if jsonErr := json.NewDecoder(&errBuf).Decode(&errResult); jsonErr != nil {
+	if json.NewDecoder(&errBuf).Decode(&errResult) != nil {
 		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
 	if errResult["error"] == "" {
