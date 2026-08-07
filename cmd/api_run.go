@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
@@ -76,6 +77,12 @@ Exit codes:
 				serviceName = name
 			}
 
+			// Persist the run as this service's desired boot state; see the
+			// identical call in newRunCmd for why (issue #172).
+			if err := mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
+				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting run state: %w", err))
+			}
+
 			if once {
 				running, err := isServiceRunning(cmd.Context(), mgr, serviceName)
 				if err != nil {
@@ -91,7 +98,7 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, err)
 			}
 
-			startResult, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, entry)
+			startResult, err := startOrRestartService(cmd.Context(), mgr, cfg.Shutdown.GracePeriod, &entry)
 			if err != nil {
 				return helpers.WriteJSONErr(cmd, err)
 			}

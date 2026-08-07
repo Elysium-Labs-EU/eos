@@ -251,6 +251,70 @@ func TestExecuteRequest_DependencyWaitStatus(t *testing.T) {
 	}
 }
 
+// TestExecuteRequest_SetServiceEnabled proves the daemon-side dispatch for
+// MethodSetServiceEnabled against a real *manager.LocalManager: a registered
+// service's Enabled flag flips, and a service that doesn't exist surfaces a
+// sentinel error rather than succeeding silently.
+func TestExecuteRequest_SetServiceEnabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if err := db.RegisterService(t.Context(), "web", "/srv/web", "service.yaml"); err != nil {
+		t.Fatalf("seeding catalog entry: %v", err)
+	}
+
+	disableArgs, _ := json.Marshal(types.SetServiceEnabledArgs{Name: "web", Enabled: false})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodSetServiceEnabled, Args: disableArgs})
+	if !resp.Success {
+		t.Fatalf("disable: expected success, got error: %s", resp.Error)
+	}
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), "web")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if entry.Enabled {
+		t.Error("expected Enabled=false after disabling via SetServiceEnabled")
+	}
+
+	enableArgs, _ := json.Marshal(types.SetServiceEnabledArgs{Name: "web", Enabled: true})
+	resp = executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodSetServiceEnabled, Args: enableArgs})
+	if !resp.Success {
+		t.Fatalf("enable: expected success, got error: %s", resp.Error)
+	}
+	entry, err = mgr.GetServiceCatalogEntry(t.Context(), "web")
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled=true after re-enabling via SetServiceEnabled")
+	}
+}
+
+// TestExecuteRequest_SetServiceEnabled_InvalidArgs proves malformed args are
+// rejected with an "invalid args" error rather than panicking on Unmarshal.
+func TestExecuteRequest_SetServiceEnabled_InvalidArgs(t *testing.T) {
+	resp := executeRequest(t.Context(), nil, types.DaemonRequest{Method: types.MethodSetServiceEnabled, Args: json.RawMessage(`not-json`)})
+	if resp.Success {
+		t.Fatal("expected failure for malformed args")
+	}
+	if !strings.Contains(resp.Error, "invalid MethodSetServiceEnabled args") {
+		t.Errorf("expected invalid args error, got: %s", resp.Error)
+	}
+}
+
+// TestExecuteRequest_SetServiceEnabled_UnknownService proves a nonexistent
+// service surfaces the manager's error instead of succeeding silently.
+func TestExecuteRequest_SetServiceEnabled_UnknownService(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	args, _ := json.Marshal(types.SetServiceEnabledArgs{Name: "ghost", Enabled: false})
+	resp := executeRequest(t.Context(), mgr, types.DaemonRequest{Method: types.MethodSetServiceEnabled, Args: args})
+	if resp.Success {
+		t.Fatal("expected failure for an unregistered service")
+	}
+}
+
 // TestExecuteRequest_DependencyWaitStatus_unsupportedManager proves the 3
 // handlers degrade to a clean error (not a panic) against a manager.ServiceManager
 // that doesn't implement dependencyWaitStatusStore.

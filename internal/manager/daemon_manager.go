@@ -545,6 +545,19 @@ func (dm *DaemonManager) UpdateServiceCatalogEntry(ctx context.Context, name, ne
 	return nil
 }
 
+// SetServiceEnabled tells the daemon to persist name's desired boot state
+// (see manager.ServiceManager.SetServiceEnabled).
+func (dm *DaemonManager) SetServiceEnabled(ctx context.Context, name string, enabled bool) error {
+	args, err := json.Marshal(types.SetServiceEnabledArgs{Name: name, Enabled: enabled})
+	if err != nil {
+		return fmt.Errorf("SetServiceEnabled: marshaling args: %w", err)
+	}
+	if _, err := dm.sendRequest(ctx, types.MethodSetServiceEnabled, args); err != nil {
+		return fmt.Errorf("SetServiceEnabled: request errored: %w", err)
+	}
+	return nil
+}
+
 func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error) {
 	args, err := json.Marshal(types.GetMostRecentProcessHistoryEntryArgs{Name: name})
 	if err != nil {

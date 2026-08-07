@@ -17,7 +17,10 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 	cmd := &cobra.Command{
 		Use:   "stop <service-name>",
 		Short: "Stop all processes for a service",
-		Long:  `Stops all the processes for a registered service.`,
+		Long: `Stops all the processes for a registered service.
+
+This persists across a daemon restart, reboot, or "eos system update": the
+service stays down until you bring it back with "eos run".`,
 		Example: `  eos stop cms              # graceful stop with configurable grace period
   eos stop cms --force      # immediate kill`,
 		Args:              cobra.ExactArgs(1),
@@ -43,6 +46,15 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 			if !exists {
 				cmd.PrintErrf("%s %s %s\n\n", ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
 				cmd.PrintErrf("  %s %s %s\n\n", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				return helpers.ErrCommandFailed
+			}
+
+			// Persist the stop as this service's desired boot state, regardless of
+			// whether a process was actually still running to kill below: the
+			// operator's intent is "don't bring this back", and bootPersistedServices
+			// reads this flag to skip it on the next daemon start/reboot (issue #172).
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
+				cmd.PrintErrf("%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("persisting stopped state: %v", err))
 				return helpers.ErrCommandFailed
 			}
 

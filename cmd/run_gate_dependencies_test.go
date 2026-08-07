@@ -49,7 +49,7 @@ func TestGateDependencies_NoDeps(t *testing.T) {
 
 	entry := writeGateTestService(t, tempDir, &types.ServiceConfig{Name: "solo", Command: "/bin/true"})
 
-	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, entry); err != nil {
+	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, &entry); err != nil {
 		t.Fatalf("expected no error for a service with no depends_on, got %v", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestGateDependencies_DependencyReady(t *testing.T) {
 	cmd := newGateTestCmd()
 	cmd.SetOut(&outBuf)
 
-	if err := gateDependencies(t.Context(), cmd, mgr, entry); err != nil {
+	if err := gateDependencies(t.Context(), cmd, mgr, &entry); err != nil {
 		t.Fatalf("expected no error once dependency is ready, got %v", err)
 	}
 	if !strings.Contains(outBuf.String(), "proxy") {
@@ -92,7 +92,7 @@ func TestGateDependencies_MaxWaitFailsLoud(t *testing.T) {
 		Name: "web", Command: "/bin/true", DependsOn: []string{"never-started"}, MaxWait: "150ms",
 	})
 
-	err := gateDependencies(t.Context(), newGateTestCmd(), mgr, entry)
+	err := gateDependencies(t.Context(), newGateTestCmd(), mgr, &entry)
 	if err == nil {
 		t.Fatal("expected an error once max_wait elapses with an unmet dependency")
 	}
@@ -122,7 +122,7 @@ func TestGateDependencies_SelfDependencyFailsLoud(t *testing.T) {
 	// surfaces as a test timeout here instead of hanging the whole suite.
 	done := make(chan error, 1)
 	go func() {
-		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, entry)
+		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, &entry)
 	}()
 
 	select {
@@ -159,7 +159,7 @@ func TestGateDependencies_CycleFailsLoudNoHang(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, web)
+		done <- gateDependencies(t.Context(), newGateTestCmd(), mgr, &web)
 	}()
 
 	select {
@@ -186,7 +186,7 @@ func TestGateDependencies_ConfigLoadError(t *testing.T) {
 
 	entry := types.ServiceCatalogEntry{Name: "missing", DirectoryPath: tempDir, ConfigFileName: "does-not-exist.yaml"}
 
-	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, entry); err == nil {
+	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, &entry); err == nil {
 		t.Fatal("expected an error when the service config can't be loaded")
 	}
 }
@@ -199,7 +199,7 @@ func TestGateDependencies_MaxWaitParseError(t *testing.T) {
 		Name: "web", Command: "/bin/true", DependsOn: []string{"proxy"}, MaxWait: "not-a-duration",
 	})
 
-	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, entry); err == nil {
+	if err := gateDependencies(t.Context(), newGateTestCmd(), mgr, &entry); err == nil {
 		t.Fatal("expected an error for a malformed max_wait")
 	}
 }

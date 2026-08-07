@@ -108,14 +108,14 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("getting error log path: %w", err))
 			}
 
-			serviceInfo := compileServiceInfoObject(registeredService, serviceInstance, config, logPath, errorLogPath)
+			serviceInfo := compileServiceInfoObject(&registeredService, serviceInstance, config, logPath, errorLogPath)
 			serviceInfo.Process = compileProcessInfoObject(processEntry)
 
 			return helpers.WriteJSON(cmd, serviceInfo)
 		}}
 }
 
-func compileServiceInfoObject(registeredService types.ServiceCatalogEntry, serviceInstance *types.ServiceInstance, config *types.ServiceConfig, logPath *string, errorLogPath *string) apiInfoResult {
+func compileServiceInfoObject(registeredService *types.ServiceCatalogEntry, serviceInstance *types.ServiceInstance, config *types.ServiceConfig, logPath *string, errorLogPath *string) apiInfoResult {
 	serviceInfo := apiInfoResult{
 		Name:         registeredService.Name,
 		Path:         registeredService.DirectoryPath,

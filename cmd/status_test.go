@@ -37,9 +37,9 @@ func TestStatusCommand(t *testing.T) {
 	}
 }
 
-// TODO: func TestStatusCommandGetCatalogError (requires mock manager)
-// TODO: func TestStatusCommandGetInstanceError (requires mock manager)
-// TODO: func TestStatusCommandGetProcessHistoryError (requires mock manager)
+// TestStatusCommandGetCatalogError, TestStatusCommandGetInstanceError, and
+// TestStatusCommandGetProcessHistoryError need a mock Manager to force these
+// error paths (see issue #158).
 
 func TestStatusCommandWithRegisteredService(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)

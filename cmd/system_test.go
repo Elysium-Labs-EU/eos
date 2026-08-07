@@ -2343,6 +2343,7 @@ func (m *mockMgr) RemoveServiceCatalogEntry(context.Context, string) (bool, erro
 func (m *mockMgr) UpdateServiceCatalogEntry(context.Context, string, string, string) error {
 	return nil
 }
+func (m *mockMgr) SetServiceEnabled(context.Context, string, bool) error { return nil }
 func (m *mockMgr) GetMostRecentProcessHistoryEntry(_ context.Context, name string) (*types.ProcessHistory, error) {
 	if m.getMostRecentProcess != nil {
 		return m.getMostRecentProcess(name)

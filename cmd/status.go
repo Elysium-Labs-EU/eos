@@ -134,7 +134,7 @@ type statusServiceEntry struct {
 // buildStatusServiceEntry resolves a single registered service's display row.
 // ok is false when the service's own data couldn't be resolved (error already
 // printed to cmd); the caller should skip that service rather than render it.
-func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, regService types.ServiceCatalogEntry, checkInterval time.Duration, now time.Time) (statusServiceEntry, bool) {
+func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, regService *types.ServiceCatalogEntry, checkInterval time.Duration, now time.Time) (statusServiceEntry, bool) {
 	regServiceName := regService.Name
 	configPath := filepath.Join(regService.DirectoryPath, regService.ConfigFileName)
 	config, err := manager.LoadServiceConfig(configPath)
@@ -266,7 +266,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInter
 	var activeServices []statusServiceEntry
 	now := time.Now()
 	for _, regService := range registeredServices {
-		entry, ok := buildStatusServiceEntry(cmd, mgr, regService, checkInterval, now)
+		entry, ok := buildStatusServiceEntry(cmd, mgr, &regService, checkInterval, now)
 		if !ok {
 			continue
 		}

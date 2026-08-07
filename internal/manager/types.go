@@ -23,6 +23,11 @@ type ServiceManager interface {
 	IsServiceRegistered(ctx context.Context, name string) (bool, error)
 	RemoveServiceCatalogEntry(ctx context.Context, name string) (bool, error)
 	UpdateServiceCatalogEntry(ctx context.Context, name, newDirectoryPath, newConfigFileName string) error
+	// SetServiceEnabled persists a service's desired boot state: false once
+	// stopped by hand (eos stop), true again once re-run (eos run). The
+	// daemon's boot recovery skips a disabled service instead of restarting
+	// every registered service unconditionally (see issue #172).
+	SetServiceEnabled(ctx context.Context, name string, enabled bool) error
 
 	GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error)
 

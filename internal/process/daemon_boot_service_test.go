@@ -59,7 +59,7 @@ func TestBootService_NoDependencies(t *testing.T) {
 
 	entry := bootTestService(t, mgr, tempDir, &types.ServiceConfig{Name: "solo", Command: "/bin/sleep 5"})
 
-	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
+	bootService(t.Context(), mgr, testutil.NewTestLogger(t), &entry)
 
 	if _, err := mgr.GetServiceInstance(t.Context(), "solo"); err != nil {
 		t.Errorf("expected 'solo' to have started, got: %v", err)
@@ -81,7 +81,7 @@ func TestBootService_WaitsThenStarts(t *testing.T) {
 		Name: "web", Command: "/bin/sleep 5", DependsOn: []string{"proxy"}, MaxWait: "2s",
 	})
 
-	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
+	bootService(t.Context(), mgr, testutil.NewTestLogger(t), &entry)
 
 	if _, err := mgr.GetServiceInstance(t.Context(), "web"); err != nil {
 		t.Errorf("expected 'web' to have started once its dependency was ready, got: %v", err)
@@ -104,7 +104,7 @@ func TestBootService_UnmetDependencyNeverStarts(t *testing.T) {
 		Name: "web", Command: "/bin/sleep 5", DependsOn: []string{"never-started"}, MaxWait: "150ms",
 	})
 
-	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
+	bootService(t.Context(), mgr, testutil.NewTestLogger(t), &entry)
 
 	if _, err := mgr.GetServiceInstance(t.Context(), "web"); !errors.Is(err, manager.ErrServiceNotRunning) {
 		t.Errorf("expected 'web' to never have started, got err: %v", err)
@@ -124,7 +124,7 @@ func TestBootService_MaxWaitParseError(t *testing.T) {
 		Name: "web", Command: "/bin/sleep 5", DependsOn: []string{"proxy"}, MaxWait: "not-a-duration",
 	})
 
-	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
+	bootService(t.Context(), mgr, testutil.NewTestLogger(t), &entry)
 
 	if _, err := mgr.GetServiceInstance(t.Context(), "web"); !errors.Is(err, manager.ErrServiceNotRunning) {
 		t.Errorf("expected 'web' to never have started with a malformed max_wait, got err: %v", err)
@@ -139,5 +139,31 @@ func TestBootService_ConfigLoadError(t *testing.T) {
 
 	entry := types.ServiceCatalogEntry{Name: "missing", DirectoryPath: tempDir, ConfigFileName: "does-not-exist.yaml"}
 
-	bootService(t.Context(), mgr, testutil.NewTestLogger(t), entry)
+	bootService(t.Context(), mgr, testutil.NewTestLogger(t), &entry)
+}
+
+// TestBootPersistedServices_SkipsDisabled proves the issue #172 fix: a
+// service stopped by hand (Enabled=false) is left alone on daemon boot, while
+// a sibling that was never stopped starts normally in the same pass.
+func TestBootPersistedServices_SkipsDisabled(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	bootTestService(t, mgr, tempDir, &types.ServiceConfig{Name: "kept-running", Command: "/bin/sleep 5"})
+	bootTestService(t, mgr, tempDir, &types.ServiceConfig{Name: "stopped-by-hand", Command: "/bin/sleep 5"})
+
+	if err := db.SetServiceCatalogEnabled(t.Context(), "stopped-by-hand", false); err != nil {
+		t.Fatalf("SetServiceCatalogEnabled: %v", err)
+	}
+
+	if err := bootPersistedServices(t.Context(), mgr, testutil.NewTestLogger(t)); err != nil {
+		t.Fatalf("bootPersistedServices: %v", err)
+	}
+
+	if _, err := mgr.GetServiceInstance(t.Context(), "kept-running"); err != nil {
+		t.Errorf("expected 'kept-running' to have started, got: %v", err)
+	}
+	if _, err := mgr.GetServiceInstance(t.Context(), "stopped-by-hand"); !errors.Is(err, manager.ErrServiceNotRunning) {
+		t.Errorf("expected 'stopped-by-hand' to stay stopped, got err: %v", err)
+	}
 }

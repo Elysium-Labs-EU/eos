@@ -189,6 +189,24 @@ func TestDaemonManager_StartService(t *testing.T) {
 	}
 }
 
+func TestDaemonManager_SetServiceEnabled(t *testing.T) {
+	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
+		if req.Method != types.MethodSetServiceEnabled {
+			return types.DaemonResponse{Success: false, Error: "wrong method"}
+		}
+		var args types.SetServiceEnabledArgs
+		_ = json.Unmarshal(req.Args, &args)
+		if args.Name != "svc" || args.Enabled != false {
+			return types.DaemonResponse{Success: false, Error: "unexpected args"}
+		}
+		return types.DaemonResponse{Success: true}
+	})
+	dm := newTestDM(t, socketPath)
+	if err := dm.SetServiceEnabled(t.Context(), "svc", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDaemonManager_RestartService(t *testing.T) {
 	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {
 		var args types.RestartServiceArgs
