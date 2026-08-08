@@ -28,6 +28,7 @@ const (
 	Completion = "completion"
 	Init       = "init"
 	API        = "api"
+	Config     = "config"
 )
 
 // Daemon subcommand names.
@@ -47,6 +48,13 @@ const (
 	SystemUpdate    = "update"
 	SystemUninstall = "uninstall"
 	SystemVersion   = "version"
+)
+
+// Config subcommand names.
+const (
+	ConfigShow     = "show"
+	ConfigInit     = "init"
+	ConfigValidate = "validate"
 )
 
 // Positional-arg placeholder text, shared by a command's human Use: field,
@@ -83,6 +91,8 @@ const (
 	HintRunFlagPath     = Root + " " + Run + " -f " + ArgPath
 	HintRunName         = Root + " " + Run + " <name>"
 	HintUpdateArgs      = Root + " " + UseUpdate
+	HintConfigShow      = Root + " " + Config + " " + ConfigShow
+	HintConfigInit      = Root + " " + Config + " " + ConfigInit
 )
 
 // FmtHint* constants are "eos ..." invocation templates taking one %s

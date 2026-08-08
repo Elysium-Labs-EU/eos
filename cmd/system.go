@@ -616,6 +616,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("endpoint:"), config.Telemetry.Endpoint)
 		cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
 	}
+	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("sinks, telemetry, and health thresholds as configured in config.yaml: %s", ui.TextCommand.Render(cmdnames.HintConfigShow)))
 }
 
 // resolveDaemonVersion queries the version of the actual running daemon

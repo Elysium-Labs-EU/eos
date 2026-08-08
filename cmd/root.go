@@ -98,6 +98,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newDiagnoseCmd())
 
 	testDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
@@ -209,6 +210,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newDiagnoseCmd())
 
 	getDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
