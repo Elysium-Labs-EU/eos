@@ -317,22 +317,22 @@ func TestDiagnoseCmd_LinesCapKeepsMostRecent(t *testing.T) {
 	}
 }
 
-func TestDiagnoseCmd_DaemonLogUnavailableUnderSystemd(t *testing.T) {
+func TestDiagnoseCmd_DaemonLogUnavailableWithNilDaemon(t *testing.T) {
 	cmd, _, errBuf, _ := setupDiagnoseCmd(t)
 
 	outputPath := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	// No --no-daemon here: setupCmd's manager is already wired for standalone.
 	// Simulate "no standalone log" indirectly isn't possible without touching
 	// config, so instead assert the ok path already covered above and the
-	// distinct systemd-unavailable message via the pure helper directly.
-	daemonLogFile, step := diagnoseCollectDaemonLog(t.TempDir(), nil, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+	// generic unavailable message via the pure helper directly.
+	daemonLogFile, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), nil, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
 	if daemonLogFile != nil {
 		t.Error("expected no daemon log file when daemon config is nil")
 	}
 	if step.Captured {
 		t.Error("expected daemon-log step to fail when daemon config is nil")
 	}
-	if !strings.Contains(step.Error, "not managed as a standalone daemon") {
+	if !strings.Contains(step.Error, "not managed as a standalone or systemd daemon") {
 		t.Errorf("expected a descriptive skip reason, got: %s", step.Error)
 	}
 
@@ -340,6 +340,144 @@ func TestDiagnoseCmd_DaemonLogUnavailableUnderSystemd(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("diagnose should not return an error, got: %v\nerr output: %s", err, errBuf.String())
 	}
+}
+
+// TestDiagnoseCollectDaemonLog_Systemd covers diagnoseCollectDaemonLog's
+// systemd branch directly (issue #217): a systemd-managed install must get a
+// real journalctl-sourced daemon.log in the bundle, not the generic
+// unavailable step, and must still degrade gracefully when journalctl itself
+// isn't on PATH.
+func TestDiagnoseCollectDaemonLog_Systemd(t *testing.T) {
+	t.Run("journalctl available", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "line one"
+echo "line two"`)
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step, got: %+v", step)
+		}
+		if file == nil {
+			t.Fatal("expected a daemon log file")
+		}
+		if file.Name != "logs/daemon.log" {
+			t.Errorf("expected logs/daemon.log, got: %s", file.Name)
+		}
+		if !strings.Contains(string(file.Data), "line one") || !strings.Contains(string(file.Data), "line two") {
+			t.Errorf("expected journalctl output in the collected log, got: %s", file.Data)
+		}
+	})
+
+	t.Run("journalctl output capped and scrubbed", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "AKIAABCDEFGHIJKLMNOP"
+echo "line two"
+echo "line three"`)
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{UserUnit: true},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 2})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step, got: %+v", step)
+		}
+		got := strings.TrimRight(string(file.Data), "\n")
+		gotLines := strings.Split(got, "\n")
+		if len(gotLines) != 2 {
+			t.Fatalf("expected --lines to cap output at 2 lines, got %d: %v", len(gotLines), gotLines)
+		}
+		if strings.Contains(string(file.Data), "AKIAABCDEFGHIJKLMNOP") {
+			t.Errorf("expected the AWS-key-shaped line to be scrubbed or capped out, got: %s", file.Data)
+		}
+	})
+
+	t.Run("journalctl command fails", func(t *testing.T) {
+		installFakeJournalctlScript(t, "exit 1")
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if file != nil {
+			t.Error("expected no daemon log file when journalctl fails")
+		}
+		if step.Captured {
+			t.Error("expected daemon-log step to fail when journalctl exits non-zero")
+		}
+		if !strings.Contains(step.Error, "running journalctl") {
+			t.Errorf("expected a journalctl-specific error, got: %s", step.Error)
+		}
+	})
+
+	t.Run("journalctl not on PATH falls back to generic unavailable", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if file != nil {
+			t.Error("expected no daemon log file when journalctl is unresolvable")
+		}
+		if step.Captured {
+			t.Error("expected daemon-log step to fail when journalctl is unresolvable")
+		}
+		if !strings.Contains(step.Error, "not managed as a standalone or systemd daemon") {
+			t.Errorf("expected the generic unavailable message, got: %s", step.Error)
+		}
+	})
+}
+
+// TestDiagnoseJournalctlArgs guards against reusing systemctlArgs' --user
+// flag for journalctl: on a host where SplitMode=uid isn't configured (the
+// systemd-journald default), "journalctl --user -u eos" silently returns
+// zero entries instead of erroring, so the wrong flag alone can't be caught
+// by a "does it run" test — it has to assert on the actual args built.
+func TestDiagnoseJournalctlArgs(t *testing.T) {
+	t.Run("system unit uses -u, not --user-unit", func(t *testing.T) {
+		args := diagnoseJournalctlArgs(false, "2024-01-01 00:00:00", 100)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-u eos") {
+			t.Errorf("expected '-u eos', got: %v", args)
+		}
+		if strings.Contains(joined, "--user") {
+			t.Errorf("expected no --user/--user-unit flags for a system unit, got: %v", args)
+		}
+	})
+
+	t.Run("user unit uses --user-unit=eos, not --user -u eos", func(t *testing.T) {
+		args := diagnoseJournalctlArgs(true, "2024-01-01 00:00:00", 100)
+		if !strings.Contains(strings.Join(args, " "), "--user-unit=eos") {
+			t.Errorf("expected --user-unit=eos, got: %v", args)
+		}
+		for _, a := range args {
+			if a == "--user" {
+				t.Errorf("expected no bare --user flag (silently returns zero entries under split-journal mode), got: %v", args)
+			}
+			if a == "-u" {
+				t.Errorf("expected no -u flag when using --user-unit, got: %v", args)
+			}
+		}
+	})
+
+	t.Run("never both --user and --user-unit", func(t *testing.T) {
+		for _, userUnit := range []bool{true, false} {
+			args := diagnoseJournalctlArgs(userUnit, "2024-01-01 00:00:00", 100)
+			hasUser, hasUserUnit := false, false
+			for _, a := range args {
+				if a == "--user" {
+					hasUser = true
+				}
+				if strings.HasPrefix(a, "--user-unit=") {
+					hasUserUnit = true
+				}
+			}
+			if hasUser && hasUserUnit {
+				t.Errorf("args must never contain both --user and --user-unit (userUnit=%v), got: %v", userUnit, args)
+			}
+		}
+	})
 }
 
 func TestDiagnoseCmd_IncludeEnv(t *testing.T) {

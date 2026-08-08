@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -226,7 +227,7 @@ func diagnoseCollect(ctx context.Context, mgr manager.ServiceManager, baseDir st
 	manifest.Steps = append(manifest.Steps, serviceSteps...)
 	files = append(files, diagnoseJSONFile("services.json", services))
 
-	daemonLogFile, daemonLogStep := diagnoseCollectDaemonLog(baseDir, daemon, opts)
+	daemonLogFile, daemonLogStep := diagnoseCollectDaemonLog(ctx, baseDir, daemon, opts)
 	manifest.Steps = append(manifest.Steps, daemonLogStep)
 	if daemonLogFile != nil {
 		files = append(files, *daemonLogFile)
@@ -358,16 +359,32 @@ func diagnoseCollectServices(ctx context.Context, mgr manager.ServiceManager) ([
 	return registeredServices, services, steps
 }
 
-// diagnoseCollectDaemonLog reads and time-filters the standalone daemon's own
-// log file. Returns (nil, step) when there is nothing to collect (no
-// standalone log, e.g. systemd/launchd-managed) or the file can't be read
-// (e.g. the daemon has never run yet) — never a fatal error.
-func diagnoseCollectDaemonLog(baseDir string, daemon *config.DaemonConfig, opts diagnoseOptions) (*diagnoseFile, diagnoseStepResult) {
-	if daemon == nil || daemon.Standalone == nil {
-		return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: "daemon log unavailable: not managed as a standalone daemon (use journalctl/launchctl for this supervisor)"}
+// diagnoseCollectDaemonLog collects the daemon's own log: a standalone
+// install's rotated log file, or a systemd-managed install's journalctl
+// entries for the "eos" unit. Falls back to the generic "unavailable" step
+// only when neither source can be found — no standalone config and either no
+// systemd config or an unresolvable journalctl (e.g. launchd/openrc-managed,
+// or systemd binaries missing) — since that's a real "nothing to collect"
+// case, not a solvable gap.
+func diagnoseCollectDaemonLog(ctx context.Context, baseDir string, daemon *config.DaemonConfig, opts diagnoseOptions) (*diagnoseFile, diagnoseStepResult) {
+	if daemon != nil && daemon.Standalone != nil {
+		return diagnoseCollectStandaloneDaemonLog(baseDir, daemon.Standalone, opts)
 	}
 
-	logPath := filepath.Join(manager.CreateLogDirPath(baseDir), daemon.Standalone.Log.LogFileName)
+	if daemon != nil && daemon.Systemd != nil {
+		if file, step, handled := diagnoseCollectSystemdDaemonLog(ctx, daemon.Systemd, opts); handled {
+			return file, step
+		}
+	}
+
+	return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: "daemon log unavailable: not managed as a standalone or systemd daemon (use journalctl/launchctl for this supervisor)"}
+}
+
+// diagnoseCollectStandaloneDaemonLog reads and time-filters the standalone
+// daemon's own log file. Returns (nil, step) when the file can't be read
+// (e.g. the daemon has never run yet) — never a fatal error.
+func diagnoseCollectStandaloneDaemonLog(baseDir string, standalone *config.StandaloneDaemonConfig, opts diagnoseOptions) (*diagnoseFile, diagnoseStepResult) {
+	logPath := filepath.Join(manager.CreateLogDirPath(baseDir), standalone.Log.LogFileName)
 	data, err := os.ReadFile(filepath.Clean(logPath))
 	if err != nil {
 		return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: err.Error()}
@@ -385,6 +402,56 @@ func diagnoseCollectDaemonLog(baseDir string, daemon *config.DaemonConfig, opts 
 		content = strings.Join(scrubbed, "\n") + "\n"
 	}
 	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", Captured: true}
+}
+
+// diagnoseCollectSystemdDaemonLog shells out to journalctl for the "eos" unit,
+// time-filtered to opts.Since and capped to opts.Lines, mirroring
+// diagnoseCollectStandaloneDaemonLog's flags for the systemd-managed case.
+// handled is false only when journalctl itself can't be resolved on PATH —
+// the caller then falls back to the generic unavailable step, since that
+// means there is genuinely nothing to collect this way. Any other failure
+// (journalctl found but the command itself errors) is still handled=true and
+// reported as its own failed step, since a usable systemd unit was found.
+func diagnoseCollectSystemdDaemonLog(ctx context.Context, systemd *config.SystemdConfig, opts diagnoseOptions) (file *diagnoseFile, step diagnoseStepResult, handled bool) {
+	journalctlPath, err := helpers.ResolveExecutable("journalctl")
+	if err != nil {
+		return nil, diagnoseStepResult{}, false
+	}
+
+	since := time.Now().Add(-opts.Since).Format("2006-01-02 15:04:05")
+	args := diagnoseJournalctlArgs(systemd.UserUnit, since, opts.Lines)
+	// #nosec G204 - args are a fixed set built from opts/config, not external input; journalctlPath resolved via LookPath
+	out, err := exec.CommandContext(ctx, journalctlPath, args...).Output()
+	if err != nil {
+		return nil, diagnoseStepResult{Name: "daemon-log", Captured: false, Error: fmt.Sprintf("running journalctl: %v", err)}, true
+	}
+
+	lines := diagnoseSplitLines(string(out))
+	lines = diagnoseCapLines(lines, opts.Lines)
+	scrubbed := diagnoseScrubLines(lines)
+
+	content := ""
+	if len(scrubbed) > 0 {
+		content = strings.Join(scrubbed, "\n") + "\n"
+	}
+	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", Captured: true}, true
+}
+
+// diagnoseJournalctlArgs builds journalctl's args for the "eos" unit. This
+// deliberately does not reuse systemctlArgs: that helper's --user flag tells
+// journalctl to read a per-UID split journal, which most hosts never create
+// (SplitMode=uid is systemd-journald's commented-out default) — journalctl
+// then silently reports zero entries instead of erroring, so the bundle
+// would ship an empty-but-"captured" log for exactly the systemd --user case
+// it exists to help debug. --user-unit=<unit> instead filters the regular
+// journal by unit name and works whether or not a split journal exists, so
+// it — not --user -u <unit> — is what a --user unit needs.
+func diagnoseJournalctlArgs(userUnit bool, since string, lines int) []string {
+	unitArgs := []string{"-u", "eos"}
+	if userUnit {
+		unitArgs = []string{"--user-unit=eos"}
+	}
+	return append(unitArgs, "--no-pager", "--since", since, "-n", fmt.Sprintf("%d", lines))
 }
 
 // diagnoseCollectServiceLogs tails each registered service's stdout/stderr
