@@ -204,3 +204,47 @@ func TestIsAliveMatching_RejectsPGIDReuse(t *testing.T) {
 		t.Errorf("IsAliveMatching(%d, %d) = true, want false: A is dead", pgidA, startA)
 	}
 }
+
+// TestIsAliveMatching_LeaderReapedChildSurvives reproduces eos issue #215:
+// eos launches every service through a /bin/sh -c "..." wrapper, and wrapper
+// commands like `npm start` commonly exit shortly after spawning the real
+// long-running child, which keeps running as a surviving member of the same
+// process group under a different pid. Once the wrapper (the group leader,
+// whose own pid doubles as the stored pgid) is reaped, IsAliveMatching must
+// still report a match: IsAlive already proves the group alive via the
+// surviving child, and the leader's own StartTime lookup failing is not
+// evidence of PGID reuse.
+func TestIsAliveMatching_LeaderReapedChildSurvives(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "sleep 30 & exit 0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start wrapper: %v", err)
+	}
+	pgid := cmd.Process.Pid
+
+	startedAtTicks, err := StartTime(pgid)
+	if err != nil {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		t.Fatalf("StartTime(%d): %v", pgid, err)
+	}
+	defer func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) }()
+
+	// cmd.Wait reaps the wrapper (the direct child of this test process); the
+	// backgrounded sleep it spawned is reparented and keeps running under the
+	// same pgid, so by the time Wait returns the leader is gone but the group
+	// is still alive.
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait for wrapper: %v", err)
+	}
+
+	if _, err := StartTime(pgid); err == nil {
+		t.Fatalf("StartTime(%d) succeeded after the leader was reaped — test setup didn't reproduce the scenario", pgid)
+	}
+
+	if !IsAlive(pgid) {
+		t.Fatalf("IsAlive(%d) = false, want true: backgrounded child should still be running", pgid)
+	}
+	if !IsAliveMatching(pgid, startedAtTicks) {
+		t.Errorf("IsAliveMatching(%d, %d) = false, want true: leader reaped but child alive should still count as a match", pgid, startedAtTicks)
+	}
+}

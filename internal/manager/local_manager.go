@@ -1307,43 +1307,60 @@ func (m *LocalManager) stopServiceWithSignal(name string, signal syscall.Signal)
 	}, nil
 }
 
-// lmIsSignalableState reports whether a process history row in state is
-// still eligible to be signaled (i.e. not already terminal).
-func lmIsSignalableState(state types.ProcessState) bool {
-	switch state {
-	case types.ProcessStateStarting, types.ProcessStateRunning, types.ProcessStateUnknown:
-		return true
-	case types.ProcessStateFailed, types.ProcessStateStopped:
-		return false
-	}
-	return false
-}
-
-// lmSignalHistoryEntry signals p's process group with signal if p is in a
-// signalable state and still alive-matching, classifying the outcome into
-// pending/alreadyDead/errored. A terminal-state p is left untouched.
+// lmSignalHistoryEntry signals p's process group with signal if it's still
+// alive-matching, classifying the outcome into pending/alreadyDead/errored.
+//
+// The decision to check liveness and attempt a signal never gates on p.State
+// (Failed/Stopped included): that field is only a snapshot from whenever it
+// was last written, and can go stale while the tracked PGID is still — or
+// again — genuinely alive (e.g. a health-monitor "died during startup"
+// Failed classification sitting untouched through every later eos stop /
+// restart-loop attempt). Trusting that snapshot instead of checking real OS
+// state would mean a real, running process is never signaled again once eos
+// merely believes it's dead. IsAliveMatching is the actual source of truth
+// here, exactly as the health monitor's own liveness checks and its
+// leader-reaped fix (see its doc comment) already reason about this: the
+// goal is "don't leave a real process running when eos believes it's dead,"
+// not "don't bother checking once we've already decided it's dead."
+//
+// A row whose recorded state was already terminal (Failed/Stopped) and is
+// reconfirmed genuinely dead is deliberately left out of alreadyDead: it was
+// checked, but nothing changed, so its history row (State/StoppedAt) is left
+// untouched rather than rewritten to "just stopped now" on every single stop
+// call. A long-lived service accumulates one process_history row per past
+// restart, and stopServiceWithSignal is called against the service's entire
+// history, not just its current row — without this, every terminal-state row
+// ever recorded would have its StoppedAt refreshed to time.Now() on every
+// future eos stop/restart, corrupting "when did this actually stop" for
+// display/audit purposes, and (worse) could shift which row
+// GetMostRecentProcessHistoryEntry picks as most recent out from under a
+// caller relying on StoppedAt/started_at ordering.
 func lmSignalHistoryEntry(p *types.ProcessHistory, signal syscall.Signal, pending, alreadyDead map[int]bool, errored map[int]string) {
-	if !lmIsSignalableState(p.State) {
-		return
-	}
 	processPGID := p.PGID
+	wasTerminal := p.State == types.ProcessStateFailed || p.State == types.ProcessStateStopped
 
 	// Guard against PGID reuse before signaling. The kernel recycles PGIDs,
 	// so a stored record whose process has since exited may now point at an
 	// unrelated, later process. Signaling it blindly would kill an innocent
 	// bystander (or, if it belongs to another user, fail with EPERM and
-	// surface as a spurious stop error). Only signal when the PGID is still
-	// alive AND its start time matches what we recorded; otherwise the
-	// process we started is already gone.
+	// surface as a spurious stop error). IsAliveMatching accepts both a
+	// start-time match and the leader-already-reaped-but-child-alive case
+	// (see its doc comment) — only an actual start-time mismatch means the
+	// PGID was recycled, and only then is the process we started already
+	// gone.
 	if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-		alreadyDead[processPGID] = true
+		if !wasTerminal {
+			alreadyDead[processPGID] = true
+		}
 		return
 	}
 
 	err := syscall.Kill(-processPGID, signal)
 	switch {
 	case errors.Is(err, syscall.ESRCH):
-		alreadyDead[processPGID] = true
+		if !wasTerminal {
+			alreadyDead[processPGID] = true
+		}
 	case err != nil:
 		// The process was alive and ours a moment ago (IsAliveMatching
 		// above), so an error here means it raced from running into an
@@ -1353,7 +1370,9 @@ func lmSignalHistoryEntry(p *types.ProcessHistory, signal syscall.Signal, pendin
 		// liveness, not the raw errno: if it's no longer alive-matching it's
 		// already gone, not a stop failure.
 		if !procutil.IsAliveMatching(processPGID, p.StartedAtTicks) {
-			alreadyDead[processPGID] = true
+			if !wasTerminal {
+				alreadyDead[processPGID] = true
+			}
 		} else {
 			errored[processPGID] = fmt.Sprintf("killing service: %v", err)
 		}
