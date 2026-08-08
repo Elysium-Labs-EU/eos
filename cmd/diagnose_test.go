@@ -429,6 +429,57 @@ echo "line three"`)
 	})
 }
 
+// TestDiagnoseJournalctlArgs guards against reusing systemctlArgs' --user
+// flag for journalctl: on a host where SplitMode=uid isn't configured (the
+// systemd-journald default), "journalctl --user -u eos" silently returns
+// zero entries instead of erroring, so the wrong flag alone can't be caught
+// by a "does it run" test — it has to assert on the actual args built.
+func TestDiagnoseJournalctlArgs(t *testing.T) {
+	t.Run("system unit uses -u, not --user-unit", func(t *testing.T) {
+		args := diagnoseJournalctlArgs(false, "2024-01-01 00:00:00", 100)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-u eos") {
+			t.Errorf("expected '-u eos', got: %v", args)
+		}
+		if strings.Contains(joined, "--user") {
+			t.Errorf("expected no --user/--user-unit flags for a system unit, got: %v", args)
+		}
+	})
+
+	t.Run("user unit uses --user-unit=eos, not --user -u eos", func(t *testing.T) {
+		args := diagnoseJournalctlArgs(true, "2024-01-01 00:00:00", 100)
+		if !strings.Contains(strings.Join(args, " "), "--user-unit=eos") {
+			t.Errorf("expected --user-unit=eos, got: %v", args)
+		}
+		for _, a := range args {
+			if a == "--user" {
+				t.Errorf("expected no bare --user flag (silently returns zero entries under split-journal mode), got: %v", args)
+			}
+			if a == "-u" {
+				t.Errorf("expected no -u flag when using --user-unit, got: %v", args)
+			}
+		}
+	})
+
+	t.Run("never both --user and --user-unit", func(t *testing.T) {
+		for _, userUnit := range []bool{true, false} {
+			args := diagnoseJournalctlArgs(userUnit, "2024-01-01 00:00:00", 100)
+			hasUser, hasUserUnit := false, false
+			for _, a := range args {
+				if a == "--user" {
+					hasUser = true
+				}
+				if strings.HasPrefix(a, "--user-unit=") {
+					hasUserUnit = true
+				}
+			}
+			if hasUser && hasUserUnit {
+				t.Errorf("args must never contain both --user and --user-unit (userUnit=%v), got: %v", userUnit, args)
+			}
+		}
+	})
+}
+
 func TestDiagnoseCmd_IncludeEnv(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupDiagnoseCmd(t)
 	addServiceWithEnvFile(t, cmd, tempDir, "SECRET=do-not-redact-me\n", errBuf)

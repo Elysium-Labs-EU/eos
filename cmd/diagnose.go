@@ -419,7 +419,7 @@ func diagnoseCollectSystemdDaemonLog(ctx context.Context, systemd *config.System
 	}
 
 	since := time.Now().Add(-opts.Since).Format("2006-01-02 15:04:05")
-	args := systemctlArgs(systemd.UserUnit, "-u", "eos", "--no-pager", "--since", since, "-n", fmt.Sprintf("%d", opts.Lines))
+	args := diagnoseJournalctlArgs(systemd.UserUnit, since, opts.Lines)
 	// #nosec G204 - args are a fixed set built from opts/config, not external input; journalctlPath resolved via LookPath
 	out, err := exec.CommandContext(ctx, journalctlPath, args...).Output()
 	if err != nil {
@@ -435,6 +435,23 @@ func diagnoseCollectSystemdDaemonLog(ctx context.Context, systemd *config.System
 		content = strings.Join(scrubbed, "\n") + "\n"
 	}
 	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", Captured: true}, true
+}
+
+// diagnoseJournalctlArgs builds journalctl's args for the "eos" unit. This
+// deliberately does not reuse systemctlArgs: that helper's --user flag tells
+// journalctl to read a per-UID split journal, which most hosts never create
+// (SplitMode=uid is systemd-journald's commented-out default) — journalctl
+// then silently reports zero entries instead of erroring, so the bundle
+// would ship an empty-but-"captured" log for exactly the systemd --user case
+// it exists to help debug. --user-unit=<unit> instead filters the regular
+// journal by unit name and works whether or not a split journal exists, so
+// it — not --user -u <unit> — is what a --user unit needs.
+func diagnoseJournalctlArgs(userUnit bool, since string, lines int) []string {
+	unitArgs := []string{"-u", "eos"}
+	if userUnit {
+		unitArgs = []string{"--user-unit=eos"}
+	}
+	return append(unitArgs, "--no-pager", "--since", since, "-n", fmt.Sprintf("%d", lines))
 }
 
 // diagnoseCollectServiceLogs tails each registered service's stdout/stderr
