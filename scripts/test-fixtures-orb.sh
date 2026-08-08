@@ -99,7 +99,7 @@ ensure_runtimes() {
 		log "SKIP_BUN_INSTALL=1: not installing bun (bun=$(command -v bun || echo absent))"
 	elif ! command -v bun >/dev/null 2>&1; then
 		log "installing bun..."
-		curl -fsSL https://bun.sh/install | bash >/dev/null
+		curl -fsSL --proto '=https' --tlsv1.2 https://bun.sh/install | bash >/dev/null
 		export PATH="$HOME/.bun/bin:$PATH"
 	fi
 
@@ -110,7 +110,7 @@ ensure_runtimes() {
 		if command -v corepack >/dev/null 2>&1; then
 			corepack enable >/dev/null 2>&1 && corepack prepare pnpm@latest --activate >/dev/null 2>&1
 		fi
-		command -v pnpm >/dev/null 2>&1 || npm install -g pnpm >/dev/null
+		command -v pnpm >/dev/null 2>&1 || npm install -g --ignore-scripts pnpm >/dev/null
 	fi
 
 	if [ "$SKIP_JQ_INSTALL" = "1" ]; then
