@@ -484,6 +484,202 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	}
 }
 
+// TestHealthMonitor_CheckStartProcess_PortGating covers the port-reachability
+// gate on the Starting->Running transition: a process that is alive but whose
+// configured port isn't answering yet must stay in Starting rather than flip
+// to Running only for checkRunningProcess to find it unreachable and mark it
+// Failed on the very next tick, while a configured-but-unreachable port must
+// still yield to the startup timeout, and no configured port must behave
+// exactly as before (liveness alone decides).
+func TestHealthMonitor_CheckStartProcess_PortGating(t *testing.T) {
+	type portMode int
+	const (
+		portNone portMode = iota
+		portReachable
+		portUnreachable
+	)
+
+	cases := []struct {
+		name          string
+		wantState     types.ProcessState
+		wantErrSubstr string // non-empty: Error must contain this after the check
+		mode          portMode
+		timedOut      bool
+		wantRunningIn bool // expect "now running" breadcrumb in the daemon log
+	}{
+		{
+			name:          "no port configured transitions on liveness alone",
+			mode:          portNone,
+			wantState:     types.ProcessStateRunning,
+			wantRunningIn: true,
+		},
+		{
+			name:          "port reachable transitions to running",
+			mode:          portReachable,
+			wantState:     types.ProcessStateRunning,
+			wantRunningIn: true,
+		},
+		{
+			name:      "port not yet reachable stays starting",
+			mode:      portUnreachable,
+			wantState: types.ProcessStateStarting,
+		},
+		{
+			name:          "port not reachable but timed out still fails via timeout",
+			mode:          portUnreachable,
+			timedOut:      true,
+			wantState:     types.ProcessStateFailed,
+			wantErrSubstr: "taking too long",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+			var healthConfig *config.HealthConfig
+			if tc.timedOut {
+				healthConfig = newTestHealthConfig(t, WithTimeoutLimit(100*time.Millisecond))
+			} else {
+				healthConfig = newTestHealthConfig(t)
+			}
+			shutdownConfig := newTestShutdownConfig(t)
+
+			db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+			mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+			t.Cleanup(mgr.WaitPipes)
+			logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+			if err != nil {
+				t.Fatalf("unable to set up daemon logger: %v", err)
+			}
+
+			hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+			serviceName := "port-gating-service"
+			fullDirPath := filepath.Join(tempDir, "port-gating-project")
+			if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+				t.Fatalf("failed to create project directory: %v", mkdirErr)
+			}
+
+			testServiceScript := testutil.NewTestServiceScript(t, testutil.WithDirPath(fullDirPath))
+			testutil.NewTestServiceScriptAtLocation(t, *testServiceScript)
+
+			port := 0
+			switch tc.mode {
+			case portReachable:
+				// Keep the listener open for the life of the subtest: the
+				// tracked process itself never binds anything, but a real
+				// listener on the same port is what isPortReachable dials.
+				listener, listenErr := net.Listen("tcp", "localhost:0")
+				if listenErr != nil {
+					t.Fatalf("failed to create listener: %v", listenErr)
+				}
+				t.Cleanup(func() { _ = listener.Close() })
+				tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+				if !ok {
+					t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+				}
+				port = tcpAddr.Port
+			case portUnreachable:
+				// Open then immediately close: yields a real ephemeral port
+				// number that nothing is listening on.
+				listener, listenErr := net.Listen("tcp", "localhost:0")
+				if listenErr != nil {
+					t.Fatalf("failed to create listener: %v", listenErr)
+				}
+				tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+				if !ok {
+					t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+				}
+				port = tcpAddr.Port
+				if closeErr := listener.Close(); closeErr != nil {
+					t.Fatalf("failed to close listener: %v", closeErr)
+				}
+			case portNone:
+				port = 0
+			}
+
+			testFile := testutil.NewTestServiceConfigFile(t,
+				testutil.WithoutRuntime(),
+				testutil.WithName(serviceName),
+				testutil.WithPort(port),
+				testutil.WithCommand("./"+testServiceScript.FileName))
+			yamlData, err := yaml.Marshal(testFile)
+			if err != nil {
+				t.Fatalf("failed to marshal test config: %v", err)
+			}
+
+			fullPath := filepath.Join(fullDirPath, "service.yaml")
+			if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+				t.Fatalf("failed to write service.yaml: %v", err)
+			}
+
+			serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+			if err != nil {
+				t.Fatalf("create service catalog entry failed: %v", err)
+			}
+			if err = mgr.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+				t.Fatalf("error registering service: %v", err)
+			}
+
+			pgid, err := mgr.StartService(t.Context(), serviceCatalogEntry.Name)
+			if err != nil {
+				t.Fatalf("service unable to start: %v", err)
+			}
+			if pgid < 1 {
+				t.Fatalf("invalid PGID received: %d", pgid)
+			}
+			t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+			if tc.timedOut {
+				oldStartTime := time.Now().Add(-(healthConfig.Timeout.Limit + 50*time.Millisecond))
+				if updErr := hm.db.UpdateProcessHistoryEntry(t.Context(), pgid, database.ProcessHistoryUpdate{StartedAt: &oldStartTime}); updErr != nil {
+					t.Fatalf("failed to backdate StartedAt: %v", updErr)
+				}
+			}
+
+			processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+			if err != nil || processHistoryEntry == nil {
+				t.Fatalf("failed to get process history entry: %v", err)
+			}
+
+			hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+			updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+			if err != nil || updatedEntry == nil {
+				t.Fatal("failed to get updated process history")
+			}
+
+			if updatedEntry.State != tc.wantState {
+				t.Errorf("state = %v, want %v", updatedEntry.State, tc.wantState)
+			}
+
+			logContent := readDaemonLog(t, daemonConfig)
+			if tc.wantRunningIn && !strings.Contains(logContent, "now running") {
+				t.Errorf("expected daemon log to contain 'now running', got: %s", logContent)
+			}
+			if !tc.wantRunningIn && strings.Contains(logContent, "now running") {
+				t.Errorf("expected no 'now running' breadcrumb yet, got: %s", logContent)
+			}
+
+			if tc.wantErrSubstr != "" {
+				if updatedEntry.Error == nil || !strings.Contains(*updatedEntry.Error, tc.wantErrSubstr) {
+					t.Errorf("expected error containing %q, got: %v", tc.wantErrSubstr, updatedEntry.Error)
+				}
+			} else if tc.wantState == types.ProcessStateStarting {
+				// No transition attempted at all: neither Error nor StoppedAt
+				// should have been touched by this tick.
+				if updatedEntry.Error != nil && *updatedEntry.Error != "" {
+					t.Errorf("expected no error set while still starting, got: %v", *updatedEntry.Error)
+				}
+				if updatedEntry.StoppedAt != nil {
+					t.Errorf("expected StoppedAt unset while still starting, got: %v", *updatedEntry.StoppedAt)
+				}
+			}
+		})
+	}
+}
+
 func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
