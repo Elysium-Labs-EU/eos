@@ -317,22 +317,22 @@ func TestDiagnoseCmd_LinesCapKeepsMostRecent(t *testing.T) {
 	}
 }
 
-func TestDiagnoseCmd_DaemonLogUnavailableUnderSystemd(t *testing.T) {
+func TestDiagnoseCmd_DaemonLogUnavailableWithNilDaemon(t *testing.T) {
 	cmd, _, errBuf, _ := setupDiagnoseCmd(t)
 
 	outputPath := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	// No --no-daemon here: setupCmd's manager is already wired for standalone.
 	// Simulate "no standalone log" indirectly isn't possible without touching
 	// config, so instead assert the ok path already covered above and the
-	// distinct systemd-unavailable message via the pure helper directly.
-	daemonLogFile, step := diagnoseCollectDaemonLog(t.TempDir(), nil, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+	// generic unavailable message via the pure helper directly.
+	daemonLogFile, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), nil, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
 	if daemonLogFile != nil {
 		t.Error("expected no daemon log file when daemon config is nil")
 	}
 	if step.Captured {
 		t.Error("expected daemon-log step to fail when daemon config is nil")
 	}
-	if !strings.Contains(step.Error, "not managed as a standalone daemon") {
+	if !strings.Contains(step.Error, "not managed as a standalone or systemd daemon") {
 		t.Errorf("expected a descriptive skip reason, got: %s", step.Error)
 	}
 
@@ -340,6 +340,93 @@ func TestDiagnoseCmd_DaemonLogUnavailableUnderSystemd(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("diagnose should not return an error, got: %v\nerr output: %s", err, errBuf.String())
 	}
+}
+
+// TestDiagnoseCollectDaemonLog_Systemd covers diagnoseCollectDaemonLog's
+// systemd branch directly (issue #217): a systemd-managed install must get a
+// real journalctl-sourced daemon.log in the bundle, not the generic
+// unavailable step, and must still degrade gracefully when journalctl itself
+// isn't on PATH.
+func TestDiagnoseCollectDaemonLog_Systemd(t *testing.T) {
+	t.Run("journalctl available", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "line one"
+echo "line two"`)
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step, got: %+v", step)
+		}
+		if file == nil {
+			t.Fatal("expected a daemon log file")
+		}
+		if file.Name != "logs/daemon.log" {
+			t.Errorf("expected logs/daemon.log, got: %s", file.Name)
+		}
+		if !strings.Contains(string(file.Data), "line one") || !strings.Contains(string(file.Data), "line two") {
+			t.Errorf("expected journalctl output in the collected log, got: %s", file.Data)
+		}
+	})
+
+	t.Run("journalctl output capped and scrubbed", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "AKIAABCDEFGHIJKLMNOP"
+echo "line two"
+echo "line three"`)
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{UserUnit: true},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 2})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step, got: %+v", step)
+		}
+		got := strings.TrimRight(string(file.Data), "\n")
+		gotLines := strings.Split(got, "\n")
+		if len(gotLines) != 2 {
+			t.Fatalf("expected --lines to cap output at 2 lines, got %d: %v", len(gotLines), gotLines)
+		}
+		if strings.Contains(string(file.Data), "AKIAABCDEFGHIJKLMNOP") {
+			t.Errorf("expected the AWS-key-shaped line to be scrubbed or capped out, got: %s", file.Data)
+		}
+	})
+
+	t.Run("journalctl command fails", func(t *testing.T) {
+		installFakeJournalctlScript(t, "exit 1")
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if file != nil {
+			t.Error("expected no daemon log file when journalctl fails")
+		}
+		if step.Captured {
+			t.Error("expected daemon-log step to fail when journalctl exits non-zero")
+		}
+		if !strings.Contains(step.Error, "running journalctl") {
+			t.Errorf("expected a journalctl-specific error, got: %s", step.Error)
+		}
+	})
+
+	t.Run("journalctl not on PATH falls back to generic unavailable", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if file != nil {
+			t.Error("expected no daemon log file when journalctl is unresolvable")
+		}
+		if step.Captured {
+			t.Error("expected daemon-log step to fail when journalctl is unresolvable")
+		}
+		if !strings.Contains(step.Error, "not managed as a standalone or systemd daemon") {
+			t.Errorf("expected the generic unavailable message, got: %s", step.Error)
+		}
+	})
 }
 
 func TestDiagnoseCmd_IncludeEnv(t *testing.T) {
