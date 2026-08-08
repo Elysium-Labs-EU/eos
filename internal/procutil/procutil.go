@@ -56,19 +56,30 @@ func CPUTime(pgid int) (time.Duration, error) {
 	return platformCPUTime(pgid)
 }
 
-// IsAliveMatching reports whether pgid is alive and its current start time
-// matches startedAtTicks (as previously returned by StartTime for the same
-// pgid). Every process this package tracks is launched with Setpgid: true,
-// making it the leader of a new process group, so pgid also doubles as the
-// leader's own pid — that's what lets us read its /proc or sysctl start time
-// directly from the stored pgid.
+// IsAliveMatching reports whether pgid is alive and is plausibly the same
+// process group that was started at startedAtTicks (as previously returned
+// by StartTime for the same pgid) — ruling out a kernel PGID recycle into an
+// unrelated, later process group. Every process this package tracks is
+// launched with Setpgid: true, making it the leader of a new process group,
+// so pgid also doubles as the leader's own pid — that's what lets us read
+// its /proc or sysctl start time directly from the stored pgid.
+//
+// A wrapper command (eos launches every service through /bin/sh -c "...")
+// commonly exits shortly after spawning the real long-running child, which
+// keeps running as a surviving member of the same group under a different
+// pid. Once the leader is reaped, StartTime(pgid) fails outright — but that
+// is not reuse evidence: IsAlive already proved the group itself, via the
+// whole-group scan, is still alive. Only an actual start-time *mismatch*
+// (the leader pid still exists but now belongs to a different process) means
+// the recorded pgid was recycled, so that's the only outcome treated as a
+// non-match.
 func IsAliveMatching(pgid int, startedAtTicks int64) bool {
 	if !IsAlive(pgid) {
 		return false
 	}
 	current, err := StartTime(pgid)
 	if err != nil {
-		return false
+		return true
 	}
 	return current == startedAtTicks
 }
