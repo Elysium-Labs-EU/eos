@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/argus/main/schemas/config.schema.json
+# .argus/config.yml — all keys are optional; see `argus init`.
+base_branch: "main"
+brief_note: "New code you add or modify must average >=90% per-function line coverage. A gate re-checks this against origin/main once you reach a terminal phase and hard-escalates on a miss, so write tests alongside the code rather than after."
+
+phases:
+  working:
+    allow:
+      - "Bash(make *)"
+      - "Bash(git rm *)"
+      - "Bash(git add *)"
+  self_test:
+    allow:
+      - "Bash(make *)"

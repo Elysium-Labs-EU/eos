@@ -1,4 +1,4 @@
-.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -56,24 +56,44 @@ profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF
 	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap
 
 setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
-	@echo "Installing golangci-lint v2.12.2..."
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-	@echo "Installing git-cliff..."
-	cargo install git-cliff 2>/dev/null || echo "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
-	@echo "Installing lefthook..."
-	go install github.com/evilmartians/lefthook@latest
-	@echo "Installing nilaway (nil pointer static analysis)..."
-	go install go.uber.org/nilaway/cmd/nilaway@latest
-	@echo "Installing go-crap (change-risk analysis)..."
-	go install github.com/padiazg/go-crap@latest
-	@echo "Installing gitleaks (secret scanning)..."
-	go install github.com/zricethezav/gitleaks/v8@latest
-	@echo "Installing govulncheck..."
-	go install golang.org/x/vuln/cmd/govulncheck@latest
-	@echo "Installing apidiff (plugin API breaking-change detection)..."
-	go install golang.org/x/exp/cmd/apidiff@latest
-	@echo "Installing benchstat (benchmark comparison)..."
-	go install golang.org/x/perf/cmd/benchstat@latest
+	@if command -v golangci-lint >/dev/null 2>&1 && [ "$$(golangci-lint version 2>&1 | grep -o '2\.12\.2')" = "2.12.2" ]; then \
+		echo "golangci-lint v2.12.2 already installed, skipping"; \
+	else \
+		echo "Installing golangci-lint v2.12.2..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2; \
+	fi
+	@command -v git-cliff >/dev/null 2>&1 && echo "git-cliff already installed, skipping" || { \
+		echo "Installing git-cliff..."; \
+		cargo install git-cliff 2>/dev/null || echo "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"; \
+	}
+	@command -v lefthook >/dev/null 2>&1 && echo "lefthook already installed, skipping" || { \
+		echo "Installing lefthook..."; \
+		go install github.com/evilmartians/lefthook@latest; \
+	}
+	@command -v nilaway >/dev/null 2>&1 && echo "nilaway already installed, skipping" || { \
+		echo "Installing nilaway (nil pointer static analysis)..."; \
+		go install go.uber.org/nilaway/cmd/nilaway@latest; \
+	}
+	@command -v go-crap >/dev/null 2>&1 && echo "go-crap already installed, skipping" || { \
+		echo "Installing go-crap (change-risk analysis)..."; \
+		go install github.com/padiazg/go-crap@latest; \
+	}
+	@command -v gitleaks >/dev/null 2>&1 && echo "gitleaks already installed, skipping" || { \
+		echo "Installing gitleaks (secret scanning)..."; \
+		go install github.com/zricethezav/gitleaks/v8@latest; \
+	}
+	@command -v govulncheck >/dev/null 2>&1 && echo "govulncheck already installed, skipping" || { \
+		echo "Installing govulncheck..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	}
+	@command -v apidiff >/dev/null 2>&1 && echo "apidiff already installed, skipping" || { \
+		echo "Installing apidiff (plugin API breaking-change detection)..."; \
+		go install golang.org/x/exp/cmd/apidiff@latest; \
+	}
+	@command -v benchstat >/dev/null 2>&1 && echo "benchstat already installed, skipping" || { \
+		echo "Installing benchstat (benchmark comparison)..."; \
+		go install golang.org/x/perf/cmd/benchstat@latest; \
+	}
 	@echo "Installing git hooks..."
 	lefthook install
 	@echo "Setup complete."
@@ -282,6 +302,14 @@ test-install-orb: release-local ## Build and test install.sh on OrbStack $(ORB_M
 
 test-install-darwin: release-local ## Build and test install.sh natively on macOS with local binary (no orb needed — darwin is native here)
 	arch=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-darwin-$$arch
+
+SKIP_NODE_INSTALL ?= 0
+SKIP_BUN_INSTALL ?= 0
+SKIP_PNPM_INSTALL ?= 0
+SKIP_JQ_INSTALL ?= 0
+
+test-fixtures-orb: release-local ## Run eos against real nextjs/vite/express/hono fixtures on OrbStack $(ORB_MACHINE) (installs node/bun/pnpm/jq as needed; slow, meant for nightly/pre-release not per-commit). SKIP_{NODE,BUN,PNPM}_INSTALL=1 simulates that interpreter going missing at service-start time instead of skipping install outright; SKIP_JQ_INSTALL=1 tests the script's own precondition failure.
+	orb run -m $(ORB_MACHINE) bash -lc "cd $(PWD) && SKIP_NODE_INSTALL=$(SKIP_NODE_INSTALL) SKIP_BUN_INSTALL=$(SKIP_BUN_INSTALL) SKIP_PNPM_INSTALL=$(SKIP_PNPM_INSTALL) SKIP_JQ_INSTALL=$(SKIP_JQ_INSTALL) bash scripts/test-fixtures-orb.sh"
 
 release-local: ## Build release binaries locally
 	@echo "Building release binaries..."
