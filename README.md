@@ -226,6 +226,10 @@ The [eos-deploy-action](https://github.com/Elysium-Labs-EU/eos-deploy-action) ha
 
 Add it to your release workflow and pushes to `main` deploy automatically.
 
+## Security
+
+Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to report it privately. Everything else goes through the normal [issue tracker](https://github.com/Elysium-Labs-EU/eos/issues).
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE).
