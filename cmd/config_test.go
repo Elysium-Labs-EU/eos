@@ -140,6 +140,9 @@ func TestConfigInitCommand(t *testing.T) {
 		t.Fatalf("reading written config.yaml: %v", err)
 	}
 	content := string(written)
+	if !strings.HasPrefix(content, "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/config.schema.json\n\n") {
+		t.Errorf("expected written config.yaml to start with the yaml-language-server schema header, got: %s", content)
+	}
 	for _, want := range []string{"# sinks:", "# telemetry:", "checkIntervalMs: 2000", "fileSizeLimitBytes: 10485760"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected written config.yaml to contain %q, got: %s", want, content)
@@ -306,6 +309,9 @@ func TestRenderConfigInitFile(t *testing.T) {
 	content, err := renderConfigInitFile()
 	if err != nil {
 		t.Fatalf("renderConfigInitFile should not error, got: %v", err)
+	}
+	if !strings.HasPrefix(content, configInitSchemaHeader) {
+		t.Errorf("expected rendered content to start with the yaml-language-server schema header, got: %s", content)
 	}
 	for _, want := range []string{
 		"checkIntervalMs: 2000",

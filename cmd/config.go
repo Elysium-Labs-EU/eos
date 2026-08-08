@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// configInitSchemaHeader mirrors initSchemaHeader (cmd/init.go), giving
+// config.yaml the same editor autocomplete/validation via the YAML language
+// server extension that service.yaml already gets.
+const configInitSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/config.schema.json\n\n"
+
 // configInitTemplate scaffolds ~/.eos/config.yaml fully commented out, so the
 // file documents every available field at eos's own built-in default without
 // changing behavior until a line is uncommented.
@@ -270,7 +275,7 @@ func renderConfigInitFile() (string, error) {
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("rendering template: %w", err)
 	}
-	return buf.String(), nil
+	return configInitSchemaHeader + buf.String(), nil
 }
 
 func runConfigValidate(cmd *cobra.Command) error {
