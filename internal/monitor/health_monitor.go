@@ -294,6 +294,16 @@ func (hm *HealthMonitor) checkStartProcess(
 		return
 	}
 
+	// A process can be alive before its listener is bound (e.g. a framework
+	// compiling routes on cold start). Hold Starting until the port answers
+	// instead of flipping to Running here only for checkRunningProcess to
+	// find it unreachable and mark it Failed on the very next tick. The
+	// timeout check above still applies each tick, so this can't wait forever.
+	if config.Port != 0 && !hm.isPortReachable(ctx, config.Port) {
+		hm.logger.Debug("startup check: port not reachable yet", "service", serviceName, "port", config.Port)
+		return
+	}
+
 	runningMsg := hmStartupRunningMessage(serviceName, config.Port)
 	hm.logger.Info(runningMsg)
 	if logErr := hm.mgr.LogToServiceStdout(serviceName, runningMsg); logErr != nil {
