@@ -1,0 +1,205 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Elysium-Labs-EU/eos/main/schemas/config.schema.json",
+  "title": "eos daemon configuration",
+  "description": "Configuration schema for ~/.eos/config.yaml, the daemon-wide settings for the log sink registry, telemetry export, health thresholds, and log rotation. Distinct from service.yaml (see service.schema.json), which configures one registered service.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sinks": {
+      "type": "object",
+      "description": "Named log sink registry. service.yaml's log_sinks list can reference an entry here by name instead of inlining its config.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Sink type. eos discovers the plugin binary as eos-sink-{type} on $PATH.",
+            "minLength": 1,
+            "examples": ["logbench", "datadog", "loki", "betterstack"]
+          },
+          "mode": {
+            "type": "string",
+            "description": "Sink delivery mode: \"push\" sends records to a remote address, \"serve\" binds a local address for the remote to pull from.",
+            "enum": ["push", "serve"],
+            "examples": ["push", "serve"]
+          },
+          "address": {
+            "type": "string",
+            "description": "Remote URL (push mode) or bind address (serve mode), passed to the plugin via the EOS_SINK_ADDRESS environment variable.",
+            "examples": ["http://loki:3100", ":4317"]
+          },
+          "exec": {
+            "type": "string",
+            "description": "Explicit path to the plugin binary. Overrides the eos-sink-{type} PATH lookup.",
+            "examples": ["/usr/local/bin/eos-sink-datadog", "./bin/my-custom-sink"]
+          },
+          "args": {
+            "type": "array",
+            "description": "Extra arguments passed to the plugin binary.",
+            "items": { "type": "string" },
+            "examples": [["--site", "datadoghq.com"]]
+          },
+          "buffer_size": {
+            "type": "integer",
+            "description": "Number of log records to buffer in memory when the plugin is slow. Oldest records are dropped on overflow. Default: 4096.",
+            "minimum": 1,
+            "default": 4096,
+            "examples": [1024, 4096, 16384]
+          },
+          "restart_delay_ms": {
+            "type": "integer",
+            "description": "Milliseconds to wait before restarting a crashed plugin. Default: 5000.",
+            "minimum": 0,
+            "default": 5000,
+            "examples": [1000, 5000, 30000]
+          },
+          "streams": {
+            "type": "array",
+            "description": "Which output streams to route to this sink. Default: both stdout and stderr.",
+            "items": {
+              "type": "string",
+              "enum": ["stdout", "stderr"]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "default": ["stdout", "stderr"],
+            "examples": [["stdout"], ["stderr"], ["stdout", "stderr"]]
+          },
+          "options": {
+            "type": "object",
+            "description": "Plugin-specific configuration. Passed to the plugin as JSON via the EOS_SINK_OPTIONS environment variable. eos does not validate this field.",
+            "additionalProperties": true,
+            "examples": [
+              { "project_id": "abc123", "endpoint": "http://localhost:1447" },
+              { "api_key": "${DD_API_KEY}", "site": "datadoghq.com" }
+            ]
+          }
+        }
+      },
+      "examples": [
+        {
+          "prod-loki": { "type": "loki", "mode": "push", "address": "http://loki:3100" }
+        }
+      ]
+    },
+    "telemetry": {
+      "type": "object",
+      "description": "OTLP export of daemon metrics and traces. Disabled by default: eos never dials a collector unless enable is true.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Enable OTLP export. Requires endpoint to be set.",
+          "default": false
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "OTLP collector endpoint. Required when enable is true.",
+          "examples": ["http://otel:4317"]
+        },
+        "insecure": {
+          "type": "boolean",
+          "description": "Disable TLS when dialing the OTLP endpoint.",
+          "default": false
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "description": "Health monitor thresholds and timing.",
+      "additionalProperties": false,
+      "properties": {
+        "checkIntervalMs": {
+          "type": "integer",
+          "description": "How often, in milliseconds, the health monitor samples each running service. Default: 2000.",
+          "minimum": 1,
+          "default": 2000,
+          "examples": [1000, 2000, 5000]
+        },
+        "memSampleIntervalMs": {
+          "type": "integer",
+          "description": "How often, in milliseconds, the health monitor samples RSS memory for restart-threshold decisions. Default: 30000.",
+          "minimum": 1,
+          "default": 30000,
+          "examples": [10000, 30000, 60000]
+        },
+        "backoff": {
+          "type": "object",
+          "description": "Exponential backoff applied between automatic service restarts.",
+          "additionalProperties": false,
+          "properties": {
+            "baseMs": {
+              "type": "integer",
+              "description": "Initial restart backoff delay, in milliseconds. Default: 300.",
+              "minimum": 1,
+              "default": 300,
+              "examples": [100, 300, 1000]
+            },
+            "maxMs": {
+              "type": "integer",
+              "description": "Ceiling on the restart backoff delay, in milliseconds. Must be greater than baseMs. Default: 60000.",
+              "minimum": 1,
+              "default": 60000,
+              "examples": [10000, 60000, 120000]
+            }
+          }
+        },
+        "memory": {
+          "type": "object",
+          "description": "Memory-usage thresholds, as a fraction of a service's memory_limit_mb (0 < value < 1), that trigger warnings and automatic restarts. Must be ascending: warningThreshold < softRestartThreshold < forceRestartThreshold.",
+          "additionalProperties": false,
+          "properties": {
+            "warningThreshold": {
+              "type": "number",
+              "description": "Fraction of memory_limit_mb at which eos logs a warning. Default: 0.75.",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1,
+              "default": 0.75,
+              "examples": [0.5, 0.75]
+            },
+            "softRestartThreshold": {
+              "type": "number",
+              "description": "Fraction of memory_limit_mb at which eos gracefully restarts the service. Default: 0.85.",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1,
+              "default": 0.85,
+              "examples": [0.6, 0.85]
+            },
+            "forceRestartThreshold": {
+              "type": "number",
+              "description": "Fraction of memory_limit_mb at which eos force-kills and restarts the service. Default: 0.95.",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1,
+              "default": 0.95,
+              "examples": [0.7, 0.95]
+            }
+          }
+        }
+      }
+    },
+    "log": {
+      "type": "object",
+      "description": "Daemon-wide log rotation defaults, applied to a service's stdout/stderr log unless it overrides them in service.yaml (log_max_files, log_file_size_limit_bytes).",
+      "additionalProperties": false,
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "description": "How many rotated stdout/stderr log files to keep per service (active file plus this many rotated siblings). Default: 5.",
+          "minimum": 1,
+          "default": 5,
+          "examples": [3, 5, 10]
+        },
+        "fileSizeLimitBytes": {
+          "type": "integer",
+          "description": "Rotate a service's stdout/stderr log once it reaches this size, in bytes. Default: 10485760 (10MB).",
+          "minimum": 1,
+          "default": 10485760,
+          "examples": [1048576, 10485760, 52428800]
+        }
+      }
+    }
+  }
+}
