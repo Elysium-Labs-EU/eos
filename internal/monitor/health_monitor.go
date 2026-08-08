@@ -815,56 +815,16 @@ func calculateBackoffDelay(restartCount, baseMs, maxMs int) time.Duration {
 	return time.Duration(int64(calculatedDelay)) * time.Millisecond
 }
 
-// isProcessAlive reports whether any live process exists in the given process group.
-//
-// On Linux, kill(-pgid, 0) returns nil even when the only remaining process is
-// a zombie — a process that has exited but has not yet been reaped by its
-// parent's Wait call. A zombie is not running, so we read /proc/<pgid>/stat and
-// treat state 'Z' as dead.
-//
-// On macOS, kill(-pgid, 0) returns EPERM for zombies (caught by the err != nil
-// check below), so the /proc path is not needed there.
+// isProcessAlive reports whether any live process exists in the given process
+// group, delegating to procutil.IsAlive rather than re-deriving the check
+// here: a prior hand-rolled version of this only inspected /proc/<pgid>/stat
+// (the group leader's own PID) for the Linux zombie case, which reads the
+// whole group as dead the moment the leader exits and is reaped even though
+// another member is still running — exactly the wrapper-spawns-server shape
+// (`sh -c "npm start"` -> npm -> node) eos launches services through (#197).
+// procutil.IsAlive already scans every group member for this reason.
 func (hm *HealthMonitor) isProcessAlive(pgid int) bool {
-	if pgid <= 1 {
-		return false
-	}
-	if err := syscall.Kill(-pgid, 0); err != nil {
-		return false
-	}
-	if runtime.GOOS == "linux" {
-		return hm.hmLinuxProcessAlive(pgid)
-	}
-	return true
-}
-
-// hmLinuxProcessAlive reads /proc/<pgid>/stat and reports whether it shows a
-// non-zombie process, so isProcessAlive can tell a zombie group leader (which
-// kill(-pgid, 0) still reports as alive on Linux) from one truly still running.
-func (hm *HealthMonitor) hmLinuxProcessAlive(pgid int) bool {
-	var pathBuf [32]byte
-	path := fmt.Appendf(pathBuf[:0], "/proc/%d/stat", pgid)
-	fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
-	if err != nil {
-		return false
-	}
-	n, _ := syscall.Read(fd, hm.procBuf[:])
-	_ = syscall.Close(fd)
-	if n <= 0 {
-		return false
-	}
-	return hmStatIndicatesAlive(hm.procBuf[:n])
-}
-
-// hmStatIndicatesAlive inspects the state field of a /proc/<pid>/stat blob
-// (the byte after the closing ')' of the comm field) and reports false only
-// when it is 'Z' (zombie). An unparsable blob is treated as alive, matching
-// isProcessAlive's prior fallthrough behavior.
-func hmStatIndicatesAlive(contents []byte) bool {
-	i := bytes.LastIndexByte(contents, ')')
-	if i < 0 || i+2 >= len(contents) {
-		return true
-	}
-	return contents[i+2] != 'Z'
+	return procutil.IsAlive(pgid)
 }
 
 // scanStatusFieldBytes finds a field in /proc/N/status without allocating.
