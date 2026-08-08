@@ -13,6 +13,8 @@ useDefault = true
 #     (TestDiagnoseScrubLine, "api key assignment" case)
 #   - AKIAABCDEFGHIJKLMNOP      an AWS-access-key-shaped token
 #     (TestDiagnoseScrubLine, "aws key" case)
+#   - MIIBogIBAAJ               the fake single-line PEM key body content
+#     (TestDiagnoseScrubLine, "private key block" case)
 #   - MIIBOgIBAAJBAK8z9x8example1 / example2
 #     the fake PEM key body content reused by the multi-line-redaction
 #     regression tests (TestDiagnoseScrubLines_MultiLinePrivateKey,
@@ -29,12 +31,13 @@ useDefault = true
 #
 # Deliberately not a path-based exemption for the whole test file: that would
 # risk silently masking a real secret accidentally added to it later. These
-# regexes match only the four known-fake literal values.
+# regexes match only the five known-fake literal values.
 [allowlist]
 description = "Known-fake credential-shaped test-fixture strings (cmd/diagnose_test.go and any sibling branch/PR reusing them) — not real secrets"
 regexes = [
   '''sk-abc123def456''',
   '''AKIAABCDEFGHIJKLMNOP''',
+  '''MIIBogIBAAJ''',
   '''MIIBOgIBAAJBAK8z9x8example1''',
   '''MIIBOgIBAAJBAK8z9x8example2''',
 ]
