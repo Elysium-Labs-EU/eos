@@ -184,6 +184,8 @@ func runDiagnose(cmd *cobra.Command, opts diagnoseOptions) error {
 	}
 
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("ok"), "wrote diagnostic bundle to", ui.TextBold.Render(outputPath))
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("next:"), "attach it to a new issue at https://github.com/Elysium-Labs-EU/eos/issues/new")
+	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("note:"), "found a security issue instead? use private reporting -- see SECURITY.md")
 	failed := 0
 	for _, step := range manifest.Steps {
 		if !step.Captured {

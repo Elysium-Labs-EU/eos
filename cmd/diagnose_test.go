@@ -213,6 +213,27 @@ func TestDiagnoseCmd_WritesBundleForRegisteredServices(t *testing.T) {
 	}
 }
 
+// TestDiagnoseCmd_PrintsNextStepInstructions covers issue #222: after writing
+// the bundle, the command must always tell the user what to do with it —
+// where to attach it, and where to report a security issue instead.
+func TestDiagnoseCmd_PrintsNextStepInstructions(t *testing.T) {
+	cmd, outBuf, errBuf, _ := setupDiagnoseCmd(t)
+
+	outputPath := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	cmd.SetArgs([]string{"diagnose", "--output", outputPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("diagnose should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	}
+
+	out := outBuf.String()
+	if !strings.Contains(out, "attach it to a new issue at https://github.com/Elysium-Labs-EU/eos/issues/new") {
+		t.Errorf("expected next-step instructions to attach the bundle to a new issue, got: %s", out)
+	}
+	if !strings.Contains(out, "found a security issue instead? use private reporting -- see SECURITY.md") {
+		t.Errorf("expected a pointer to private security reporting, got: %s", out)
+	}
+}
+
 func TestDiagnoseCmd_NoServicesRegistered(t *testing.T) {
 	cmd, _, errBuf, _ := setupDiagnoseCmd(t)
 
