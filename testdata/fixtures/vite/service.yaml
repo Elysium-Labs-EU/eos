@@ -3,4 +3,4 @@ command: "pnpm install && pnpm run build"
 # port: 1337
 runtime:
   type: "nodejs"
-  path: "/root/.nvm/versions/node/v24.14.0/bin"
+  # path: "/root/.nvm/versions/node/v24.14.0/bin"
