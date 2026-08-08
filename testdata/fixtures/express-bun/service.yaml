@@ -1,0 +1,6 @@
+name: "express-bun"
+command: "bun start"
+# port:
+runtime:
+  type: "bun"
+  # path: "/root/.nvm/versions/node/v24.14.0/bin"

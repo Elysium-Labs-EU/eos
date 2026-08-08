@@ -3,7 +3,7 @@
 #
 # Exercises eos against real language-stack processes (Next.js, Vite,
 # Express, Hono over npm/pnpm/bun) instead of the synthetic stub commands
-# used by cmd/*_e2e_test.go. For each fixture under test-files-vps/ it
+# used by cmd/*_e2e_test.go. For each fixture under testdata/fixtures/ it
 # registers the service, starts it, asserts it's actually alive (a real
 # HTTP response on its port, for fixtures that are servers), checks logs
 # were captured, stops it, and asserts the process is gone. This is the
@@ -15,7 +15,7 @@
 #
 # Env vars:
 #   EOS_BIN            path to the eos binary to install (default: dist/eos-linux-<arch>)
-#   FIXTURES_DIR        path to the fixture apps (default: test-files-vps, relative to repo root)
+#   FIXTURES_DIR        path to the fixture apps (default: testdata/fixtures, relative to repo root)
 #   SCRATCH_DIR          VM-local dir fixtures are copied into before install/build
 #                        (default: $HOME/eos-fixture-test). Never operate on
 #                        FIXTURES_DIR directly -- it's the host's $PWD shared into
@@ -40,19 +40,34 @@
 #                        absent, the script aborts immediately with a clear
 #                        message rather than producing unreadable errors
 #                        from every downstream jq call.
+#   SKIP_ALL_INSTALL=1   shorthand: sets the default for all four SKIP_*_INSTALL
+#                        flags above at once, for a VM that already has every
+#                        tool and should never attempt an install. Still
+#                        overridable per-tool (e.g. SKIP_ALL_INSTALL=1
+#                        SKIP_JQ_INSTALL=0 still installs jq). Does not touch
+#                        the negative-path (missing-runtime) test semantics --
+#                        those stay controlled per-fixture by the individual
+#                        flags above.
+#   HTTP_WAIT_SECONDS    max seconds to wait for a server to answer HTTP, or
+#                        for vite's build to produce dist/index.html, before
+#                        declaring the fixture failed (default: 90). A cold
+#                        VM doing a real npm-ecosystem install/build needs
+#                        real headroom -- 30s measured too tight in practice.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
 EOS_BIN="${EOS_BIN:-$REPO_ROOT/dist/eos-linux-$ARCH}"
-FIXTURES_DIR="${FIXTURES_DIR:-$REPO_ROOT/test-files-vps}"
+FIXTURES_DIR="${FIXTURES_DIR:-$REPO_ROOT/testdata/fixtures}"
 SCRATCH_DIR="${SCRATCH_DIR:-$HOME/eos-fixture-test}"
 export EOS_BASE_DIR="$SCRATCH_DIR/.eos-state"
 
-SKIP_NODE_INSTALL="${SKIP_NODE_INSTALL:-0}"
-SKIP_BUN_INSTALL="${SKIP_BUN_INSTALL:-0}"
-SKIP_PNPM_INSTALL="${SKIP_PNPM_INSTALL:-0}"
-SKIP_JQ_INSTALL="${SKIP_JQ_INSTALL:-0}"
+SKIP_ALL_INSTALL="${SKIP_ALL_INSTALL:-0}"
+SKIP_NODE_INSTALL="${SKIP_NODE_INSTALL:-$SKIP_ALL_INSTALL}"
+SKIP_BUN_INSTALL="${SKIP_BUN_INSTALL:-$SKIP_ALL_INSTALL}"
+SKIP_PNPM_INSTALL="${SKIP_PNPM_INSTALL:-$SKIP_ALL_INSTALL}"
+SKIP_JQ_INSTALL="${SKIP_JQ_INSTALL:-$SKIP_ALL_INSTALL}"
+HTTP_WAIT_SECONDS="${HTTP_WAIT_SECONDS:-90}"
 
 PASSED=()
 FAILED=()
@@ -119,7 +134,7 @@ ensure_runtimes() {
 api() { "$EOS_BIN" --no-daemon api "$@"; }
 
 wait_for_http() {
-	local port="$1" path="${2:-/}" tries=30
+	local port="$1" path="${2:-/}" tries="$HTTP_WAIT_SECONDS"
 	while [ "$tries" -gt 0 ]; do
 		curl -fsS -o /dev/null "http://127.0.0.1:$port$path" && return 0
 		tries=$((tries - 1))
@@ -296,17 +311,20 @@ run_vite_fixture() {
 
 	log "=== vite (build-only) ==="
 	api run vite --once >/dev/null || { log "FAIL vite: eos api run failed"; return 1; }
-	local tries=30
+	local tries="$HTTP_WAIT_SECONDS"
 	while [ "$tries" -gt 0 ] && [ ! -f "$dir/dist/index.html" ]; do
 		tries=$((tries - 1))
 		sleep 1
 	done
-	api stop vite --force >/dev/null 2>&1 || true
-	api remove vite >/dev/null || { log "FAIL vite: eos api remove failed"; return 1; }
 	if [ ! -f "$dir/dist/index.html" ]; then
+		api logs vite --lines 100 | jq -r '.lines[]' >&2 || true
 		log "FAIL vite: build did not produce dist/index.html within timeout"
+		api stop vite --force >/dev/null 2>&1 || true
+		api remove vite >/dev/null 2>&1 || true
 		return 1
 	fi
+	api stop vite --force >/dev/null 2>&1 || true
+	api remove vite >/dev/null || { log "FAIL vite: eos api remove failed"; return 1; }
 	log "PASS vite: build completed, dist/index.html present"
 	return 0
 }
@@ -363,7 +381,12 @@ main() {
 
 	if run_vite_fixture; then PASSED+=(vite); else FAILED+=(vite); fi
 
-	rm -rf "$EOS_BASE_DIR" "$SCRATCH_DIR"
+	rm -rf "$EOS_BASE_DIR"
+	if [ "${#FAILED[@]}" -eq 0 ]; then
+		rm -rf "$SCRATCH_DIR"
+	else
+		log "FAILED fixtures present -- leaving $SCRATCH_DIR in place for inspection"
+	fi
 
 	echo ""
 	log "==================== summary ===================="

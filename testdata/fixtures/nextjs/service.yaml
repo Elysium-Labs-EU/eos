@@ -1,0 +1,7 @@
+name: "nextjs"
+command: "npm start"
+port: 3001
+# runtime:
+#   type: "nodejs"
+#   path: "/root/.nvm/versions/node/v24.14.0/bin"
+env_file: ".env"
