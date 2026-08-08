@@ -20,6 +20,8 @@ Before touching any function or method, read [STYLE.md](STYLE.md) for the coding
 
 Open an issue before starting work on a non-trivial change. This avoids duplicate effort and makes sure the direction fits the project. Small fixes and documentation improvements can go straight to a PR.
 
+Found a security vulnerability instead? Don't open a public issue — see [SECURITY.md](SECURITY.md).
+
 Branch from `main` and name the branch after the change: `feat/service-labels`, `fix/restart-backoff`, `test/daemon-lifecycle`.
 
 ## Running Tests
