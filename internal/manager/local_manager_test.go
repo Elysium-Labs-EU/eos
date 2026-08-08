@@ -714,18 +714,36 @@ func TestDoesEnvVarAlreadyExist(t *testing.T) {
 	}
 }
 
-func TestStopServiceWithSignal_stopped(t *testing.T) {
+// TestStopServiceWithSignal_deadHistoryRows proves a row whose recorded
+// state was already terminal (Stopped/Failed) and is reconfirmed genuinely
+// dead is left untouched: liveness is still actively checked (closing eos
+// issue #215's second gate — previously lmIsSignalableState skipped these
+// rows before any liveness check ever ran), but since nothing changed, the
+// row is not rewritten into AlreadyDead/pending/errored. Doing so would
+// refresh its StoppedAt to "now" on every future stop call across a
+// service's entire accumulated history, corrupting when it actually stopped.
+// See TestStopServiceWithSignal_failedStateStillAlive for the case that
+// matters: a terminal-state row whose PGID is unexpectedly still alive.
+func TestStopServiceWithSignal_deadHistoryRows(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	name := "signal-stopped-svc"
+	const stoppedPGID = 71001
+	const failedPGID = 71002
+	if isProcessAlive(stoppedPGID) {
+		t.Skipf("pgid %d is alive — cannot test dead path", stoppedPGID)
+	}
+	if isProcessAlive(failedPGID) {
+		t.Skipf("pgid %d is alive — cannot test dead path", failedPGID)
+	}
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71001, 0, name, types.ProcessStateStopped); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), stoppedPGID, 0, name, types.ProcessStateStopped); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry stopped: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 71002, 0, name, types.ProcessStateFailed); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), failedPGID, 0, name, types.ProcessStateFailed); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry failed: %v", err)
 	}
 
@@ -734,7 +752,7 @@ func TestStopServiceWithSignal_stopped(t *testing.T) {
 		t.Fatalf("stopServiceWithSignal: %v", err)
 	}
 	if len(result.Pending)+len(result.Errored)+len(result.AlreadyDead) != 0 {
-		t.Errorf("expected empty result, got %+v", result)
+		t.Errorf("expected empty result (already-terminal, still-dead rows left untouched), got %+v", result)
 	}
 }
 
@@ -820,15 +838,205 @@ func TestStopServiceWithSignal_reusedPGID(t *testing.T) {
 	}
 }
 
+// TestStopServiceWithSignal_leaderReapedChildSurvives reproduces eos issue
+// #215: eos launches every service through a /bin/sh -c "..." wrapper, and
+// wrapper commands like `npm start` commonly exit shortly after spawning the
+// real long-running child, which keeps running under the same PGID after the
+// wrapper (the group leader, whose own pid is the stored PGID) has been
+// reaped. Before the fix, IsAliveMatching read this as "already dead" (the
+// leader's own StartTime lookup failed) and stopServiceWithSignal never sent
+// a signal at all — the real process kept running while eos recorded a clean
+// stop.
+func TestStopServiceWithSignal_leaderReapedChildSurvives(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	wrapper := exec.Command("/bin/sh", "-c", "sleep 30 & exit 0")
+	wrapper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("starting wrapper: %v", err)
+	}
+	pgid := wrapper.Process.Pid
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	})
+
+	startedAtTicks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	// Reap the wrapper; the backgrounded sleep it spawned is reparented and
+	// keeps running under the same pgid.
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("wait for wrapper: %v", err)
+	}
+
+	name := "leader-reaped-svc"
+	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, startedAtTicks, name, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	result, err := mgr.stopServiceWithSignal(name, syscall.SIGTERM)
+	if err != nil {
+		t.Fatalf("stopServiceWithSignal: %v", err)
+	}
+	if _, ok := result.AlreadyDead[pgid]; ok {
+		t.Errorf("pgid %d landed in AlreadyDead — signal was skipped, reproducing issue #215", pgid)
+	}
+	if _, ok := result.Pending[pgid]; !ok {
+		t.Errorf("expected pgid %d in Pending (signal actually sent), got %+v", pgid, result)
+	}
+	if len(result.Errored) != 0 {
+		t.Errorf("expected no errored, got %+v", result.Errored)
+	}
+}
+
+// TestStopServiceWithSignal_failedStateStillAlive closes eos issue #215's
+// second gate: a process_history row the health monitor (or a stale
+// reconciliation) recorded Failed can still point at a genuinely live
+// process. Before this fix, lmIsSignalableState returned false for
+// ProcessStateFailed and lmSignalHistoryEntry returned immediately — neither
+// IsAliveMatching nor syscall.Kill was ever reached, so a real, running
+// process recorded as Failed could never be signaled again by any future
+// eos stop, eos remove, or restart-loop attempt. This is exactly the state
+// the original bug report's live reproduction was in.
+func TestStopServiceWithSignal_failedStateStillAlive(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	proc := exec.Command("/bin/sh", "-c", "sleep 30")
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(proc.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = proc.Process.Wait()
+	})
+
+	startedAtTicks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "failed-still-alive-svc"
+	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	// A row recorded Failed — but the process it points at is, in fact,
+	// still running.
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, startedAtTicks, name, types.ProcessStateFailed); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	result, err := mgr.stopServiceWithSignal(name, syscall.SIGTERM)
+	if err != nil {
+		t.Fatalf("stopServiceWithSignal: %v", err)
+	}
+	if _, ok := result.AlreadyDead[pgid]; ok {
+		t.Errorf("pgid %d landed in AlreadyDead — Failed state skipped the liveness check, reproducing issue #215's second gate", pgid)
+	}
+	if _, ok := result.Pending[pgid]; !ok {
+		t.Errorf("expected pgid %d in Pending (signal actually sent), got %+v", pgid, result)
+	}
+	if len(result.Errored) != 0 {
+		t.Errorf("expected no errored, got %+v", result.Errored)
+	}
+}
+
+// TestRestartService_failedStateStillAlive proves the restart flow shares the
+// same fix: RestartService's stop-before-restart step (lmStopForRestart ->
+// stopServiceLocked -> stopServiceWithSignal) must also kill a Failed-marked
+// but genuinely live old instance before launching the new one, not leave it
+// running alongside the freshly started replacement.
+func TestRestartService_failedStateStillAlive(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	proc := exec.Command("/bin/sh", "-c", "sleep 30")
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	oldPGID, pgidErr := syscall.Getpgid(proc.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-oldPGID, syscall.SIGKILL)
+		_, _ = proc.Process.Wait()
+	})
+
+	startedAtTicks, ticksErr := procutil.StartTime(oldPGID)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "restart-failed-alive-svc"
+	dir := filepath.Join(tempDir, name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := &types.ServiceConfig{Name: name, Command: "sleep 30"}
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	entry, err := NewServiceCatalogEntry(name, dir, "service.yaml")
+	if err != nil {
+		t.Fatalf("catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("register service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), name); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), oldPGID, startedAtTicks, name, types.ProcessStateFailed); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	newPGID, err := mgr.RestartService(t.Context(), name, time.Second, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("RestartService: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-newPGID, syscall.SIGKILL) })
+
+	if procutil.IsAlive(oldPGID) {
+		t.Errorf("old pgid %d (recorded Failed) should have been killed by restart, not left running", oldPGID)
+	}
+}
+
+// TestStopService_noLiveProcesses proves a Stopped-state row with a dead PGID
+// is actively re-checked (closing issue #215's second gate) and, since
+// nothing changed, left untouched rather than rewritten into the result —
+// see lmSignalHistoryEntry's doc comment for why re-touching an
+// already-terminal, still-dead row's StoppedAt on every stop call would
+// corrupt its history.
 func TestStopService_noLiveProcesses(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 
 	name := "stop-nolive-svc"
+	const deadPGID = 72001
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test dead path", deadPGID)
+	}
 	if err := db.RegisterServiceInstance(t.Context(), name); err != nil {
 		t.Fatalf("RegisterServiceInstance: %v", err)
 	}
-	if _, err := db.RegisterProcessHistoryEntry(t.Context(), 72001, 0, name, types.ProcessStateStopped); err != nil {
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, name, types.ProcessStateStopped); err != nil {
 		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
 	}
 
