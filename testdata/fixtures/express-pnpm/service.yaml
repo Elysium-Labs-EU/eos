@@ -1,0 +1,6 @@
+name: "express-pnpm"
+command: "node dist/index.js"
+# port:
+runtime:
+  type: "nodejs"
+  # path: unset -- resolves via PATH

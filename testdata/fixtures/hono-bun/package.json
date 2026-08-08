@@ -1,0 +1,11 @@
+{
+  "name": "hono-bun-webhook",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --hot run index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  }
+}

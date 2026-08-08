@@ -1,0 +1,12 @@
+{
+  "name": "express-bun-webhook",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --hot run index.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "@types/express": "^5.0.6"
+  }
+}

@@ -3,7 +3,7 @@
 #
 # Exercises eos against real language-stack processes (Next.js, Vite,
 # Express, Hono over npm/pnpm/bun) instead of the synthetic stub commands
-# used by cmd/*_e2e_test.go. For each fixture under test-files-vps/ it
+# used by cmd/*_e2e_test.go. For each fixture under testdata/fixtures/ it
 # registers the service, starts it, asserts it's actually alive (a real
 # HTTP response on its port, for fixtures that are servers), checks logs
 # were captured, stops it, and asserts the process is gone. This is the
@@ -15,7 +15,7 @@
 #
 # Env vars:
 #   EOS_BIN            path to the eos binary to install (default: dist/eos-linux-<arch>)
-#   FIXTURES_DIR        path to the fixture apps (default: test-files-vps, relative to repo root)
+#   FIXTURES_DIR        path to the fixture apps (default: testdata/fixtures, relative to repo root)
 #   SCRATCH_DIR          VM-local dir fixtures are copied into before install/build
 #                        (default: $HOME/eos-fixture-test). Never operate on
 #                        FIXTURES_DIR directly -- it's the host's $PWD shared into
@@ -45,7 +45,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
 EOS_BIN="${EOS_BIN:-$REPO_ROOT/dist/eos-linux-$ARCH}"
-FIXTURES_DIR="${FIXTURES_DIR:-$REPO_ROOT/test-files-vps}"
+FIXTURES_DIR="${FIXTURES_DIR:-$REPO_ROOT/testdata/fixtures}"
 SCRATCH_DIR="${SCRATCH_DIR:-$HOME/eos-fixture-test}"
 export EOS_BASE_DIR="$SCRATCH_DIR/.eos-state"
 
