@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
@@ -19,7 +20,7 @@ type apiDaemonLogsResult struct {
 
 func newAPIDaemonCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	daemonCmd := &cobra.Command{
-		Use:           "daemon",
+		Use:           cmdnames.Daemon,
 		Short:         "Machine-readable daemon interface",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -50,7 +51,7 @@ func newAPIDaemonLogsCmd(getConfig func() (string, *config.SystemConfig, useruti
 	var lines int
 
 	cmd := &cobra.Command{
-		Use:   "logs",
+		Use:   cmdnames.DaemonLogs,
 		Short: "Return daemon logs as JSON",
 		Long: `Return the last N lines of the daemon log as a JSON array.
 

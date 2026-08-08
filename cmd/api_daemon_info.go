@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
@@ -28,7 +29,7 @@ type apiDaemonInfoResult struct {
 
 func newAPIDaemonInfoCmd(getConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "info",
+		Use:   cmdnames.DaemonInfo,
 		Short: "Return daemon status and configuration as JSON",
 		Long: `Return the daemon's supervisor mode and configuration. For a standalone daemon, includes live running status, PID, socket, and log paths. For a systemd-managed daemon, includes live running status (via a base-dir-scoped socket probe, not the host-global "systemctl is-active") and PID when running. For a launchd-managed daemon, only the supervisor mode and unit scope are returned — use the native tool (launchctl) for runtime state.
 

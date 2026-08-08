@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -99,7 +100,7 @@ func printDaemonDownStartWarning(cmd *cobra.Command) {
 	)
 	cmd.PrintErrf(fmtIndentLabelMsg,
 		ui.TextMuted.Render("start the daemon with:"),
-		ui.TextCommand.Render("eos daemon start"),
+		ui.TextCommand.Render(cmdnames.HintDaemonStart),
 	)
 }
 
@@ -127,6 +128,6 @@ func printDaemonDownBanner(cmd *cobra.Command, daemon *config.DaemonConfig) {
 	)
 	cmd.PrintErrf(fmtIndentLabelMsg,
 		ui.TextMuted.Render("start it with:"),
-		ui.TextCommand.Render("eos daemon start"),
+		ui.TextCommand.Render(cmdnames.HintDaemonStart),
 	)
 }

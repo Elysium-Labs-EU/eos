@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +25,7 @@ func newAPILogsCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	var errorLog bool
 
 	cmd := &cobra.Command{
-		Use:   "logs <name>",
+		Use:   cmdnames.UseLogs,
 		Short: "Return service logs as JSON",
 		Long: `Return the last N lines of a service log as a JSON array.
 

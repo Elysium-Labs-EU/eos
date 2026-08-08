@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -11,7 +12,7 @@ import (
 
 func newValidateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "validate <path>",
+		Use:   cmdnames.UseValidate,
 		Short: "Validate a service configuration file",
 		Long:  `Validate a service.yaml without registering it or requiring the daemon to run.`,
 		Example: `  eos validate ./path/to/project            # find service.yaml automatically in the directory

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ func newAPIDaemonStopCmd(getConfig func() (string, *config.SystemConfig, useruti
 // tests can inject a fakeDaemonController instead of a real config/process stack.
 func newAPIDaemonStopCmdWithController(getCtrl func() (DaemonController, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop",
+		Use:   cmdnames.DaemonStop,
 		Short: "Stop the running daemon; always outputs JSON",
 		Long: `Stop the running daemon process. If managed by systemd, delegates to systemctl stop (requires root). Otherwise sends a termination signal directly. Exits cleanly if the daemon is not running.
 

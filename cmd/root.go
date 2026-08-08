@@ -15,6 +15,7 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/logutil"
@@ -47,7 +48,7 @@ func cleanupTestDaemonTempDirs() {
 
 func newTestRootCmd(mgr manager.ServiceManager) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "eos",
+		Use:   cmdnames.Root,
 		Short: "A service supervisor CLI tool",
 		Long: `eos - Test version
 
@@ -176,7 +177,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	rootCmd = &cobra.Command{
-		Use:   "eos",
+		Use:   cmdnames.Root,
 		Short: "A service supervisor CLI tool",
 		Long: fmt.Sprintf(`eos %s
 

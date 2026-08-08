@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
@@ -27,7 +28,7 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 	var interval int
 
 	cmd := &cobra.Command{
-		Use:   "status",
+		Use:   cmdnames.Status,
 		Short: "Show the status of all services",
 		Long:  `Display the current status of all configured services including their running state, process IDs, and health information.`,
 		Example: `  eos status
@@ -79,7 +80,7 @@ func newStatusCmd(getManager func() manager.ServiceManager, warnDaemonDown func(
 
 func renderWatchFrame(cmd *cobra.Command, mgr manager.ServiceManager, interval int, checkInterval time.Duration) {
 	cmd.Print("\033[2J\033[H")
-	cmd.Printf("Every %ds: eos status    %s\n\n", interval, time.Now().Format("15:04:05"))
+	cmd.Printf("Every %ds: %s    %s\n\n", interval, cmdnames.HintStatus, time.Now().Format("15:04:05"))
 	printStatusTable(cmd, mgr, checkInterval)
 }
 
@@ -146,7 +147,7 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), "service file contains different name than registered.")
 		cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 			ui.TextMuted.Render("run:"),
-			ui.TextCommand.Render("eos update <service-name> <new-path>"),
+			ui.TextCommand.Render(cmdnames.HintUpdateArgs),
 			ui.TextMuted.Render("to update the service"),
 		)
 	}
@@ -259,7 +260,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInter
 
 	if len(registeredServices) == 0 {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "no services are registered "+daemonIdentity())
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("eos add <path>") + ui.TextMuted.Render(" to register a service") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(cmdnames.HintAdd) + ui.TextMuted.Render(" to register a service") + "\n")
 		return
 	}
 

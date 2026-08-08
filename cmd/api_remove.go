@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -16,7 +17,7 @@ type apiRemoveResult struct {
 
 func newAPIRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <name>",
+		Use:   cmdnames.UseRemove,
 		Short: "Unregister a service; always outputs JSON",
 		Long: `Unregisters a service and removes its instance record. Does not stop a running process.
 

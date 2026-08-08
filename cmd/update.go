@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -12,7 +13,7 @@ import (
 
 func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:     "update <service-name> <new-path>",
+		Use:     cmdnames.UseUpdate,
 		Short:   "Update a registered service's path",
 		Long:    `Update the directory path for an existing registered service.`,
 		Example: `  eos update cms /new/path/to/cms`,
@@ -41,12 +42,12 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 				cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "service isn't registered.")
 				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("run:"),
-					ui.TextCommand.Render("eos add <path>"),
+					ui.TextCommand.Render(cmdnames.HintAdd),
 					ui.TextMuted.Render("to register service"),
 				)
 				cmd.PrintErrf(fmtIndentLabelTwoMsgLn,
 					ui.TextMuted.Render("run:"),
-					ui.TextCommand.Render("eos status"),
+					ui.TextCommand.Render(cmdnames.HintStatus),
 					ui.TextMuted.Render("to view registered services"),
 				)
 				return helpers.ErrCommandFailed

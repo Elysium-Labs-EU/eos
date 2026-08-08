@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +21,7 @@ type apiValidateResult struct {
 
 func newAPIValidateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "validate <path>",
+		Use:   cmdnames.UseValidate,
 		Short: "Validate a service config file; always outputs JSON",
 		Long: `Validate a service.yaml without registering it or requiring the daemon.
 

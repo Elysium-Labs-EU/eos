@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -51,7 +52,7 @@ type initCmdRuntimeProbe struct {
 
 func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "init [dir]",
+		Use:   cmdnames.Init + " [dir]",
 		Short: "Generate a service.yaml for a project",
 		Long:  `Interactively generate a service.yaml in the target directory. Detects runtime from project files to prefill defaults.`,
 		Example: `  eos init              # generate service.yaml in current directory
@@ -178,7 +179,7 @@ func initCmdWriteServiceFile(cmd *cobra.Command, outputPath string, cfg initServ
 
 func initCmdPrintSuccess(cmd *cobra.Command, outputPath string) {
 	cmd.Printf("\n%s %s\n\n", ui.LabelSuccess.Render("created"), outputPath)
-	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("next:"), ui.TextCommand.Render(fmt.Sprintf("eos run -f %s", outputPath)))
+	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("next:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintRunFile, outputPath)))
 }
 
 func promptLine(cmd *cobra.Command, r *bufio.Reader, label, defaultVal string) string {

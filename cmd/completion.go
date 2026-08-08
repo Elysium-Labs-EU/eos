@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 func newCompletionCmd(root *cobra.Command) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "completion",
+		Use:   cmdnames.Completion,
 		Short: "Set up shell tab completion",
 		Long: `Set up tab completion so that eos commands and service names complete on <Tab>.
 

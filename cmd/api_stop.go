@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ func newAPIStopCmd(getManager func() manager.ServiceManager, getConfig func() *c
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "stop <name>",
+		Use:   cmdnames.UseStop,
 		Short: "Stop a service; always outputs JSON",
 		Long: `Stop all processes for a registered service.
 

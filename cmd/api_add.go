@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,7 @@ type apiAddResult struct {
 
 func newAPIAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <path>",
+		Use:   cmdnames.UseAdd,
 		Short: "Register a service from a directory; always outputs JSON",
 		Long: `Register a service by providing the path to a directory containing a service configuration.
 

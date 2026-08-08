@@ -26,6 +26,7 @@ import (
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
@@ -199,7 +200,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 	var ctrl DaemonController // closed over by all subcommands below
 
 	systemCmd := &cobra.Command{
-		Use:   "system",
+		Use:   cmdnames.System,
 		Short: "Manage the eos system settings",
 		Long:  `Manage eos system settings, check for updates, and inspect runtime configuration.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -208,7 +209,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 	}
 
 	infoCmd := &cobra.Command{
-		Use:           "info",
+		Use:           cmdnames.SystemInfo,
 		Short:         "See active system information and configurations",
 		Long:          `Display active EOS configuration including install paths, daemon settings, health check limits, and shutdown grace period.`,
 		Example:       `  eos system info`,
@@ -220,7 +221,7 @@ func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *co
 	}
 
 	startupCmdDef := &cobra.Command{
-		Use:   "startup",
+		Use:   cmdnames.SystemStartup,
 		Short: "Enable eos to start automatically on boot",
 		Long: `Install a systemd unit (Linux), OpenRC init script (Linux, non-systemd), or launchd plist (macOS) for eos and enable it to run on boot.
 
@@ -261,7 +262,7 @@ itself.`,
 	startupCmdDef.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	unstartupCmdDef := &cobra.Command{
-		Use:   "unstartup",
+		Use:   cmdnames.SystemUnstartup,
 		Short: "Disable eos from starting automatically on boot",
 		Long: `Remove the systemd unit (Linux), OpenRC init script (Linux, non-systemd), or launchd plist (macOS) for eos and disable it from running on boot.
 
@@ -280,7 +281,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	unstartupCmdDef.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	updateCmd := &cobra.Command{
-		Use:           "update",
+		Use:           cmdnames.SystemUpdate,
 		Short:         "Apply new update if available",
 		Long:          `Check GitHub for a newer eos release and optionally download and install it. Uses SHA256 checksum validation and backs up the current binary before replacing it.`,
 		Example:       "  eos system update        # check and apply latest stable release\n  eos system update --pre  # include pre-releases",
@@ -293,7 +294,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	updateCmd.Flags().Bool("pre", false, "includes pre-releases in update check")
 
 	uninstallCmd := &cobra.Command{
-		Use:   "uninstall",
+		Use:   cmdnames.SystemUninstall,
 		Short: "Remove eos from this system",
 		Long:  `Stops all running services, removes the eos binary and configuration, and cleans up the install directory. Prompts for confirmation unless --yes is passed.`,
 		Example: `  eos system uninstall        # interactive uninstall with confirmation prompt
@@ -307,7 +308,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 	uninstallCmd.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
 
 	versionCmd := &cobra.Command{
-		Use:     "version",
+		Use:     cmdnames.SystemVersion,
 		Short:   "Get version of system",
 		Long:    `Print the current eos version, git commit hash, and build date. Also flags version drift against the running daemon and the latest published release, and suggests the fix.`,
 		Example: `  eos system version`,
@@ -752,7 +753,7 @@ func versionDriftLines(v versionDriftInfo) []string {
 	lines = append(lines, "")
 
 	if v.latestDrift() {
-		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos system update")))
+		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintSystemUpdate)))
 	}
 	if v.daemonDrift() {
 		lines = append(lines, fmt.Sprintf("  %s %s", ui.TextMuted.Render("note:"), "the running daemon won't pick up a binary update until it's restarted (eos daemon stop && eos daemon start); as root, 'eos system update' only restarts the invoking user's daemon, so other users' daemons stay stale"))
@@ -911,7 +912,7 @@ func prepareSystemUnitDir(cmd *cobra.Command, systemdDir, fullTargetName string)
 		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), fmt.Sprintf("system unit file already exists for user %q, re-running will overwrite and re-enable it", existingUser))
 	} else {
 		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("system unit file already configured for user %q, overwriting will transfer daemon ownership to %q and break their setup", existingUser, effectiveUser.Username))
-		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s to remove the current startup config first, or ask user %q to do so", ui.TextCommand.Render("eos system unstartup"), existingUser))
+		cmd.Printf(fmtLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("run %s to remove the current startup config first, or ask user %q to do so", ui.TextCommand.Render(cmdnames.HintSystemUnstartup), existingUser))
 	}
 	return true
 }
@@ -1817,7 +1818,7 @@ func downloadAndVerifyBinary(ctx context.Context, cmd *cobra.Command, result Upd
 
 	if err := validateDigest(expectedChecksum, binary); err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("checksum validation failed: %v", err))
-		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render("eos system update") + ui.TextMuted.Render(" to retry the update") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render(msgRunHint) + ui.TextCommand.Render(cmdnames.HintSystemUpdate) + ui.TextMuted.Render(" to retry the update") + "\n")
 		cleanupTempDir(cmd, tempDir)
 		return nil, "", helpers.ErrCommandFailed
 	}

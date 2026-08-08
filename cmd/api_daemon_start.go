@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ func newAPIDaemonStartCmd(getConfig func() (string, *config.SystemConfig, userut
 // tests can inject a fakeDaemonController instead of a real config/process stack.
 func newAPIDaemonStartCmdWithController(getCtrl func() (DaemonController, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "start",
+		Use:   cmdnames.DaemonStart,
 		Short: "Start the daemon; always outputs JSON",
 		Long: `Start the daemon process.
 
