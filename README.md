@@ -72,6 +72,8 @@ eos status
 
 `eos system` covers boot startup, updates, uninstall, and version; run `eos system --help` for the full list.
 
+`eos config` covers viewing, scaffolding, and validating `~/.eos/config.yaml` (see [Configuration](#configuration)); run `eos config --help` for the full list.
+
 ## Zero-downtime Reload
 
 `eos reload <name>` swaps a running service for a fresh instance without dropping connections. eos starts the new instance alongside the old one, waits for it to pass the health check, then drains the old one. If the new instance never becomes healthy the old one keeps serving, so a broken deploy is a no-op instead of an outage. This is the difference from `eos run`, which restarts by stopping then starting and drops the listening socket in between.
@@ -134,6 +136,15 @@ Remove with `eos system unstartup`.
 eos reads `~/.eos/config.yaml` on startup. All fields are optional.
 
 ```yaml
+sinks:
+  prod-loki:
+    type: loki
+    mode: push
+    address: "http://loki:3100"
+telemetry:
+  enable: false
+  endpoint: ""
+  insecure: false
 health:
   checkIntervalMs: 2000
   memSampleIntervalMs: 30000
@@ -150,6 +161,14 @@ log:
 ```
 
 Environment variables take precedence over defaults: `EOS_BASE_DIR`, `EOS_INSTALL_DIR`, `EOS_SYSTEMD_TARGET_DIR`, `EOS_VERBOSE`, `HEALTH_CHECK_INTERVAL_MS`, `HEALTH_MEM_SAMPLE_INTERVAL_MS`, `HEALTH_BACKOFF_BASE_MS`, `HEALTH_BACKOFF_MAX_MS`, `HEALTH_TIMEOUT_ENABLE`, `HEALTH_RESTART_COUNTER_RESET_WINDOW`, `SHUTDOWN_GRACE_PERIOD`.
+
+`eos config` manages this file directly, so you don't need to hand-write it from scratch or read this README to know it exists:
+
+```bash
+eos config init      # scaffold ~/.eos/config.yaml, fully commented at eos's own defaults
+eos config show      # print the effective config: file values merged over defaults
+eos config validate  # check the file without starting the daemon
+```
 
 ## Log Sinks
 
