@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
@@ -13,7 +14,7 @@ import (
 
 func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:               "remove <service-name>",
+		Use:               cmdnames.UseRemove,
 		Short:             "Remove a service from the registry",
 		Long:              `Unregisters a service and removes its instance if one exists. Does not stop the service process if it is currently running.`,
 		Example:           `  eos remove cms    # unregisters cms; does not stop a running process`,
@@ -58,7 +59,7 @@ func removeCmdEnsureRegistered(cmd *cobra.Command, mgr manager.ServiceManager, s
 
 	if !exists {
 		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintAdd), ui.TextMuted.Render("to register it"))
 		return helpers.ErrCommandFailed
 	}
 
@@ -77,7 +78,7 @@ func removeCmdConfirmIfRunning(cmd *cobra.Command, mgr manager.ServiceManager, s
 	}
 
 	cmd.Printf("%s %s %s %s\n\n", ui.LabelWarning.Render("warning"), ui.TextBold.Render(serviceName), "is currently", string(history.State))
-	cmd.Printf(fmtLabelTwoMsg, ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf("eos stop %s", serviceName)), ui.TextMuted.Render("to stop it first"))
+	cmd.Printf(fmtLabelTwoMsg, ui.TextMuted.Render("tip:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintStop, serviceName)), ui.TextMuted.Render("to stop it first"))
 	if !helpers.PromptConfirm(cmd, "remove anyway? (y/n):") {
 		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), "remove aborted")
 		return helpers.ErrCommandFailed
@@ -128,5 +129,5 @@ func removeCmdRemoveCatalogEntry(cmd *cobra.Command, mgr manager.ServiceManager,
 
 func removeCmdPrintSuccess(cmd *cobra.Command, serviceName string) {
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), "unregistered")
-	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("note:"), ui.TextCommand.Render("eos status"), ui.TextMuted.Render("to view registered services"))
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("note:"), ui.TextCommand.Render(cmdnames.HintStatus), ui.TextMuted.Render("to view registered services"))
 }

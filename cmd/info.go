@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
@@ -16,7 +17,7 @@ import (
 
 func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:               "info",
+		Use:               cmdnames.UseInfo,
 		Short:             "Shows info on the service",
 		Long:              `Show detailed information about a registered service including its process state, runtime statistics, log file paths, and full configuration.`,
 		Example:           `  eos info cms`,

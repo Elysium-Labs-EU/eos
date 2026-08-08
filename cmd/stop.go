@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
@@ -15,7 +16,7 @@ func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *conf
 	var forceQuit bool
 
 	cmd := &cobra.Command{
-		Use:   "stop <service-name>",
+		Use:   cmdnames.UseStop,
 		Short: "Stop all processes for a service",
 		Long: `Stops all the processes for a registered service.
 
@@ -82,7 +83,7 @@ func stopCmdEnsureRegistered(cmd *cobra.Command, mgr manager.ServiceManager, ser
 	}
 	if !exists {
 		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintAdd), ui.TextMuted.Render("to register it"))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -170,7 +171,7 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 			cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(fmt.Sprintf("PGID %d:", erroredPGID)), errored)
 		}
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("kill -9 <pgid>") + ui.TextMuted.Render(" to use a PGID listed above for manual kill") + "\n")
-		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)) + ui.TextMuted.Render(" to view service info") + "\n")
+		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintInfo, serviceName)) + ui.TextMuted.Render(" to view service info") + "\n")
 		return
 	}
 

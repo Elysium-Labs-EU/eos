@@ -27,8 +27,6 @@ const (
 	headerUserAgent         = "User-Agent"
 	systemctlDaemonReload   = "daemon-reload"
 	logRunningSystemctl     = "running: systemctl %s"
-	eosDaemonLogsCmdName    = "eos daemon logs"
 	rcServiceCmdName        = "rc-service"
-	eosRunFlagPathExample   = "eos run -f <path>"
 	flagLogToFileAndConsole = "log-to-file-and-console"
 )

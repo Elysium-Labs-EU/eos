@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,7 @@ type apiUpdateResult struct {
 
 func newAPIUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "update <name> <new-path>",
+		Use:   cmdnames.UseUpdate,
 		Short: "Update a service's directory path; always outputs JSON",
 		Long: `Update the directory path for an existing registered service.
 

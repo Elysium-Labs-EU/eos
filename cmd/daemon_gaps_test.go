@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
@@ -727,7 +728,7 @@ func TestRestartDaemonStandaloneIfConfirmed_ForkFails(t *testing.T) {
 	if !strings.Contains(combined, "already running") {
 		t.Errorf("expected the underlying 'already running' cause, got: %s", combined)
 	}
-	if !strings.Contains(combined, eosDaemonLogsCmdName) {
+	if !strings.Contains(combined, cmdnames.HintDaemonLogs) {
 		t.Errorf("expected the daemon-logs hint, got: %s", combined)
 	}
 }

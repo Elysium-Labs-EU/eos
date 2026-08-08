@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -13,7 +14,7 @@ import (
 
 func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <path>",
+		Use:   cmdnames.UseAdd,
 		Short: "Register a service from a directory",
 		Long: `Register a service by providing the path to a directory containing a service configuration.
 
@@ -59,7 +60,7 @@ hand with "eos stop".`,
 
 			if errors.Is(err, manager.ErrServiceAlreadyRegistered) {
 				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(config.Name), "is already registered")
-				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos remove %s", config.Name)), ui.TextMuted.Render("first to re-register"))
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintRemove, config.Name)), ui.TextMuted.Render("first to re-register"))
 				return helpers.ErrCommandFailed
 			}
 			if errors.Is(err, manager.ErrServiceNameCaseConflict) {
@@ -75,8 +76,8 @@ hand with "eos stop".`,
 			cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(config.Name), "registered")
 			cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("path:"), absPath)
 			cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("config:"), filepath.Base(yamlFile))
-			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", config.Name)), ui.TextMuted.Render("to start the service"))
-			cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
+			cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintRun, config.Name)), ui.TextMuted.Render("to start the service"))
+			cmd.Printf("      %s\n\n", ui.TextCommand.Render(cmdnames.HintStatus))
 			return nil
 		},
 	}

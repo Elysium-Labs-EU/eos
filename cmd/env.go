@@ -7,15 +7,18 @@ import (
 	"strings"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
 
+const envUse = cmdnames.Env + " <service> [set KEY=VALUE|unset KEY]"
+
 func newEnvCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "env <service> [set KEY=VALUE|unset KEY]",
+		Use:   envUse,
 		Short: "Inspect or edit a service's environment variables",
 		Long: `Prints the resolved environment variables for a registered service, sourced
 from its env_file. Reads directly from disk, so it reflects the current
@@ -41,7 +44,7 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 			}
 			if !exists {
 				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintAdd), ui.TextMuted.Render("to register it"))
 				return helpers.ErrCommandFailed
 			}
 
@@ -66,7 +69,7 @@ Use "set KEY=VALUE" to add or update a variable in the service's env_file, or
 			case len(args) == 3 && args[1] == "unset":
 				return runEnvUnset(cmd, config, registeredService.DirectoryPath, serviceName, args[2])
 			default:
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), `usage: eos env <service> [set KEY=VALUE|unset KEY]`)
+				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), "usage: "+cmdnames.Root+" "+envUse)
 				return helpers.ErrCommandFailed
 			}
 		},

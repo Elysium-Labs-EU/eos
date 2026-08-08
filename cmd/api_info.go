@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/spf13/cobra"
@@ -36,7 +37,7 @@ type apiInfoProcess struct {
 
 func newAPIInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <name>",
+		Use:   cmdnames.UseInfo,
 		Short: "Return service information as JSON",
 		Long: `Return detailed information about a registered service including its process state, runtime statistics, log file paths, and full configuration.
 

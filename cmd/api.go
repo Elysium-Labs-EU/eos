@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
@@ -9,7 +10,7 @@ import (
 
 func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, getDaemonConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
 	apiCmd := &cobra.Command{
-		Use:           "api",
+		Use:           cmdnames.API,
 		Short:         "Machine-readable JSON interface",
 		SilenceErrors: true,
 		SilenceUsage:  true,

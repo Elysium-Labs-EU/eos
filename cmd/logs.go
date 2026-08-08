@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/charmbracelet/lipgloss"
@@ -32,7 +33,7 @@ func newLogsCmd(getManager func() manager.ServiceManager, warnDaemonDown func(*c
 	var follow bool
 
 	cmd := &cobra.Command{
-		Use:   "logs",
+		Use:   cmdnames.UseLogs,
 		Short: "View logs for a registered service",
 		Long: `Stream or display logs for a registered service. Shows both stdout and stderr logs interleaved by default.
 Use --output for stdout only, --error for stderr only, --lines to control history depth, and --follow to tail in real time.
@@ -93,7 +94,7 @@ func logsCmdCheckRegistered(cmd *cobra.Command, mgr manager.ServiceManager, serv
 	}
 	if !exists {
 		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintAdd), ui.TextMuted.Render("to register it"))
 		return helpers.ErrCommandFailed
 	}
 	return nil
@@ -107,7 +108,7 @@ func logsCmdCheckStarted(cmd *cobra.Command, mgr manager.ServiceManager, service
 	}
 	if processHistoryEntry == nil {
 		cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "has never been started")
-		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
+		cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintRun, serviceName)), ui.TextMuted.Render("to start it"))
 		return helpers.ErrCommandFailed
 	}
 	return nil

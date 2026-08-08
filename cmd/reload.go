@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
@@ -36,7 +37,7 @@ const (
 
 func newReloadCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "reload <service-name>",
+		Use:   cmdnames.UseReload,
 		Short: "Zero-downtime reload of a service",
 		Long: `Reload a running service without dropping connections.
 
@@ -73,7 +74,7 @@ instance untouched.`,
 			}
 			if !exists {
 				cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not registered")
-				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render("eos add <path>"), ui.TextMuted.Render("to register it"))
+				cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(cmdnames.HintAdd), ui.TextMuted.Render("to register it"))
 				return helpers.ErrCommandFailed
 			}
 
@@ -93,13 +94,13 @@ instance untouched.`,
 			if err != nil {
 				if errors.Is(err, manager.ErrServiceNotRunning) {
 					cmd.PrintErrf(fmtLabelTwoMsg, ui.LabelError.Render("error"), ui.TextBold.Render(serviceName), "is not running")
-					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos run %s", serviceName)), ui.TextMuted.Render("to start it"))
+					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintRun, serviceName)), ui.TextMuted.Render("to start it"))
 					return helpers.ErrCommandFailed
 				}
 				if errors.Is(err, manager.ErrReloadNotReady) {
 					cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("new instance never became healthy: %v", err))
 					cmd.PrintErrf(fmtIndentLabelTwoMsgLn, ui.TextMuted.Render("note:"), ui.TextBold.Render(serviceName), "kept the old instance running")
-					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to see why it failed"))
+					cmd.PrintErrf(fmtIndentLabelTwoMsg, ui.TextMuted.Render("run:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintLogs, serviceName)), ui.TextMuted.Render("to see why it failed"))
 					return helpers.ErrCommandFailed
 				}
 				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("reloading service: %v", err))
@@ -116,7 +117,7 @@ instance untouched.`,
 
 func printReloadSuccessOutput(cmd *cobra.Command, serviceName string, result manager.ReloadResult) {
 	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), fmt.Sprintf("reloaded (PGID %d to %d)", result.OldPGID, result.NewPGID))
-	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf("eos info %s", serviceName)), ui.TextMuted.Render("to view service info"))
-	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf("eos logs %s", serviceName)), ui.TextMuted.Render("to view logs"))
-	cmd.Printf("      %s\n\n", ui.TextCommand.Render("eos status"))
+	cmd.Printf("%s %s %s\n", ui.LabelInfo.Render("note:"), ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintInfo, serviceName)), ui.TextMuted.Render("to view service info"))
+	cmd.Printf("      %s %s\n", ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintLogs, serviceName)), ui.TextMuted.Render("to view logs"))
+	cmd.Printf("      %s\n\n", ui.TextCommand.Render(cmdnames.HintStatus))
 }

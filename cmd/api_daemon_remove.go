@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/userutil"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ func newAPIDaemonRemoveCmd(getConfig func() (string, *config.SystemConfig, useru
 // tests can inject a fakeDaemonController instead of a real config/process stack.
 func newAPIDaemonRemoveCmdWithController(getCtrl func() (DaemonController, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove",
+		Use:   cmdnames.DaemonRemove,
 		Short: "Remove a stopped daemon; always outputs JSON",
 		Long: `Remove daemon files. If managed by systemd, removes the unit file only (run 'eos system unstartup' to fully undo startup). Otherwise removes all daemon files; the daemon must be stopped first.
 
