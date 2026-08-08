@@ -98,6 +98,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newDiagnoseCmd())
 
 	testDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		// MkdirTemp (not TempDir+fixed names) so the pid/socket files live under a
@@ -208,6 +209,7 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newUpdateCmd(getManager))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newDiagnoseCmd())
 
 	getDaemonConfig := func() (string, *config.SystemConfig, userutil.Identity, error) {
 		_, baseDir, c, identity, err := newSystemConfig()
