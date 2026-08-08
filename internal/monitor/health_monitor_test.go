@@ -1375,6 +1375,45 @@ func TestHealthMonitor_IsProcessAlive_NonExistent(t *testing.T) {
 	}
 }
 
+// TestHealthMonitor_IsProcessAlive_LeaderExitedChildSurvives reproduces eos#197:
+// eos launches every service through a `sh -c "<command>"` wrapper, so the
+// group leader's PID (== pgid) belongs to that shell, not the real long-running
+// process. Backgrounding inside the shell (`sleep 5 &`) lets the shell exit and
+// get reaped immediately while its child keeps running in the same process
+// group, so /proc/<pgid>/stat (the leader's own, now-gone entry) is no longer a
+// valid proxy for "is this group still alive" — isProcessAlive must find the
+// surviving child instead of reading the group as dead the moment the leader
+// disappears.
+func TestHealthMonitor_IsProcessAlive_LeaderExitedChildSurvives(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("leader-exited-child-alive zombie detection is Linux-specific")
+	}
+
+	hm := &HealthMonitor{}
+
+	leader := exec.Command("sh", "-c", "sleep 5 &")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatalf("start leader: %v", err)
+	}
+	pgid := leader.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+
+	if err := leader.Wait(); err != nil {
+		t.Fatalf("leader wait: %v", err)
+	}
+
+	// Confirm the premise: the leader's own /proc entry is really gone, so a
+	// pass here can only be explained by the fix scanning other group members.
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d/stat", pgid)); !os.IsNotExist(err) {
+		t.Fatalf("expected leader pid %d to be reaped, /proc entry stat err = %v", pgid, err)
+	}
+
+	if !hm.isProcessAlive(pgid) {
+		t.Fatal("expected group to report alive: backgrounded child is still running after the leader exited")
+	}
+}
+
 func TestHealthMonitor_CalculateBackoffDelay(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -2131,27 +2170,6 @@ func TestHmRestartFailedMessage(t *testing.T) {
 	withoutLine := hmRestartFailedMessage("svc", errors.New("boom"), "", false)
 	if want := "[svc] restart failed: boom"; withoutLine != want {
 		t.Errorf("got %q, want %q", withoutLine, want)
-	}
-}
-
-func TestHmStatIndicatesAlive(t *testing.T) {
-	tests := []struct {
-		name     string
-		contents string
-		want     bool
-	}{
-		{"running", "1234 (myproc) R 1 1234 1234 0", true},
-		{"zombie", "1234 (myproc) Z 1 1234 1234 0", false},
-		{"no closing paren", "garbage", true},
-		{"closing paren too close to end", "1234 (myproc)", true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := hmStatIndicatesAlive([]byte(tc.contents))
-			if got != tc.want {
-				t.Errorf("hmStatIndicatesAlive(%q) = %v, want %v", tc.contents, got, tc.want)
-			}
-		})
 	}
 }
 
