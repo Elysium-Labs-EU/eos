@@ -45,3 +45,7 @@ CLAUDE.md
 .claude
 .zed/settings.json
 .ov/
+
+# Local code-intelligence index. A git worktree gets this as a symlink to the
+# original checkout's copy, and a trailing slash would not match that.
+.gitnexus
