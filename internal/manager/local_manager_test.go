@@ -1018,6 +1018,75 @@ func TestRestartService_failedStateStillAlive(t *testing.T) {
 	}
 }
 
+// TestRestartService_escalatesToSIGKILL_whenSIGTERMIgnored proves
+// lmStopForRestart's grace-period escalation: an old process group that
+// ignores SIGTERM must not permanently veto a restart. Once the SIGTERM
+// grace period is exceeded, the restart force-kills it and proceeds, instead
+// of returning an error that leaves the service unrestartable forever.
+func TestRestartService_escalatesToSIGKILL_whenSIGTERMIgnored(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	proc := exec.Command("/bin/sh", "-c", "trap '' TERM; sleep 30")
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	oldPGID, pgidErr := syscall.Getpgid(proc.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-oldPGID, syscall.SIGKILL)
+		_, _ = proc.Process.Wait()
+	})
+
+	startedAtTicks, ticksErr := procutil.StartTime(oldPGID)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "restart-sigterm-immune-svc"
+	dir := filepath.Join(tempDir, name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := &types.ServiceConfig{Name: name, Command: "sleep 30"}
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	entry, err := NewServiceCatalogEntry(name, dir, "service.yaml")
+	if err != nil {
+		t.Fatalf("catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("register service: %v", err)
+	}
+	if err = db.RegisterServiceInstance(t.Context(), name); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), oldPGID, startedAtTicks, name, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	newPGID, err := mgr.RestartService(t.Context(), name, 150*time.Millisecond, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("RestartService should escalate to SIGKILL and succeed, got error: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-newPGID, syscall.SIGKILL) })
+
+	if procutil.IsAlive(oldPGID) {
+		t.Errorf("old pgid %d (ignoring SIGTERM) should have been force-killed by the restart's grace-period escalation", oldPGID)
+	}
+	if !procutil.IsAlive(newPGID) {
+		t.Errorf("new pgid %d should be running after restart", newPGID)
+	}
+}
+
 // TestStopService_noLiveProcesses proves a Stopped-state row with a dead PGID
 // is actively re-checked (closing issue #215's second gate) and, since
 // nothing changed, left untouched rather than rewritten into the result —
