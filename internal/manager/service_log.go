@@ -128,19 +128,21 @@ func (m *LocalManager) GetServiceLogFilePath(_ context.Context, serviceName stri
 	return &logPath, nil
 }
 
-// GetServiceLastErrorLine returns the most recent non-empty line the service
-// itself wrote to stderr, or ok=false if the error log is missing, empty, or
-// unreadable. Used by the health monitor to surface the child process's own
-// failure reason (e.g. "bind: Address already in use") instead of a generic
-// exec-layer error. LastLogMessage skips lines the health monitor wrote about
-// itself (source=HealthBreadcrumbSource), so this never echoes back the
-// monitor's own prior "restart failed: ..." breadcrumb from an earlier cycle.
-func (m *LocalManager) GetServiceLastErrorLine(serviceName string) (line string, ok bool) {
+// GetServiceLastErrorLine returns the crash-reason line pgid itself wrote to
+// stderr, or ok=false if the error log is missing, empty, or unreadable. Used
+// by the health monitor to surface the child process's own failure reason
+// (e.g. "bind: Address already in use") instead of a generic exec-layer
+// error. pgid scopes the search to this exact process group's own lines (see
+// logutil.LastLogMessage), so a restarted attempt already appended to the
+// same error log can never be mistaken for this one's reason, and lines the
+// health monitor wrote about itself (source=HealthBreadcrumbSource) are
+// never echoed back either.
+func (m *LocalManager) GetServiceLastErrorLine(serviceName string, pgid int) (line string, ok bool) {
 	logPath, err := m.GetServiceLogFilePath(m.ctx, serviceName, true)
 	if err != nil {
 		return "", false
 	}
-	return logutil.LastLogMessage(*logPath)
+	return logutil.LastLogMessage(*logPath, pgid)
 }
 
 func (m *LocalManager) LogToServiceStdout(serviceName, message string) error {

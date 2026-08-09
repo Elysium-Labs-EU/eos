@@ -76,9 +76,9 @@ type monitorManager interface {
 	LogToServiceStdout(serviceName string, message string) error
 	LogToServiceStderr(serviceName string, message string) error
 	RestartService(ctx context.Context, name string, gracePeriod time.Duration, tickerPeriod time.Duration) (int, error)
-	// GetServiceLastErrorLine returns the most recent non-empty line captured
-	// from the service's own stderr, or ok=false if none is available.
-	GetServiceLastErrorLine(serviceName string) (line string, ok bool)
+	// GetServiceLastErrorLine returns the crash-reason line captured from
+	// pgid's own stderr, or ok=false if none is available.
+	GetServiceLastErrorLine(serviceName string, pgid int) (line string, ok bool)
 	// IsReloadInProgress reports whether a zero-downtime reload currently owns
 	// the named service's lifecycle. The monitor suspends its own action for a
 	// service while this is true, so a reload's crash-on-start incoming instance
@@ -276,7 +276,7 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	if !hm.isProcessAlive(pgid) {
 		hm.logger.Debug("startup check: process dead", "service", serviceName, "pgid", pgid)
-		lastLine, hadLastLine := hm.mgr.GetServiceLastErrorLine(serviceName)
+		lastLine, hadLastLine := hm.mgr.GetServiceLastErrorLine(serviceName, pgid)
 		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, hmStartupDeathMessage(serviceName, pgid, lastLine, hadLastLine))
 		return
 	}
@@ -655,7 +655,7 @@ func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *ty
 	// "restarting" breadcrumb below (which lands in the same error log via
 	// LogToServiceStderr) — otherwise a failed restart's error message would
 	// surface our own breadcrumb instead of the child process's real cause.
-	lastErrLine, hadLastErrLine := hm.mgr.GetServiceLastErrorLine(serviceName)
+	lastErrLine, hadLastErrLine := hm.mgr.GetServiceLastErrorLine(serviceName, pgid)
 
 	errorString := hmRestartingMessage(serviceName, configPort)
 

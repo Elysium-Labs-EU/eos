@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/logutil"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
+	"gopkg.in/yaml.v3"
 )
 
 func TestJoinLogPath(t *testing.T) {
@@ -279,5 +282,105 @@ func TestAcquireServiceLogWriter_ConcurrentPipeAndHealthEventWrites(t *testing.T
 	mgr.logWritersMu.Unlock()
 	if remaining != 0 {
 		t.Errorf("expected every acquire to have been released and the registry emptied, got %d entries still tracked", remaining)
+	}
+}
+
+func TestGetServiceLastErrorLine_MissingLogFile(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	if _, ok := mgr.GetServiceLastErrorLine("no-such-svc", 4242); ok {
+		t.Fatal("expected ok=false when the error log doesn't exist")
+	}
+}
+
+// TestGetServiceLastErrorLine_PGIDMismatchIsExcluded confirms the pgid bound
+// actually reaches through GetServiceLastErrorLine into logutil.LastLogMessage:
+// a line written under a different pgid must not be mistaken for the one
+// being asked about, even though it's the only line in the file.
+func TestGetServiceLastErrorLine_PGIDMismatchIsExcluded(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const serviceName = "mismatch-svc"
+	if _, _, err := mgr.NewServiceLogFiles(t.Context(), serviceName); err != nil {
+		t.Fatalf("NewServiceLogFiles: %v", err)
+	}
+
+	errorLogPath := filepath.Join(CreateLogDirPath(tempDir), CreateErrorOutputLogFilename(serviceName))
+	errFile, err := os.OpenFile(errorLogPath, os.O_APPEND|os.O_WRONLY, 0644) // #nosec G304 -- test-controlled path
+	if err != nil {
+		t.Fatalf("opening error log: %v", err)
+	}
+	logutil.NewJSONLogger(errFile, false).Info("some other launch's error", "service", serviceName, "pgid", 111, "source", "stderr")
+	if err := errFile.Close(); err != nil {
+		t.Fatalf("closing error log: %v", err)
+	}
+
+	if line, ok := mgr.GetServiceLastErrorLine(serviceName, 222); ok {
+		t.Fatalf("expected ok=false for a pgid with no matching lines, got line=%q", line)
+	}
+	if line, ok := mgr.GetServiceLastErrorLine(serviceName, 111); !ok || line != "some other launch's error" {
+		t.Errorf("GetServiceLastErrorLine(_, 111) = (%q, %v), want (\"some other launch's error\", true)", line, ok)
+	}
+}
+
+// TestGetServiceLastErrorLine_RealProcessPrefersErrorShapedLineOverTrailingBanner
+// is the end-to-end regression test for the actual reported bug: a real child
+// process (launched the same way eos launches any service, through
+// buildLaunchCommand/wireLogPipes/pipeToErrorLogFile — nothing hand-written)
+// writes multi-line crash output ending in a trailing line that carries no
+// diagnostic value, mirroring Node's own uncaught-exception handler printing
+// "Node.js vX.Y.Z" as its literal last stderr line. The real pipe-forwarding
+// goroutine must tag every line with this launch's pgid, and
+// GetServiceLastErrorLine must surface the genuine error line, not the
+// trailing banner.
+func TestGetServiceLastErrorLine_RealProcessPrefersErrorShapedLineOverTrailingBanner(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+
+	testFile := &types.ServiceConfig{
+		Name:    "crash-svc",
+		Command: `printf 'Error: listen EADDRINUSE: address already in use :::3000\n  code: EADDRINUSE,\n\nNode.js v20.20.2\n' >&2; exit 1`,
+		Runtime: types.Runtime{Type: "nodejs"},
+	}
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("marshaling test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "crash-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("creating test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("writing service.yaml: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry(testFile.Name, fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("creating service catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("adding service catalog entry: %v", err)
+	}
+
+	pgid, err := mgr.StartService(t.Context(), testFile.Name)
+	if err != nil {
+		t.Fatalf("StartService: %v", err)
+	}
+
+	// The script exits almost immediately; block until its pipe-forwarding
+	// goroutines have drained its stderr (EOF) and released the log writer,
+	// so the read below can't race the write.
+	mgr.WaitPipes()
+
+	line, ok := mgr.GetServiceLastErrorLine(testFile.Name, pgid)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if line != "  code: EADDRINUSE," {
+		t.Errorf("GetServiceLastErrorLine() = %q, want %q (the trailing \"Node.js v20.20.2\" banner should have been skipped)", line, "  code: EADDRINUSE,")
 	}
 }
