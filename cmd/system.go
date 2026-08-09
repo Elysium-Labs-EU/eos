@@ -621,6 +621,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 func printDaemonInfo(cmd *cobra.Command, daemon config.DaemonConfig) {
 	switch {
 	case daemon.Standalone != nil:
+		printStandaloneStaleWarning(cmd, daemon.Standalone)
 		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), false)
 		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("pid file:"), daemon.Standalone.PIDFile)
 		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), daemon.Standalone.SocketPath)
@@ -648,6 +649,24 @@ func printDaemonInfo(cmd *cobra.Command, daemon config.DaemonConfig) {
 		cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("socket:"), daemon.OpenRC.SocketPath)
 	default:
 		cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("supervisor:"), "(none configured)")
+	}
+}
+
+// printStandaloneStaleWarning warns when a running standalone daemon is still
+// backed by a since-replaced binary. Unlike "eos daemon info", this Daemon
+// block otherwise prints static config only — no liveness check at all — so
+// without this it was the one remaining place an operator could look straight
+// at a stale daemon and see nothing wrong. Reuses staleBinary, the same
+// process.RunningExeInode/CurrentExecutableInode comparison "eos daemon info"
+// and "eos daemon info --all" already rely on, rather than deriving the fact
+// a third way.
+func printStandaloneStaleWarning(cmd *cobra.Command, cfg *config.StandaloneDaemonConfig) {
+	status, err := process.StatusStandaloneDaemon(cfg)
+	if err != nil || !status.Running {
+		return
+	}
+	if staleBinary(*status.Pid, process.CurrentExecutableInode()) {
+		cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("⚠"), fmt.Sprintf("daemon is running (pid %d) — on a since-replaced binary, restart needed", *status.Pid))
 	}
 }
 

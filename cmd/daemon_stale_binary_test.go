@@ -113,7 +113,7 @@ func TestRenderSystemdVersion(t *testing.T) {
 	})
 }
 
-func TestSystemdStaleBinary(t *testing.T) {
+func TestStaleBinary(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc/<pid>/exe resolution is Linux-only")
 	}
@@ -124,15 +124,49 @@ func TestSystemdStaleBinary(t *testing.T) {
 		t.Fatal("could not resolve inode of spawned child's executable")
 	}
 
-	if systemdStaleBinary(pid, realIno) {
+	if staleBinary(pid, realIno) {
 		t.Error("matching inode should not be flagged stale")
 	}
-	if !systemdStaleBinary(pid, realIno+1) {
+	if !staleBinary(pid, realIno+1) {
 		t.Error("mismatched inode should be flagged stale")
 	}
-	if systemdStaleBinary(pid, 0) {
+	if staleBinary(pid, 0) {
 		t.Error("currentIno=0 (unknown) should never flag stale")
 	}
+}
+
+func TestRenderStandaloneRunState(t *testing.T) {
+	t.Run("stale prints the restart warning", func(t *testing.T) {
+		var out bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetOut(&out)
+
+		renderStandaloneRunState(cmd, true)
+
+		got := out.String()
+		if !strings.Contains(got, "daemon is running") {
+			t.Errorf("expected 'daemon is running', got: %s", got)
+		}
+		if !strings.Contains(got, "since-replaced binary, restart needed") {
+			t.Errorf("expected the stale-binary warning, got: %s", got)
+		}
+	})
+
+	t.Run("fresh prints a plain running line", func(t *testing.T) {
+		var out bytes.Buffer
+		cmd := newTestRootCmd(nil)
+		cmd.SetOut(&out)
+
+		renderStandaloneRunState(cmd, false)
+
+		got := out.String()
+		if !strings.Contains(got, "daemon is running") {
+			t.Errorf("expected 'daemon is running', got: %s", got)
+		}
+		if strings.Contains(got, "restart needed") {
+			t.Errorf("expected no stale-binary warning, got: %s", got)
+		}
+	})
 }
 
 func TestRenderSystemdRunState(t *testing.T) {

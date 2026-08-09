@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +90,88 @@ func TestPrintDaemonInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPrintStandaloneStaleWarning covers printStandaloneStaleWarning's own
+// liveness/staleness gating: unlike "eos daemon info", this Daemon block used
+// to run no liveness check at all, so a standalone daemon running a
+// since-replaced binary was previously invisible here.
+func TestPrintStandaloneStaleWarning(t *testing.T) {
+	t.Run("no pid file, no warning", func(t *testing.T) {
+		cfg := &config.StandaloneDaemonConfig{PIDFile: filepath.Join(t.TempDir(), "eos.pid")}
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+
+		printStandaloneStaleWarning(cmd, cfg)
+
+		if out.Len() != 0 {
+			t.Errorf("expected no output when no daemon is running, got: %s", out.String())
+		}
+	})
+
+	t.Run("dead pid, no warning", func(t *testing.T) {
+		cfg := &config.StandaloneDaemonConfig{PIDFile: filepath.Join(t.TempDir(), "eos.pid")}
+		writePIDFile(t, cfg.PIDFile, deadPID(t))
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+
+		printStandaloneStaleWarning(cmd, cfg)
+
+		if out.Len() != 0 {
+			t.Errorf("expected no output for a dead pid, got: %s", out.String())
+		}
+	})
+
+	t.Run("running the current binary, no warning", func(t *testing.T) {
+		cfg := &config.StandaloneDaemonConfig{PIDFile: filepath.Join(t.TempDir(), "eos.pid")}
+		writePIDFile(t, cfg.PIDFile, os.Getpid())
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+
+		printStandaloneStaleWarning(cmd, cfg)
+
+		if strings.Contains(out.String(), "restart needed") {
+			t.Errorf("a daemon running the current binary must never be flagged stale, got: %s", out.String())
+		}
+	})
+
+	t.Run("running a since-replaced binary, warns", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("/proc/<pid>/exe resolution is Linux-only")
+		}
+		cfg := &config.StandaloneDaemonConfig{PIDFile: filepath.Join(t.TempDir(), "eos.pid")}
+		child := spawnDisposableChild(t)
+		writePIDFile(t, cfg.PIDFile, child.Process.Pid)
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+
+		printStandaloneStaleWarning(cmd, cfg)
+
+		got := out.String()
+		if !strings.Contains(got, "since-replaced binary, restart needed") {
+			t.Errorf("expected the stale-binary warning, got: %s", got)
+		}
+		if !strings.Contains(got, fmt.Sprintf("pid %d", child.Process.Pid)) {
+			t.Errorf("expected the pid rendered, got: %s", got)
+		}
+	})
+
+	t.Run("status error, no warning", func(t *testing.T) {
+		cfg := &config.StandaloneDaemonConfig{PIDFile: t.TempDir()} // a directory, not a file
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+
+		printStandaloneStaleWarning(cmd, cfg)
+
+		if out.Len() != 0 {
+			t.Errorf("expected no output when daemon status can't be read, got: %s", out.String())
+		}
+	})
 }
 
 // TestSupervisedDaemonConfigsCarrySocket pins the wiring that makes
