@@ -18,7 +18,7 @@ type apiStopResult struct {
 	Force   bool   `json:"force"`
 }
 
-func newAPIStopCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newAPIStopCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, managerMode localModeFn) *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
@@ -49,6 +49,10 @@ Exit codes:
 			serviceName := args[0]
 			mgr := getManager()
 			cfg := getConfig()
+
+			if err := apiRefuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {

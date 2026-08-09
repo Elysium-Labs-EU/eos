@@ -69,6 +69,7 @@ func newRunCmdWithFakeMgr(t *testing.T, mgr manager.ServiceManager) (cmd *cobra.
 	cmd = newRunCmd(
 		func() manager.ServiceManager { return mgr },
 		func() *config.SystemConfig { return &config.SystemConfig{} },
+		func() localMode { return localMode{} },
 	)
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(errBuf)

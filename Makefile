@@ -1,4 +1,4 @@
-.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-launchd lint nilcheck crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
 
 .DEFAULT_GOAL := help
 
@@ -94,6 +94,10 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 		echo "Installing benchstat (benchmark comparison)..."; \
 		go install golang.org/x/perf/cmd/benchstat@latest; \
 	}
+	@command -v typos >/dev/null 2>&1 && echo "typos already installed, skipping" || { \
+		echo "Installing typos (spelling check, mirrors the CI typos job)..."; \
+		cargo install typos-cli 2>/dev/null || echo "cargo not found; install typos manually: https://github.com/crate-ci/typos#install"; \
+	}
 	@echo "Installing git hooks..."
 	lefthook install
 	@echo "Setup complete."
@@ -129,7 +133,7 @@ verify-mod: ## Verify on-disk module cache matches go.sum (defense-in-depth beyo
 	@echo "Verifying module cache..."
 	go mod verify
 
-test-integration: ## Run integration tests (requires Linux + systemd + root; use OrbStack)
+test-integration: ## Compile+run integration-tagged tests IN PLACE (does not enter a VM despite the OrbStack line it prints; on macOS or without root/systemd, systemd-dependent cases just skip themselves; see test-supervision-orb for real coverage)
 	@echo "Running integration tests..."
 	@echo "  On OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v -count=1"
 	go test ./cmd/... -tags integration -v -count=1
@@ -163,6 +167,11 @@ nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.or
 	@echo "Running nilaway nil pointer analysis..."
 	@command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: make setup"; exit 1; }
 	nilaway ./...
+
+typos: ## Check for misspellings (mirrors the CI typos job, requires: cargo install typos-cli, see https://github.com/crate-ci/typos#install)
+	@echo "Checking for typos..."
+	@command -v typos >/dev/null 2>&1 || { echo "typos not found. Run: make setup"; exit 1; }
+	typos
 
 GO_CRAP_GATE_PATHS := scripts/go-crap-gate.sh scripts/go-crap-gate_test.sh
 
@@ -281,7 +290,7 @@ govulncheck: ## Reachability-aware vulnerability scan (complements OSV-Scanner's
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: make setup"; exit 1; }
 	govulncheck ./...
 
-ci: test verify-mod lint sg nilcheck test-coverage-check crap check-diff-size check-plugin-api-diff govulncheck secrets ## Run all CI checks locally
+ci: test verify-mod lint sg nilcheck typos test-coverage-check crap check-diff-size check-plugin-api-diff govulncheck secrets ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
@@ -296,6 +305,19 @@ test-linux-single: ## Run single test on OrbStack $(ORB_MACHINE) (TEST=TestName)
 test-openrc-orb: ORB_MACHINE = alpine
 test-openrc-orb: ## Run runtime-detection/OpenRC tests on OrbStack $(ORB_MACHINE) (defaults to an Alpine/OpenRC machine; override with ORB_MACHINE=<name>)
 	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && go test ./cmd/... -race -count=2 -run 'Openrc|OpenRC|DetectActiveSystemRuntime' -v"
+
+# -run 'Supervised' is deliberate, not a placeholder: the full -tags
+# integration suite takes ~110s on this VM and currently fails part-way for
+# environmental reasons unrelated to the code under test ("error starting
+# daemon: timed out waiting for PID file"), while the same suite passes on
+# GitHub's ubuntu-latest runner. Scoping to the supervision/daemon-routing
+# cases gives a ~4.5s signal that's actually trustworthy to run before every
+# push; running the whole suite here would just be permanently red and get
+# ignored. Tradeoff: a future supervision test whose name doesn't contain
+# "Supervised" silently escapes this target; keep the naming convention.
+test-supervision-orb: ## Supervision/daemon-routing integration tests on OrbStack $(ORB_MACHINE) (fast, targeted subset -- see comment above)
+	orb run -m $(ORB_MACHINE) bash -lc "export PATH=/usr/local/go/bin:\$$PATH; cd $(PWD) && \
+	  sudo env PATH=\$$PATH go test ./cmd/... -tags integration -count=1 -run 'Supervised'"
 
 test-install-orb: release-local ## Build and test install.sh on OrbStack $(ORB_MACHINE) with local binary
 	orb run -m $(ORB_MACHINE) bash -lc "arch=\$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); sudo bash $(PWD)/install.sh -y --local $(PWD)/dist/eos-linux-\$$arch"

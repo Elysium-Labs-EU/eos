@@ -767,9 +767,10 @@ func (m *LocalManager) captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks 
 }
 
 // reconcileStartHistory scans prior process history before a start. It errors
-// if a still-live Running/Starting process for this service is found, and
-// otherwise self-heals stale rows whose processes are gone (Running->Stopped,
-// Starting->Failed) so status displays don't report phantom processes.
+// if a still-live Running/Starting/Unknown process for this service is found,
+// and otherwise self-heals stale rows whose processes are gone
+// (Running/Unknown->Stopped, Starting->Failed) so status displays don't
+// report phantom processes.
 func (m *LocalManager) reconcileStartHistory(name string, processHistory []types.ProcessHistory) error {
 	for i := range processHistory {
 		if err := m.lmReconcileHistoryEntry(name, &processHistory[i]); err != nil {
@@ -780,12 +781,16 @@ func (m *LocalManager) reconcileStartHistory(name string, processHistory []types
 }
 
 // lmReconcileHistoryEntry reconciles a single process history row for a
-// pending start: it errors if p is Running or Starting with a still-live
-// process, and otherwise self-heals a stale row (Running->Stopped,
-// Starting->Failed) so status displays don't report phantom processes.
+// pending start: it errors if p is Running, Starting, or Unknown with a
+// still-live process, and otherwise self-heals a stale row (Running/Unknown
+// ->Stopped, Starting->Failed) so status displays don't report phantom
+// processes. Unknown groups with Running rather than being treated as
+// terminal: it is written when a stop signal couldn't be confirmed to have
+// killed the process (see updateProcessHistoryEntriesAsUnknown), so the
+// process is exactly as likely to still be alive as a Running row is.
 func (m *LocalManager) lmReconcileHistoryEntry(name string, p *types.ProcessHistory) error {
 	switch p.State {
-	case types.ProcessStateRunning:
+	case types.ProcessStateRunning, types.ProcessStateUnknown:
 		if procutil.IsAliveMatching(p.PGID, p.StartedAtTicks) {
 			return fmt.Errorf("service already running with PGID %d", p.PGID)
 		}
@@ -795,7 +800,7 @@ func (m *LocalManager) lmReconcileHistoryEntry(name string, p *types.ProcessHist
 			return fmt.Errorf("service already starting with PGID %d", p.PGID)
 		}
 		m.lmMarkStaleHistoryEntry(name, p.PGID, types.ProcessStateFailed, "failed to mark stale starting entry as failed")
-	case types.ProcessStateStopped, types.ProcessStateFailed, types.ProcessStateUnknown:
+	case types.ProcessStateStopped, types.ProcessStateFailed:
 		// Already terminal; nothing to reconcile.
 	}
 	return nil

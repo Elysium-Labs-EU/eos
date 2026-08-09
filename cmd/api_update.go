@@ -16,7 +16,7 @@ type apiUpdateResult struct {
 	ConfigFile string `json:"config_file"`
 }
 
-func newAPIUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newAPIUpdateCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   cmdnames.UseUpdate,
 		Short: "Update a service's directory path; always outputs JSON",
@@ -44,6 +44,10 @@ Exit codes:
 			serviceName := args[0]
 			newProjectPath := args[1]
 			mgr := getManager()
+
+			if err := apiRefuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {

@@ -468,6 +468,149 @@ func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
 	}
 }
 
+// TestStartServiceBlocksWhenUnknownEntryLive is the direct regression test:
+// a graceful stop that exceeds its grace period leaves the most recent
+// history row Unknown (see updateProcessHistoryEntriesAsUnknown) while the
+// process itself is still alive. livePGIDInHistory only recognizes
+// Running/Starting rows, so lmCheckAlreadyRunning can't catch this case —
+// reconcileStartHistory must. Before the fix, Unknown was grouped with the
+// terminal states and StartService sailed past it, spawning a second
+// instance on top of the live one.
+func TestStartServiceBlocksWhenUnknownEntryLive(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	livePGID, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+	livePGIDStartedAtTicks, err := procutil.StartTime(livePGID)
+	if err != nil {
+		t.Fatalf("StartTime: %v", err)
+	}
+
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, livePGIDStartedAtTicks, "test-service", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	_, err = manager.StartService(t.Context(), "test-service")
+	if err == nil {
+		t.Fatal("expected StartService to refuse a start while an Unknown-state PGID is live")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("expected an already-running error, got: %v", err)
+	}
+}
+
+// TestStartServiceSelfHealsStaleUnknownEntry confirms the flip side: an
+// Unknown row whose process is actually gone must self-heal to Stopped and
+// let the start proceed, not permanently block or leak a phantom entry.
+func TestStartServiceSelfHealsStaleUnknownEntry(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	const deadPGID = 999997
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Unknown self-heal", deadPGID)
+	}
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "test-service", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	pgid, err := manager.StartService(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("StartService should self-heal a dead Unknown entry, got error: %v", err)
+	}
+	if pgid == 0 {
+		t.Fatal("StartService should return a non-zero PGID, got 0")
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	var staleEntry *types.ProcessHistory
+	for i := range entries {
+		if entries[i].PGID == deadPGID {
+			staleEntry = &entries[i]
+		}
+	}
+	if staleEntry == nil {
+		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+		return
+	}
+	if staleEntry.State != types.ProcessStateStopped {
+		t.Errorf("expected stale entry to be marked Stopped, got state %q", staleEntry.State)
+	}
+}
+
 func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
@@ -1084,6 +1227,167 @@ func TestRestartService_escalatesToSIGKILL_whenSIGTERMIgnored(t *testing.T) {
 	}
 	if !procutil.IsAlive(newPGID) {
 		t.Errorf("new pgid %d should be running after restart", newPGID)
+	}
+}
+
+// failOnCallHistoryDB fails GetProcessHistoryEntriesByServiceName on a chosen
+// call number, delegating that call and every other method to the real
+// database.Database it wraps. Used to force the SIGKILL-phase fetch inside
+// lmStopForRestart's escalation to fail without touching the SIGTERM-phase
+// fetch that has to succeed first for escalation to trigger at all.
+type failOnCallHistoryDB struct {
+	database.Database
+	err        error
+	callCount  int
+	failOnCall int
+}
+
+func (f *failOnCallHistoryDB) GetProcessHistoryEntriesByServiceName(ctx context.Context, name string) ([]types.ProcessHistory, error) {
+	f.callCount++
+	if f.callCount == f.failOnCall {
+		return nil, f.err
+	}
+	return f.Database.GetProcessHistoryEntriesByServiceName(ctx, name)
+}
+
+// TestLmStopForRestart_escalationFetchFails proves lmStopForRestart surfaces
+// it when the SIGKILL escalation itself can't even fetch process history,
+// rather than swallowing the failure or misattributing it to the earlier
+// SIGTERM phase. The escalation's own fetch is a second, independent point
+// of failure distinct from the SIGTERM phase's.
+func TestLmStopForRestart_escalationFetchFails(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	proc := exec.Command("/bin/sh", "-c", "trap '' TERM; sleep 30")
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(proc.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = proc.Process.Wait()
+	})
+
+	// Give the shell time to actually execute "trap '' TERM" before any
+	// signal is sent — without this, a SIGTERM racing the shell's own
+	// startup can kill it via the default disposition before the trap is
+	// installed, defeating the whole point of this fixture.
+	time.Sleep(100 * time.Millisecond)
+
+	startedAtTicks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "escalation-fetch-fails-svc"
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, startedAtTicks, name, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	sentinel := errors.New("db unavailable")
+	mgr.db = &failOnCallHistoryDB{Database: db, failOnCall: 2, err: sentinel}
+
+	err := mgr.lmStopForRestart(name, 150*time.Millisecond, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected lmStopForRestart to fail when the SIGKILL escalation can't fetch process history")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected error to wrap the underlying fetch failure, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "force-killing process(es) for") {
+		t.Errorf("expected error to be attributed to the force-kill escalation, got: %v", err)
+	}
+}
+
+// injectPhantomHistoryRowDB appends an extra, never-persisted ProcessHistory
+// row to the result of GetProcessHistoryEntriesByServiceName on a chosen
+// call. The row is alive-matching-false (no real process), so it gets
+// classified as already-dead and its state update is attempted — and that
+// update is guaranteed to fail since the row was never inserted, giving a
+// real "not found" persistence failure without needing OS-level
+// signal-permission tricks.
+type injectPhantomHistoryRowDB struct {
+	database.Database
+	phantom   types.ProcessHistory
+	callCount int
+	injectOn  int
+}
+
+func (f *injectPhantomHistoryRowDB) GetProcessHistoryEntriesByServiceName(ctx context.Context, name string) ([]types.ProcessHistory, error) {
+	f.callCount++
+	rows, err := f.Database.GetProcessHistoryEntriesByServiceName(ctx, name)
+	if err != nil {
+		return rows, err
+	}
+	if f.callCount == f.injectOn {
+		rows = append(rows, f.phantom)
+	}
+	return rows, nil
+}
+
+// TestLmStopForRestart_escalationLeavesPhantomRowErrored proves
+// lmStopForRestart surfaces it when the SIGKILL escalation signals every row
+// successfully but fails to persist the outcome for one of them — a
+// distinct failure mode from the escalation's fetch failing outright, since
+// here the escalation otherwise succeeds and only its bookkeeping write
+// fails.
+func TestLmStopForRestart_escalationLeavesPhantomRowErrored(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	proc := exec.Command("/bin/sh", "-c", "trap '' TERM; sleep 30")
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	pgid, pgidErr := syscall.Getpgid(proc.Process.Pid)
+	if pgidErr != nil {
+		t.Fatalf("getpgid: %v", pgidErr)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_, _ = proc.Process.Wait()
+	})
+
+	// See the identical comment in TestLmStopForRestart_escalationFetchFails:
+	// let the shell install its TERM trap before anything can signal it.
+	time.Sleep(100 * time.Millisecond)
+
+	startedAtTicks, ticksErr := procutil.StartTime(pgid)
+	if ticksErr != nil {
+		t.Fatalf("StartTime: %v", ticksErr)
+	}
+
+	name := "escalation-phantom-row-svc"
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), pgid, startedAtTicks, name, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	const phantomPGID = 999996
+	if isProcessAlive(phantomPGID) {
+		t.Skipf("pgid %d is alive — cannot test the never-registered-row path", phantomPGID)
+	}
+	phantom := types.ProcessHistory{
+		PGID:        phantomPGID,
+		ServiceName: name,
+		State:       types.ProcessStateRunning,
+	}
+	mgr.db = &injectPhantomHistoryRowDB{Database: db, injectOn: 2, phantom: phantom}
+
+	err := mgr.lmStopForRestart(name, 150*time.Millisecond, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected lmStopForRestart to fail when the SIGKILL escalation can't persist a row's outcome")
+	}
+	if !strings.Contains(err.Error(), "force-killing process(es) for") {
+		t.Errorf("expected error to be attributed to the force-kill escalation, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d", phantomPGID)) {
+		t.Errorf("expected error to name the unpersisted pgid %d, got: %v", phantomPGID, err)
 	}
 }
 
@@ -2191,4 +2495,47 @@ func TestReconcileStartHistory_LiveEntryErrors(t *testing.T) {
 			t.Fatal("expected error for a live starting entry")
 		}
 	})
+
+	t.Run("unknown", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-unknown", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateUnknown},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live unknown entry")
+		}
+	})
+}
+
+// TestReconcileStartHistory_UnknownDeadEntrySelfHeals confirms an Unknown row
+// left behind by a stop that couldn't confirm the kill (see
+// updateProcessHistoryEntriesAsUnknown) self-heals to Stopped once the
+// process is actually gone, rather than being permanently skipped as
+// terminal.
+func TestReconcileStartHistory_UnknownDeadEntrySelfHeals(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const deadPGID = 999996
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Unknown cleanup", deadPGID)
+	}
+
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "svc-unknown-dead", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	err := mgr.reconcileStartHistory("svc-unknown-dead", []types.ProcessHistory{
+		{PGID: deadPGID, StartedAtTicks: 0, State: types.ProcessStateUnknown},
+	})
+	if err != nil {
+		t.Fatalf("expected a dead unknown entry to self-heal, got error: %v", err)
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "svc-unknown-dead")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	if len(entries) != 1 || entries[0].State != types.ProcessStateStopped {
+		t.Errorf("expected the unknown entry to be marked Stopped, got %+v", entries)
+	}
 }

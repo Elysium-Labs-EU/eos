@@ -16,7 +16,7 @@ type apiAddResult struct {
 	ConfigFile string `json:"config_file"`
 }
 
-func newAPIAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newAPIAddCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   cmdnames.UseAdd,
 		Short: "Register a service from a directory; always outputs JSON",
@@ -44,6 +44,10 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectPath := args[0]
 			mgr := getManager()
+
+			if err := apiRefuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			parsed, err := parseServiceFile(projectPath)
 			if err != nil {
