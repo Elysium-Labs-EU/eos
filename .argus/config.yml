@@ -1,7 +1,30 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Elysium-Labs-EU/argus/main/schemas/config.schema.json
 # .argus/config.yml — all keys are optional; see `argus init`.
 base_branch: "main"
-brief_note: "New code you add or modify must average >=90% per-function line coverage. A gate re-checks this against origin/main once you reach a terminal phase and hard-escalates on a miss, so write tests alongside the code rather than after."
+brief_note: "Coverage: new code you add or modify must average >=90% per-function line coverage. A gate re-checks this against origin/main once you reach a terminal phase and hard-escalates on a miss, so write tests alongside the code rather than after.\n\nReal-world verification: eos supervises real OS processes, so passing unit tests is never sufficient evidence that a lifecycle change works. If you touch service spawn/stop/restart, the health monitor, liveness checks, the daemon, or the installer, you must exercise the change against a real service on a real Linux VM and put what you observed in your report's real_world_proof field. The gate hard-escalates an empty real_world_proof on those paths.\n\nHow to do that here:\n  make release-local        build the linux binary the VM installs\n  make test-fixtures-orb    real nextjs/vite/express/hono fixtures, ORB_MACHINE=debian\n  orb -m debian <cmd>       ad-hoc probing inside the VM\n\nUse a VM whose daemon is actually supervised (`eos system startup --yes` plus `systemctl --user start eos`), not a bare `eos daemon start` - several defects in this area only appear in the managed-daemon configuration.\n\nreal_world_proof must contain observations, not intentions: the actual command you ran, the actual `ps -eo pid,ppid,pgid,args` / `ss -lnt` / `eos api status` output, and the before-and-after difference. \"Verified on debian\" is not proof and will be sent back.\n\nNever run the fixtures straight out of testdata/fixtures on a shared path. That directory is the macOS host's working copy mounted into every OrbStack VM at once, so two VMs running it concurrently share one .next build and one node_modules and produce garbage results. scripts/test-fixtures-orb.sh already copies to a VM-local SCRATCH_DIR for this reason; do the same for anything you run by hand.\n\nGATES THAT DO NOT RUN IN make ci - each has already cost a wasted rework round, so verify them yourself before reporting:\n1. CRAP and diff-size gates no-op on an uncommitted tree. A green make ci on a dirty worktree proves nothing about them. COMMIT first, then run `make crap`, and only then report. The pre-push hook runs them against the commit and blocks the ship otherwise.\n2. Typo checking (crate-ci/typos) is a CI job, not part of make ci. Run `typos` over the worktree if the binary is present, otherwise re-read your own added lines for misspellings before reporting.\n3. Integration tests sit behind `-tags integration` and are never compiled by make ci or make test-linux. If you touch supervision, the daemon, or process lifecycle, run them: orb run -m debian bash -lc \"cd <worktree> && sudo env PATH=$PATH go test ./cmd/... -tags integration -count=1 -run Supervised\". Unrelated integration tests currently fail on the debian VM for environmental reasons, so keep the -run filter targeted to avoid that noise.\n4. SonarCloud enforces >=80 percent coverage on NEW code as a separate PR check. It is not make ci's total-coverage gate and not the per-function bar above; a change can satisfy both and still fail Sonar. Before reporting, make sure every new branch you added is exercised - error returns included, since those are the lines most often left uncovered.\n\nCOMMENT STYLE, enforced on every diff: never cite an issue number anywhere you author - not in code comments, not in test function names, not in commit messages, not in PR bodies. State the reason directly rather than pointing at a ticket. The only exception is the `Closes #N` trailer, which argus adds itself. Comments must be dense and explain WHY, never restate WHAT the code does.\n\nREPORTING YOUR TESTS: list narrow, fast, self-contained commands only. Never list `make ci` in the tests array - argus re-runs every claimed command under a 5 minute cap while gate_verify_command already runs make ci separately with a longer bound, so claiming it buys nothing and fails the moment the machine is loaded. Do not use make variables in a claimed command either (`make test-linux-single TEST=X` is re-run as bare `make test-linux-single` and fails); write the full command instead, e.g. orb run -m debian bash -lc \"cd <worktree> && go test ./cmd -run TestX\".\n\nQUOTING orb COMMANDS: write the inner script in SINGLE quotes so it expands inside the VM, not on the macOS host. `orb run -m debian bash -lc \"export PATH=/usr/local/go/bin:$PATH; go test ...\"` expands $PATH on the host and injects the macOS PATH into the VM. OrbStack mounts /Applications into the guest, so gcc then resolves to /Applications/Xcode.app/Contents/Developer/usr/bin/gcc instead of /usr/bin/gcc, and every cgo build dies with \"clang: error: no such file or directory: /tmp/cgo-gcc-input-*.c\" because the macOS compiler cannot see the VM's /tmp. Use orb run -m debian bash -lc 'export PATH=/usr/local/go/bin:$PATH; cd <worktree> && go test ...' instead, and always `cd` explicitly rather than relying on an inherited working directory."
+
+review:
+  gate_verify_command: "make ci && make test-supervision-orb"
+  proof_required_paths:
+    - "internal/manager"
+    - "internal/monitor"
+    - "internal/process"
+    - "internal/procutil"
+    - "cmd/root.go"
+    - "cmd/daemon.go"
+    - "cmd/system.go"
+    - "cmd/run.go"
+    - "cmd/stop.go"
+    - "cmd/api_run.go"
+    - "cmd/api_stop.go"
+    - "install.sh"
+    - "scripts/"
+  always_review_paths:
+    - "cmd/root.go"
+    - "cmd/system.go"
+    - "internal/process/daemon.go"
+    - "install.sh"
+  review_note: "eos supervises real OS processes. Treat unit tests and dry-runs as necessary but never sufficient for any change to spawn/stop/restart, the health monitor, liveness checks, the daemon or the installer.\n\nDo NOT ask for, or fail a change over, the worker's real_world_proof report field - your prompt does not contain it, so you cannot see it even when it is populated, and rejecting on that basis produces false request-changes. Real-world verification is now executed mechanically by the gate: gate_verify_command runs make test-supervision-orb, which runs the supervision integration tests against a real systemd unit on a Linux VM. If the gate passed, that verification passed.\n\nJudge what you can actually see: the diff. For lifecycle changes, expect the evidence to live IN the diff as a test behind the integration build tag that asserts from the OS - /proc, ps, pgid, socket ownership - rather than from eos's own reporting. A lifecycle change with no such test is a legitimate request-changes.\n\nWatch specifically for: a service ending up parented by the CLI instead of the daemon, a pgid reported to the caller that does not match the surviving process group, a service's stdout/stderr pipe left without a live reader, and any path where a still-running process can be reported as stopped."
 
 phases:
   working:
@@ -9,6 +32,8 @@ phases:
       - "Bash(make *)"
       - "Bash(git rm *)"
       - "Bash(git add *)"
+      - "Bash(orb *)"
   self_test:
     allow:
       - "Bash(make *)"
+      - "Bash(orb *)"
