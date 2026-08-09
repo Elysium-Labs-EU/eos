@@ -86,16 +86,20 @@ eos is a service supervisor.
 		// intentional no-op: see comment above
 	}
 
-	rootCmd.AddCommand(newAddCmd(getManager))
+	// mgr above is injected, not chosen by newManager, so there is no probe
+	// verdict to thread: nothing here is bypassing a daemon.
+	noLocalMode := localModeFn(func() localMode { return localMode{} })
+
+	rootCmd.AddCommand(newAddCmd(getManager, noLocalMode))
 	rootCmd.AddCommand(newInfoCmd(getManager))
 	rootCmd.AddCommand(newEnvCmd(getManager))
 	rootCmd.AddCommand(newLogsCmd(getManager, noopWarnDaemonDown))
-	rootCmd.AddCommand(newRemoveCmd(getManager))
+	rootCmd.AddCommand(newRemoveCmd(getManager, noLocalMode))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
-	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
+	rootCmd.AddCommand(newRunCmd(getManager, getConfig, noLocalMode))
 	rootCmd.AddCommand(newStatusCmd(getManager, noopWarnDaemonDown, getConfig))
-	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
-	rootCmd.AddCommand(newUpdateCmd(getManager))
+	rootCmd.AddCommand(newStopCmd(getManager, getConfig, noLocalMode))
+	rootCmd.AddCommand(newUpdateCmd(getManager, noLocalMode))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -132,8 +136,8 @@ eos is a service supervisor.
 		}, identity, nil
 	}
 	rootCmd.AddCommand(newDaemonCmd(testDaemonConfig))
-	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
-	rootCmd.AddCommand(newAPICmd(getManager, getConfig, testDaemonConfig))
+	rootCmd.AddCommand(newSystemCmd(getManager, getConfig, noLocalMode))
+	rootCmd.AddCommand(newAPICmd(getManager, getConfig, testDaemonConfig, noLocalMode))
 	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	return rootCmd
@@ -148,6 +152,7 @@ func newRootCmd() *cobra.Command {
 	var mgr manager.ServiceManager
 	var cleanup func()
 	var cfg *config.SystemConfig
+	var managerMode localMode
 
 	lazyInit := func() {
 		once.Do(func() {
@@ -156,7 +161,7 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
 				os.Exit(1)
 			}
-			m, cl, err := newManager(rootCmd, baseDir, c.Daemon, c.Sinks)
+			m, cl, mode, err := newManager(rootCmd, baseDir, c.Daemon, c.Sinks)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s %s\n\n", ui.LabelError.Render("error"), fmt.Sprintf("getting manager: %v", err))
 				os.Exit(1)
@@ -164,6 +169,7 @@ func newRootCmd() *cobra.Command {
 			mgr = m
 			cleanup = cl
 			cfg = c
+			managerMode = mode
 		})
 	}
 
@@ -176,6 +182,13 @@ func newRootCmd() *cobra.Command {
 		lazyInit()
 		return cfg
 	}
+
+	// sync.Once above is what makes this a single probe: every guarded command
+	// reads the verdict newManager already reached for this process.
+	managerModeFn := localModeFn(func() localMode {
+		lazyInit()
+		return managerMode
+	})
 
 	rootCmd = &cobra.Command{
 		Use:   cmdnames.Root,
@@ -198,16 +211,16 @@ eos is a service supervisor.
 	rootCmd.PersistentFlags().Bool("no-daemon", false, "run in local mode without daemon")
 	rootCmd.PersistentFlags().Bool("verbose", false, "enable verbose debug logging")
 
-	rootCmd.AddCommand(newAddCmd(getManager))
+	rootCmd.AddCommand(newAddCmd(getManager, managerModeFn))
 	rootCmd.AddCommand(newInfoCmd(getManager))
 	rootCmd.AddCommand(newEnvCmd(getManager))
 	rootCmd.AddCommand(newLogsCmd(getManager, warnIfDaemonDown))
-	rootCmd.AddCommand(newRemoveCmd(getManager))
+	rootCmd.AddCommand(newRemoveCmd(getManager, managerModeFn))
 	rootCmd.AddCommand(newReloadCmd(getManager, getConfig))
-	rootCmd.AddCommand(newRunCmd(getManager, getConfig))
+	rootCmd.AddCommand(newRunCmd(getManager, getConfig, managerModeFn))
 	rootCmd.AddCommand(newStatusCmd(getManager, warnIfDaemonDown, getConfig))
-	rootCmd.AddCommand(newStopCmd(getManager, getConfig))
-	rootCmd.AddCommand(newUpdateCmd(getManager))
+	rootCmd.AddCommand(newStopCmd(getManager, getConfig, managerModeFn))
+	rootCmd.AddCommand(newUpdateCmd(getManager, managerModeFn))
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -218,11 +231,11 @@ eos is a service supervisor.
 		return baseDir, c, identity, err
 	}
 	rootCmd.AddCommand(newDaemonCmd(getDaemonConfig))
-	rootCmd.AddCommand(newSystemCmd(getManager, getConfig))
+	rootCmd.AddCommand(newSystemCmd(getManager, getConfig, managerModeFn))
 
 	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
-	rootCmd.AddCommand(newAPICmd(getManager, getConfig, getDaemonConfig))
+	rootCmd.AddCommand(newAPICmd(getManager, getConfig, getDaemonConfig, managerModeFn))
 
 	return rootCmd
 }
@@ -273,6 +286,7 @@ func newDaemonConfigLaunchd(baseDir string, isLaunchdManaged bool, underLaunchd 
 			Launchd: &config.LaunchdConfig{
 				LaunchdTargetDir:     launchdDir,
 				LaunchdPlistFileName: config.LaunchdPlistFileName,
+				SocketPath:           filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
 				UserAgent:            userAgent,
 			},
 		}
@@ -294,6 +308,7 @@ func newDaemonConfigOpenRC(baseDir string, isOpenRCManaged bool, underOpenRC boo
 			OpenRC: &config.OpenRCConfig{
 				InitDir:      initDir,
 				InitFileName: config.OpenRCTargetFileName,
+				SocketPath:   filepath.Clean(filepath.Join(baseDir, config.DaemonSocketPath)),
 			},
 		}
 	}
@@ -481,8 +496,10 @@ func safeParseDuration(durationAsString string, fallback time.Duration) time.Dur
 }
 
 // newLocalManagerWithCleanup opens the database directly and returns an
-// in-process manager plus a cleanup that closes the connection. Used for both
-// --no-daemon and the "no standalone daemon configured" cases.
+// in-process manager plus a cleanup that closes the connection. This is the
+// only manager that can serve a request with no daemon answering, so it backs
+// every case where IPC is unavailable or unwanted: --no-daemon, a config that
+// names no supervisor at all, and a supervised unit that is currently stopped.
 func newLocalManagerWithCleanup(ctx context.Context, baseDir string, verbose bool, sinkRegistry map[string]types.LogSink) (manager.ServiceManager, func(), error) {
 	db, err := database.NewDB(ctx, baseDir)
 	if err != nil {
@@ -498,23 +515,72 @@ func newLocalManagerWithCleanup(ctx context.Context, baseDir string, verbose boo
 	return mgr, cleanup, nil
 }
 
-func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig, sinkRegistry map[string]types.LogSink) (mgr manager.ServiceManager, cleanUp func(), err error) {
+// newManager picks the manager this invocation talks through, and describes the
+// in-process case it fell back to (see localMode) so the state-changing commands
+// can refuse without re-observing liveness themselves.
+//
+// The daemon socket is probed at most once per invocation, and only when a
+// daemon is configured at all.
+func newManager(rootCmd *cobra.Command, baseDir string, daemonConfig config.DaemonConfig, sinkRegistry map[string]types.LogSink) (mgr manager.ServiceManager, cleanUp func(), mode localMode, err error) {
 	ctx := rootCmd.Context()
 	noDaemon, err := rootCmd.Flags().GetBool("no-daemon")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, localMode{}, err
 	}
 	verbose, _ := rootCmd.Flags().GetBool("verbose")
 
-	if noDaemon || daemonConfig.Standalone == nil {
-		return newLocalManagerWithCleanup(ctx, baseDir, verbose, sinkRegistry)
+	endpoint, configured := config.ResolveDaemonEndpoint(daemonConfig)
+	daemonLive := configured && socketResponds(ctx, endpoint.SocketPath)
+
+	if !noDaemon && configured {
+		if endpoint.Supervised {
+			if daemonLive {
+				// systemd/launchd/OpenRC own the daemon's lifecycle, so this
+				// branch never forks one: it talks to the socket that daemon
+				// already listens on. Falling through to the in-process manager
+				// instead launched every service as a child of a CLI process
+				// that exited milliseconds later — orphaning the service,
+				// killing the pipes its stdout and stderr were wired to, and
+				// writing a state DB and log files the live daemon was writing
+				// too.
+				return manager.NewSupervisedDaemonManager(endpoint.SocketPath), nil, localMode{}, nil
+			}
+		} else {
+			// Standalone: eos owns this daemon, so NewDaemonManager may fork one
+			// on demand from the PID file it wrote itself — which is why a down
+			// standalone daemon is not an outage the guards have to report.
+			mgr, err = manager.NewDaemonManager(ctx, endpoint.SocketPath, endpoint.PIDFile, endpoint.Timeout, verbose)
+			if err != nil {
+				return nil, nil, localMode{}, err
+			}
+			return mgr, nil, localMode{}, nil
+		}
 	}
 
-	mgr, err = manager.NewDaemonManager(ctx, daemonConfig.Standalone.SocketPath, daemonConfig.Standalone.PIDFile, daemonConfig.Standalone.SocketTimeout, verbose)
+	// Everything else runs in-process. A supervised unit that is down lands
+	// here rather than forking a rival daemon the supervisor knows nothing
+	// about: read commands must keep serving last-known state (warnIfDaemonDown
+	// says as much), and refuseLocalStart is what stops a write path from
+	// spawning an orphan in that window.
+	mgr, cleanUp, err = newLocalManagerWithCleanup(ctx, baseDir, verbose, sinkRegistry)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, localMode{}, err
 	}
-	return mgr, nil, nil
+	return mgr, cleanUp, localMode{
+		// Only --no-daemon reaches here with a daemon answering, so the guards
+		// can name that flag as the fix without qualification.
+		LiveDaemonSocket: liveSocketOrEmpty(daemonLive, endpoint.SocketPath),
+		SupervisorDown:   configured && endpoint.Supervised && !daemonLive && !noDaemon,
+	}, nil
+}
+
+// liveSocketOrEmpty keeps localMode's "" convention in one place: the socket
+// only names a conflict when something actually answered on it.
+func liveSocketOrEmpty(live bool, socketPath string) string {
+	if !live {
+		return ""
+	}
+	return socketPath
 }
 
 // Execute is the entry point for the eos CLI.

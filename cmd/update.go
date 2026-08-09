@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newUpdateCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:     cmdnames.UseUpdate,
 		Short:   "Update a registered service's path",
@@ -30,6 +30,13 @@ func newUpdateCmd(getManager func() manager.ServiceManager) *cobra.Command {
 			serviceName := args[0]
 			newProjectPath := args[1]
 			mgr := getManager()
+
+			// Repointing the catalog row in-process leaves the daemon supervising
+			// a process started from the old path while every later read resolves
+			// the new one.
+			if err := refuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			cmd.Printf("%s %s to %s\n", ui.LabelInfo.Render("updating"), ui.TextBold.Render(serviceName), newProjectPath)
 

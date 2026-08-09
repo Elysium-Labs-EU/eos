@@ -184,9 +184,12 @@ func TestNewManagerLocalMode(t *testing.T) {
 		t.Fatalf("setting no-daemon flag: %v", err)
 	}
 
-	mgr, cleanup, err := newManager(rootCmd, td, config.DaemonConfig{Standalone: nil}, nil)
+	mgr, cleanup, mode, err := newManager(rootCmd, td, config.DaemonConfig{Standalone: nil}, nil)
 	if err != nil {
 		t.Fatalf("newManager should not error in local mode: %v", err)
+	}
+	if mode != (localMode{}) {
+		t.Errorf("expected a clean localMode with no daemon configured, got %+v", mode)
 	}
 	if mgr == nil {
 		t.Fatal("expected a manager in local mode")

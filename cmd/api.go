@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, getDaemonConfig func() (string, *config.SystemConfig, userutil.Identity, error)) *cobra.Command {
+func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, getDaemonConfig func() (string, *config.SystemConfig, userutil.Identity, error), managerMode localModeFn) *cobra.Command {
 	apiCmd := &cobra.Command{
 		Use:           cmdnames.API,
 		Short:         "Machine-readable JSON interface",
@@ -16,14 +16,14 @@ func newAPICmd(getManager func() manager.ServiceManager, getConfig func() *confi
 		SilenceUsage:  true,
 	}
 
-	apiCmd.AddCommand(newAPIAddCmd(getManager))
+	apiCmd.AddCommand(newAPIAddCmd(getManager, managerMode))
 	apiCmd.AddCommand(newAPIInfoCmd(getManager))
 	apiCmd.AddCommand(newAPILogsCmd(getManager))
-	apiCmd.AddCommand(newAPIRemoveCmd(getManager))
-	apiCmd.AddCommand(newAPIRunCmd(getManager, getConfig))
+	apiCmd.AddCommand(newAPIRemoveCmd(getManager, managerMode))
+	apiCmd.AddCommand(newAPIRunCmd(getManager, getConfig, managerMode))
 	apiCmd.AddCommand(newAPIStatusCmd(getManager))
-	apiCmd.AddCommand(newAPIStopCmd(getManager, getConfig))
-	apiCmd.AddCommand(newAPIUpdateCmd(getManager))
+	apiCmd.AddCommand(newAPIStopCmd(getManager, getConfig, managerMode))
+	apiCmd.AddCommand(newAPIUpdateCmd(getManager, managerMode))
 	apiCmd.AddCommand(newAPIValidateCmd())
 	apiCmd.AddCommand(newAPIDaemonCmd(getDaemonConfig))
 
