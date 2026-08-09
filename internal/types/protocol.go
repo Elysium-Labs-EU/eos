@@ -29,6 +29,7 @@ const (
 	MethodSetServiceEnabled           = "SetServiceEnabled"
 
 	MethodGetMostRecentProcessHistoryEntry = "GetMostRecentProcessHistoryEntry"
+	MethodGetLiveOrphanProcessGroups       = "GetLiveOrphanProcessGroups"
 
 	MethodSetDependencyWaitStatus   = "SetDependencyWaitStatus"
 	MethodClearDependencyWaitStatus = "ClearDependencyWaitStatus"
@@ -60,6 +61,7 @@ var ValidMethods = map[MethodName]bool{
 	MethodSetServiceEnabled:           true,
 
 	MethodGetMostRecentProcessHistoryEntry: true,
+	MethodGetLiveOrphanProcessGroups:       true,
 
 	MethodSetDependencyWaitStatus:   true,
 	MethodClearDependencyWaitStatus: true,
@@ -179,6 +181,14 @@ type SetServiceEnabledArgs struct {
 
 type GetMostRecentProcessHistoryEntryArgs struct {
 	Name string `json:"name"`
+}
+
+type GetLiveOrphanProcessGroupsArgs struct {
+	Name string `json:"name"`
+}
+
+type GetLiveOrphanProcessGroupsResponse struct {
+	Entries []ProcessHistory `json:"entries"`
 }
 
 // SetDependencyWaitStatusArgs records that ServiceName is currently blocked

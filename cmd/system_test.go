@@ -2887,6 +2887,7 @@ type mockMgr struct {
 	getAllCatalogEntries func() ([]types.ServiceCatalogEntry, error)
 	getServiceInstance   func(string) (*types.ServiceInstance, error)
 	getMostRecentProcess func(string) (*types.ProcessHistory, error)
+	getLiveOrphans       func(string) ([]types.ProcessHistory, error)
 	isServiceRegistered  func(string) (bool, error)
 	removeCatalogEntry   func(string) (bool, error)
 	updateCatalogEntry   func(string, string, string) error
@@ -2958,6 +2959,12 @@ func (m *mockMgr) GetMostRecentProcessHistoryEntry(_ context.Context, name strin
 		return m.getMostRecentProcess(name)
 	}
 	return &types.ProcessHistory{}, nil
+}
+func (m *mockMgr) GetLiveOrphanProcessGroups(_ context.Context, name string) ([]types.ProcessHistory, error) {
+	if m.getLiveOrphans != nil {
+		return m.getLiveOrphans(name)
+	}
+	return nil, nil
 }
 func (m *mockMgr) NewServiceLogFiles(context.Context, string) (string, string, error) {
 	return "", "", nil

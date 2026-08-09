@@ -23,9 +23,13 @@ type apiStatusService struct {
 	Status    types.ServiceStatus `json:"status"`
 	// WaitingFor lists the depends_on names this service is currently blocked
 	// on, set only when Status is "waiting". Empty/omitted otherwise.
-	WaitingFor   []string `json:"waiting_for,omitempty"`
-	PGID         int      `json:"pgid"`
-	RestartCount int      `json:"restart_count"`
+	WaitingFor []string `json:"waiting_for,omitempty"`
+	// OrphanedPGIDs lists process groups from EARLIER process_history rows
+	// that are still alive in the OS process table -- a leak that a
+	// most-recent-row-only view would otherwise hide entirely.
+	OrphanedPGIDs []int `json:"orphaned_pgids,omitempty"`
+	PGID          int   `json:"pgid"`
+	RestartCount  int   `json:"restart_count"`
 }
 
 type apiStatusResult struct {
@@ -52,6 +56,7 @@ Output schema (stdout, JSON):
         "started_at":    string|omitted   -- RFC3339 start time
         "error":         string|omitted   -- last error if any
         "waiting_for":   []string|omitted -- depends_on names still not ready (status "waiting" only)
+        "orphaned_pgids":[]int|omitted    -- live process groups left behind by earlier instances
       }
     ]
   }
@@ -105,7 +110,11 @@ func apiStatusBuildServiceEntry(ctx context.Context, mgr manager.ServiceManager,
 	if err != nil && !errors.Is(err, manager.ErrProcessNotFound) {
 		return apiStatusService{}, fmt.Errorf("getting process for %q: %w", reg.Name, err)
 	}
-	apiStatusApplyProcessMetrics(&entry, mostRecentProcess, reg.DirectoryPath, reg.ConfigFileName)
+	orphans, err := mgr.GetLiveOrphanProcessGroups(ctx, reg.Name)
+	if err != nil {
+		return apiStatusService{}, fmt.Errorf("getting orphaned process groups for %q: %w", reg.Name, err)
+	}
+	apiStatusApplyProcessMetrics(&entry, mostRecentProcess, orphans, reg.DirectoryPath, reg.ConfigFileName)
 
 	serviceInstance, err := mgr.GetServiceInstance(ctx, reg.Name)
 	if err != nil && !errors.Is(err, manager.ErrServiceNotRunning) {
@@ -121,9 +130,10 @@ func apiStatusBuildServiceEntry(ctx context.Context, mgr manager.ServiceManager,
 	return entry, nil
 }
 
-func apiStatusApplyProcessMetrics(entry *apiStatusService, mostRecentProcess *types.ProcessHistory, directoryPath, configFileName string) {
-	entry.Status = helpers.DetermineServiceStatus(mostRecentProcess)
+func apiStatusApplyProcessMetrics(entry *apiStatusService, mostRecentProcess *types.ProcessHistory, orphans []types.ProcessHistory, directoryPath, configFileName string) {
+	entry.Status = helpers.DetermineServiceStatus(mostRecentProcess, len(orphans) > 0)
 	entry.Uptime = helpers.DetermineUptimeHuman(mostRecentProcess)
+	entry.OrphanedPGIDs = helpers.ExtractPGIDs(orphans)
 
 	if mostRecentProcess != nil {
 		entry.PGID = mostRecentProcess.PGID

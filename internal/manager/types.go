@@ -30,6 +30,13 @@ type ServiceManager interface {
 	SetServiceEnabled(ctx context.Context, name string, enabled bool) error
 
 	GetMostRecentProcessHistoryEntry(ctx context.Context, name string) (*types.ProcessHistory, error)
+	// GetLiveOrphanProcessGroups returns every process_history row for name
+	// other than the most recent one whose process group is still alive in
+	// the OS process table. status/info read paths have historically only
+	// ever consulted the most recent row, which hides a still-running
+	// process pinned to an older row entirely — even though the stop path
+	// already walks the whole history (see LocalManager.stopServiceWithSignal).
+	GetLiveOrphanProcessGroups(ctx context.Context, name string) ([]types.ProcessHistory, error)
 
 	NewServiceLogFiles(ctx context.Context, serviceName string) (logPath string, errorLogPath string, err error)
 	GetServiceLogFilePath(ctx context.Context, serviceName string, errorLog bool) (*string, error)

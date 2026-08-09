@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,7 +44,29 @@ func ResolveDependencyWaitStatus(ctx context.Context, mgr manager.ServiceManager
 	return wait.Pending
 }
 
-func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {
+// DetermineServiceStatus resolves the display status for a service's most
+// recent process_history row. hasLiveOrphan overrides an otherwise
+// inactive-looking status (stopped/failed/unknown) to "orphaned" when a
+// process group from an EARLIER row is still alive — callers get this from
+// manager.ServiceManager.GetLiveOrphanProcessGroups, since a status derived
+// from mostRecentProcess alone would otherwise report a live process as
+// stopped just because it isn't the newest row.
+func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory, hasLiveOrphan bool) types.ServiceStatus {
+	status := determineStatusFromProcessState(mostRecentProcess)
+	if !hasLiveOrphan {
+		return status
+	}
+	switch status {
+	case types.ServiceStatusStopped, types.ServiceStatusFailed, types.ServiceStatusUnknown:
+		return types.ServiceStatusOrphaned
+	case types.ServiceStatusRunning, types.ServiceStatusStarting, types.ServiceStatusWaitingForDeps, types.ServiceStatusOrphaned:
+		return status
+	default:
+		return status
+	}
+}
+
+func determineStatusFromProcessState(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {
 	if mostRecentProcess == nil {
 		return types.ServiceStatusStopped
 	}
@@ -102,7 +125,7 @@ func DetermineUptimeAPI(mostRecentProcess *types.ProcessHistory) *string {
 }
 
 func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStatus) string {
-	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped || status == types.ServiceStatusOrphaned {
 		return "-"
 	}
 	if rssMemoryKb <= 0 {
@@ -112,7 +135,7 @@ func DetermineProcessMemoryInMbHuman(rssMemoryKb int64, status types.ServiceStat
 }
 
 func DetermineProcessMemoryInMbAPI(rssMemoryKb int64, status types.ServiceStatus) *string {
-	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped || status == types.ServiceStatusOrphaned {
 		return nil
 	}
 	if rssMemoryKb <= 0 {
@@ -137,7 +160,7 @@ func DetermineProcessPeakMemoryInMbHuman(peakRssMemoryKb int64) string {
 // service), so a running service always shows a number; only stopped/failed
 // services collapse to "-".
 func DetermineProcessCPUHuman(cpuPercent float64, status types.ServiceStatus) string {
-	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped {
+	if status == types.ServiceStatusFailed || status == types.ServiceStatusStopped || status == types.ServiceStatusOrphaned {
 		return "-"
 	}
 	if cpuPercent < 0 {
@@ -170,6 +193,31 @@ func IsProcessHistoryStale(mostRecentProcess *types.ProcessHistory, checkInterva
 	}
 	threshold := time.Duration(StaleThresholdMultiplier) * checkInterval
 	return now.Sub(*mostRecentProcess.UpdatedAt) > threshold
+}
+
+// ExtractPGIDs returns the PGID of each row in history, in order. Used to
+// render live-orphan process groups as a flat PGID list independent of the
+// caller's own display format (table cell, JSON array, key/value line).
+func ExtractPGIDs(history []types.ProcessHistory) []int {
+	pgids := make([]int, len(history))
+	for i := range history {
+		pgids[i] = history[i].PGID
+	}
+	return pgids
+}
+
+// DetermineOrphanedPGIDsHuman formats the PGIDs of live process groups left
+// behind by earlier process_history rows for human-readable output (table
+// cell, info key/value line).
+func DetermineOrphanedPGIDsHuman(pgids []int) string {
+	if len(pgids) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(pgids))
+	for i, pgid := range pgids {
+		parts[i] = strconv.Itoa(pgid)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func DetermineError(errorStringPtr *string) string {

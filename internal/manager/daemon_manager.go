@@ -591,6 +591,26 @@ func (dm *DaemonManager) GetMostRecentProcessHistoryEntry(ctx context.Context, n
 	return &result.ProcessEntry, nil
 }
 
+// GetLiveOrphanProcessGroups implements ServiceManager.GetLiveOrphanProcessGroups
+// (see interface doc) over the daemon RPC socket.
+func (dm *DaemonManager) GetLiveOrphanProcessGroups(ctx context.Context, name string) ([]types.ProcessHistory, error) {
+	args, err := json.Marshal(types.GetLiveOrphanProcessGroupsArgs{Name: name})
+	if err != nil {
+		return nil, fmt.Errorf("GetLiveOrphanProcessGroups: marshaling args: %w", err)
+	}
+	response, err := dm.sendRequest(ctx, types.MethodGetLiveOrphanProcessGroups, args)
+	if err != nil {
+		return nil, fmt.Errorf("GetLiveOrphanProcessGroups: request errored: %w", err)
+	}
+
+	var result types.GetLiveOrphanProcessGroupsResponse
+	if err := json.Unmarshal(response.Data, &result); err != nil {
+		return nil, fmt.Errorf("GetLiveOrphanProcessGroups: parse response data: %w", err)
+	}
+
+	return result.Entries, nil
+}
+
 // SetDependencyWaitStatus tells the daemon that name is currently blocked
 // waiting on pending to become ready, so a concurrent `eos status`/`eos api
 // status` request against this same daemon can show it. Best-effort

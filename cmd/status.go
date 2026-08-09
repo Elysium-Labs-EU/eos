@@ -119,17 +119,18 @@ func daemonIdentity() string {
 // status table; buildStatusServiceEntry populates it from the manager and
 // on-disk config for a single registered service.
 type statusServiceEntry struct {
-	Name         string
-	Status       types.ServiceStatus
-	MemoryMb     string
-	CPU          string
-	Started      string
-	Uptime       string
-	Error        string
-	NextRestart  string
-	PGID         int
-	RestartCount int
-	Stale        bool
+	Name          string
+	Status        types.ServiceStatus
+	MemoryMb      string
+	CPU           string
+	Started       string
+	Uptime        string
+	Error         string
+	NextRestart   string
+	OrphanedPGIDs []int
+	PGID          int
+	RestartCount  int
+	Stale         bool
 }
 
 // buildStatusServiceEntry resolves a single registered service's display row.
@@ -164,12 +165,20 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		return statusServiceEntry{}, false
 	}
 
+	orphans, err := mgr.GetLiveOrphanProcessGroups(cmd.Context(), regServiceName)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelKeyMsg, ui.LabelError.Render("error"), ui.TextBold.Render(regServiceName), fmt.Sprintf("getting orphaned process groups: %v", err))
+		return statusServiceEntry{}, false
+	}
+
+	status := helpers.DetermineServiceStatus(mostRecentProcess, len(orphans) > 0)
 	entry := statusServiceEntry{
-		Name:     regServiceName,
-		Status:   helpers.DetermineServiceStatus(mostRecentProcess),
-		Uptime:   helpers.DetermineUptimeHuman(mostRecentProcess),
-		MemoryMb: helpers.DetermineProcessMemoryInMbHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
-		CPU:      helpers.DetermineProcessCPUHuman(0, helpers.DetermineServiceStatus(mostRecentProcess)),
+		Name:          regServiceName,
+		Status:        status,
+		Uptime:        helpers.DetermineUptimeHuman(mostRecentProcess),
+		MemoryMb:      helpers.DetermineProcessMemoryInMbHuman(0, status),
+		CPU:           helpers.DetermineProcessCPUHuman(0, status),
+		OrphanedPGIDs: helpers.ExtractPGIDs(orphans),
 	}
 	if mostRecentProcess != nil {
 		entry.PGID = mostRecentProcess.PGID
@@ -208,7 +217,7 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 // of the status column's daemon-liveness reading.
 func buildStatusRows(activeServices []statusServiceEntry) (rows [][]string, staleRows []bool) {
 	if len(activeServices) == 0 {
-		return [][]string{{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-"}}, []bool{false}
+		return [][]string{{"-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"}}, []bool{false}
 	}
 
 	for i := range activeServices {
@@ -228,6 +237,7 @@ func buildStatusRows(activeServices []statusServiceEntry) (rows [][]string, stal
 			svc.Started,
 			svc.NextRestart,
 			svc.Error,
+			helpers.DetermineOrphanedPGIDsHuman(svc.OrphanedPGIDs),
 		})
 		staleRows = append(staleRows, svc.Stale)
 	}
@@ -280,7 +290,7 @@ func printStatusTable(cmd *cobra.Command, mgr manager.ServiceManager, checkInter
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(ui.TableBorderColor)).
 		StyleFunc(statusTableStyleFunc(staleRows)).
-		Headers("name", "status", "pgid", "memory", "cpu", "uptime", "restarts", "started", "next restart", "error").
+		Headers("name", "status", "pgid", "memory", "cpu", "uptime", "restarts", "started", "next restart", "error", "orphaned pgids").
 		Rows(rows...)
 
 	cmd.Println(t)

@@ -24,6 +24,13 @@ const (
 	// blocked on a dependency and one that simply hasn't been asked to start
 	// both render identically as "stopped" — indistinguishable from a hang.
 	ServiceStatusWaitingForDeps ServiceStatus = "waiting"
+	// ServiceStatusOrphaned means the most recent process_history row looks
+	// inactive (stopped/failed/unknown), but an older row for the same
+	// service still has a live process group in the OS process table. A
+	// most-recent-row-only view hides this leak entirely; see
+	// helpers.DetermineServiceStatus and manager.ServiceManager's
+	// GetLiveOrphanProcessGroups.
+	ServiceStatusOrphaned ServiceStatus = "orphaned"
 )
 
 type Runtime struct {

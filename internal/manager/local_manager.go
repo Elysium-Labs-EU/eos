@@ -454,6 +454,43 @@ func (m *LocalManager) GetMostRecentProcessHistoryEntry(ctx context.Context, nam
 	return &entry, nil
 }
 
+// GetLiveOrphanProcessGroups implements ServiceManager.GetLiveOrphanProcessGroups
+// (see interface doc). It re-derives "most recent" via the same SQL ordering
+// GetMostRecentProcessHistoryEntry uses, rather than picking it out of the
+// full history slice in Go, so the two never disagree on which row that is.
+func (m *LocalManager) GetLiveOrphanProcessGroups(ctx context.Context, name string) ([]types.ProcessHistory, error) {
+	history, err := m.db.GetProcessHistoryEntriesByServiceName(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("listing process history for %s: %w", name, err)
+	}
+
+	mostRecent, err := m.db.GetMostRecentProcessHistoryEntryByName(ctx, name)
+	if err != nil && !errors.Is(err, database.ErrProcessHistoryNotFound) {
+		return nil, fmt.Errorf("get process history for %s: %w", name, err)
+	}
+
+	return liveOrphanRows(history, mostRecent.PGID), nil
+}
+
+// liveOrphanRows returns every row in history other than mostRecentPGID whose
+// process group is still alive, using procutil.IsAliveMatching to rule out a
+// live PGID the kernel has since recycled for an unrelated process. Mirrors
+// the whole-history liveness scan stopServiceWithSignal already does on the
+// write path (see lmSignalHistoryEntry), applied to the read path instead.
+func liveOrphanRows(history []types.ProcessHistory, mostRecentPGID int) []types.ProcessHistory {
+	var orphans []types.ProcessHistory
+	for i := range history {
+		row := &history[i]
+		if row.PGID <= 0 || row.PGID == mostRecentPGID {
+			continue
+		}
+		if procutil.IsAliveMatching(row.PGID, row.StartedAtTicks) {
+			orphans = append(orphans, *row)
+		}
+	}
+	return orphans
+}
+
 func (m *LocalManager) UpdateServiceCatalogEntry(ctx context.Context, name string, newDirectoryPath string, newConfigFileName string) error {
 	err := m.db.UpdateServiceCatalogEntry(ctx, name, newDirectoryPath, newConfigFileName)
 	if err != nil {

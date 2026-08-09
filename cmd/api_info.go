@@ -32,7 +32,11 @@ type apiInfoProcess struct {
 	Uptime       string              `json:"uptime"`
 	MemoryMb     string              `json:"memory_mb"`
 	PeakMemoryMb string              `json:"peak_memory_mb"`
-	PGID         int                 `json:"pgid"`
+	// OrphanedPGIDs lists process groups from EARLIER process_history rows
+	// that are still alive in the OS process table -- a leak that a
+	// most-recent-row-only view would otherwise hide entirely.
+	OrphanedPGIDs []int `json:"orphaned_pgids,omitempty"`
+	PGID          int   `json:"pgid"`
 }
 
 func newAPIInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
@@ -58,7 +62,8 @@ Output schema (stdout, JSON):
       }
     },
     "instance": { ... } | null        -- present when the service is running
-    "process":  { ... } | null        -- most recent process history entry
+    "process":  { ... } | null        -- most recent process history entry, plus:
+      "orphaned_pgids": []int|omitted -- live process groups left behind by earlier instances
   }
 
 Error schema (stderr, JSON):
@@ -100,13 +105,18 @@ func apiInfoRunE(cmd *cobra.Command, ctx context.Context, serviceName string, mg
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
+	orphanGroups, err := apiInfoLoadOrphanGroups(ctx, mgr, serviceName)
+	if err != nil {
+		return helpers.WriteJSONErr(cmd, err)
+	}
+
 	logPath, errorLogPath, err := apiInfoLoadLogPaths(ctx, mgr, serviceName, serviceInstance != nil)
 	if err != nil {
 		return helpers.WriteJSONErr(cmd, err)
 	}
 
 	serviceInfo := compileServiceInfoObject(&registeredService, serviceInstance, config, logPath, errorLogPath)
-	serviceInfo.Process = compileProcessInfoObject(processEntry)
+	serviceInfo.Process = compileProcessInfoObject(processEntry, orphanGroups)
 
 	return helpers.WriteJSON(cmd, serviceInfo)
 }
@@ -147,6 +157,14 @@ func apiInfoLoadProcessEntry(ctx context.Context, mgr manager.ServiceManager, se
 	return processEntry, nil
 }
 
+func apiInfoLoadOrphanGroups(ctx context.Context, mgr manager.ServiceManager, serviceName string) ([]types.ProcessHistory, error) {
+	orphanGroups, err := mgr.GetLiveOrphanProcessGroups(ctx, serviceName)
+	if err != nil {
+		return nil, fmt.Errorf("getting orphaned process groups: %w", err)
+	}
+	return orphanGroups, nil
+}
+
 func apiInfoLoadLogPaths(ctx context.Context, mgr manager.ServiceManager, serviceName string, instanceRunning bool) (*string, *string, error) {
 	logPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, false)
 	if err != nil && instanceRunning {
@@ -184,14 +202,19 @@ func compileServiceInfoObject(registeredService *types.ServiceCatalogEntry, serv
 	return serviceInfo
 }
 
-func compileProcessInfoObject(processEntry *types.ProcessHistory) *apiInfoProcess {
-	if processEntry == nil {
+func compileProcessInfoObject(processEntry *types.ProcessHistory, orphanGroups []types.ProcessHistory) *apiInfoProcess {
+	if processEntry == nil && len(orphanGroups) == 0 {
 		return nil
 	}
+	status := helpers.DetermineServiceStatus(processEntry, len(orphanGroups) > 0)
 	processInfo := &apiInfoProcess{
-		Status: helpers.DetermineServiceStatus(processEntry),
-		PGID:   processEntry.PGID,
+		Status:        status,
+		OrphanedPGIDs: helpers.ExtractPGIDs(orphanGroups),
 	}
+	if processEntry == nil {
+		return processInfo
+	}
+	processInfo.PGID = processEntry.PGID
 
 	uptime := helpers.DetermineUptimeAPI(processEntry)
 	if uptime != nil {

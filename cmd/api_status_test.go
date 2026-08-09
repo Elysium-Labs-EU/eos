@@ -23,12 +23,14 @@ import (
 // so error branches can be exercised without a real DB-backed manager.
 type apiStatusFakeManager struct {
 	manager.ServiceManager
-	catalogErr   error
-	processErr   error
-	instanceErr  error
-	processEntry *types.ProcessHistory
-	instance     *types.ServiceInstance
-	catalog      []types.ServiceCatalogEntry
+	catalogErr    error
+	processErr    error
+	instanceErr   error
+	orphanErr     error
+	processEntry  *types.ProcessHistory
+	instance      *types.ServiceInstance
+	catalog       []types.ServiceCatalogEntry
+	orphanEntries []types.ProcessHistory
 }
 
 func (f *apiStatusFakeManager) GetAllServiceCatalogEntries(context.Context) ([]types.ServiceCatalogEntry, error) {
@@ -37,6 +39,10 @@ func (f *apiStatusFakeManager) GetAllServiceCatalogEntries(context.Context) ([]t
 
 func (f *apiStatusFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
+}
+
+func (f *apiStatusFakeManager) GetLiveOrphanProcessGroups(context.Context, string) ([]types.ProcessHistory, error) {
+	return f.orphanEntries, f.orphanErr
 }
 
 func (f *apiStatusFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
@@ -63,6 +69,32 @@ func TestAPIStatusBuildServiceEntryInstanceError(t *testing.T) {
 	reg := types.ServiceCatalogEntry{Name: "svc"}
 	if _, err := apiStatusBuildServiceEntry(t.Context(), &apiStatusFakeManager{instanceErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting instance for "svc"`) {
 		t.Errorf("expected wrapped 'getting instance for' error, got: %v", err)
+	}
+}
+
+func TestAPIStatusBuildServiceEntryOrphanError(t *testing.T) {
+	wantErr := errors.New("boom")
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	if _, err := apiStatusBuildServiceEntry(t.Context(), &apiStatusFakeManager{orphanErr: wantErr}, &reg); err == nil || !strings.Contains(err.Error(), `getting orphaned process groups for "svc"`) {
+		t.Errorf("expected wrapped 'getting orphaned process groups for' error, got: %v", err)
+	}
+}
+
+func TestAPIStatusBuildServiceEntrySurfacesLiveOrphan(t *testing.T) {
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	mgr := &apiStatusFakeManager{
+		processEntry:  &types.ProcessHistory{State: types.ProcessStateStopped, PGID: 100},
+		orphanEntries: []types.ProcessHistory{{PGID: 1763}},
+	}
+	entry, err := apiStatusBuildServiceEntry(t.Context(), mgr, &reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Status != types.ServiceStatusOrphaned {
+		t.Errorf("expected status orphaned, got %q", entry.Status)
+	}
+	if len(entry.OrphanedPGIDs) != 1 || entry.OrphanedPGIDs[0] != 1763 {
+		t.Errorf("expected orphaned pgids [1763], got %v", entry.OrphanedPGIDs)
 	}
 }
 

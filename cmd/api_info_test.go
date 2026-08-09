@@ -25,10 +25,12 @@ type apiInfoFakeManager struct {
 	catalogErr      error
 	instanceErr     error
 	processErr      error
+	orphanErr       error
 	logPathErr      error
 	errorLogPathErr error
 	instance        *types.ServiceInstance
 	processEntry    *types.ProcessHistory
+	orphanEntries   []types.ProcessHistory
 	logPath         *string
 	errorLogPath    *string
 	catalogEntry    types.ServiceCatalogEntry
@@ -44,6 +46,10 @@ func (f *apiInfoFakeManager) GetServiceInstance(context.Context, string) (*types
 
 func (f *apiInfoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
+}
+
+func (f *apiInfoFakeManager) GetLiveOrphanProcessGroups(context.Context, string) ([]types.ProcessHistory, error) {
+	return f.orphanEntries, f.orphanErr
 }
 
 func (f *apiInfoFakeManager) GetServiceLogFilePath(_ context.Context, _ string, errorLog bool) (*string, error) {
@@ -98,6 +104,21 @@ func TestAPIInfoLoadProcessEntryError(t *testing.T) {
 	}
 	if entry != nil {
 		t.Errorf("expected nil process entry, got: %v", entry)
+	}
+}
+
+func TestAPIInfoLoadOrphanGroupsError(t *testing.T) {
+	wantErr := errors.New("boom")
+	if _, err := apiInfoLoadOrphanGroups(t.Context(), &apiInfoFakeManager{orphanErr: wantErr}, "svc"); err == nil || !strings.Contains(err.Error(), "getting orphaned process groups") {
+		t.Errorf("expected wrapped 'getting orphaned process groups' error, got: %v", err)
+	}
+
+	entries, err := apiInfoLoadOrphanGroups(t.Context(), &apiInfoFakeManager{orphanEntries: []types.ProcessHistory{{PGID: 1763}}}, "svc")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if len(entries) != 1 || entries[0].PGID != 1763 {
+		t.Errorf("expected orphan entries [1763], got: %v", entries)
 	}
 }
 
@@ -178,6 +199,19 @@ func TestAPIInfoRunEProcessHistoryError(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "getting process history") {
 		t.Errorf("expected stderr to mention 'getting process history', got: %s", errBuf.String())
+	}
+}
+
+func TestAPIInfoRunEOrphanGroupsError(t *testing.T) {
+	cmd, errBuf := apiInfoNewTestCmd(t)
+	entry := apiInfoWriteValidConfig(t, t.TempDir())
+	mgr := &apiInfoFakeManager{catalogEntry: entry, orphanErr: errors.New("boom")}
+
+	if err := apiInfoRunE(cmd, t.Context(), entry.Name, mgr); err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(errBuf.String(), "getting orphaned process groups") {
+		t.Errorf("expected stderr to mention 'getting orphaned process groups', got: %s", errBuf.String())
 	}
 }
 
