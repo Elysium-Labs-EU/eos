@@ -478,7 +478,9 @@ type stopCmdFakeManager struct {
 	manager.ServiceManager
 	forceStopErr      error
 	removeInstanceErr error
+	setEnabledErr     error
 	removedInstance   bool
+	setEnabledCalled  bool
 }
 
 func (f *stopCmdFakeManager) ForceStopService(context.Context, string) (manager.StopServiceResult, error) {
@@ -487,6 +489,11 @@ func (f *stopCmdFakeManager) ForceStopService(context.Context, string) (manager.
 
 func (f *stopCmdFakeManager) RemoveServiceInstance(context.Context, string) (bool, error) {
 	return f.removedInstance, f.removeInstanceErr
+}
+
+func (f *stopCmdFakeManager) SetServiceEnabled(context.Context, string, bool) error {
+	f.setEnabledCalled = true
+	return f.setEnabledErr
 }
 
 func TestStopCmdConfirmForceQuitDeclined(t *testing.T) {
@@ -522,6 +529,86 @@ func TestStopCmdConfirmForceQuitConfirmed(t *testing.T) {
 	}
 	if !strings.Contains(output, "service instance cleaned up") {
 		t.Errorf("expected 'service instance cleaned up', got: %s", output)
+	}
+	if !fake.setEnabledCalled {
+		t.Error("expected SetServiceEnabled to be called once the force stop fully succeeded")
+	}
+}
+
+// TestForceStopServiceManualInterventionSkipsPersist proves forceStopService
+// does not persist the disabled boot flag when a PGID survives even the
+// SIGKILL: it would otherwise mark a still-running process as "will not
+// start at boot" with nothing left to ever reap it.
+func TestForceStopServiceManualInterventionSkipsPersist(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	fake := &stopCmdFakeManager{
+		forceStopResult: manager.StopServiceResult{Errored: map[int]string{123: "kill: operation not permitted"}},
+		setEnabledErr:   errors.New("must not be called"),
+	}
+
+	forceStopService(cmd, "svc", fake)
+
+	if fake.setEnabledCalled {
+		t.Error("expected SetServiceEnabled not to be called when a PGID survives force kill")
+	}
+	output := errBuf.String()
+	if !strings.Contains(output, "manual action required") {
+		t.Errorf("expected 'manual action required', got: %s", output)
+	}
+}
+
+// TestForceStopServiceSetEnabledErrorLogged covers forceStopService's persist
+// failure branch: the force kill fully succeeded, but recording the boot
+// state fails and must be logged rather than silently swallowed.
+func TestForceStopServiceSetEnabledErrorLogged(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	fake := &stopCmdFakeManager{
+		forceStopResult: manager.StopServiceResult{Stopped: map[int]bool{123: true}},
+		setEnabledErr:   errors.New("db closed"),
+	}
+
+	forceStopService(cmd, "svc", fake)
+
+	if !fake.setEnabledCalled {
+		t.Error("expected SetServiceEnabled to be called once the force stop fully succeeded")
+	}
+	output := errBuf.String()
+	if !strings.Contains(output, "persisting stopped state:") || !strings.Contains(output, "db closed") {
+		t.Errorf("expected 'persisting stopped state: db closed', got: %s", output)
+	}
+}
+
+// TestStopCmdHandleResultNoProcessesSetEnabledError covers stopCmdHandleResult's
+// persist call in the "nothing was running" branch failing.
+func TestStopCmdHandleResultNoProcessesSetEnabledError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	fake := &stopCmdFakeManager{setEnabledErr: errors.New("db closed")}
+
+	err := stopCmdHandleResult(cmd, "svc", fake, manager.StopServiceResult{})
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	output := errBuf.String()
+	if !strings.Contains(output, "persisting stopped state:") || !strings.Contains(output, "db closed") {
+		t.Errorf("expected 'persisting stopped state: db closed', got: %s", output)
+	}
+}
+
+// TestStopCmdHandleResultAllStoppedSetEnabledError covers stopCmdHandleResult's
+// persist call in the "everything stopped cleanly" branch failing.
+func TestStopCmdHandleResultAllStoppedSetEnabledError(t *testing.T) {
+	cmd, _, errBuf, _ := setupCmd(t)
+	fake := &stopCmdFakeManager{setEnabledErr: errors.New("db closed")}
+
+	err := stopCmdHandleResult(cmd, "svc", fake, manager.StopServiceResult{Stopped: map[int]bool{123: true}})
+
+	if !errors.Is(err, helpers.ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got: %v", err)
+	}
+	output := errBuf.String()
+	if !strings.Contains(output, "persisting stopped state:") || !strings.Contains(output, "db closed") {
+		t.Errorf("expected 'persisting stopped state: db closed', got: %s", output)
 	}
 }
 

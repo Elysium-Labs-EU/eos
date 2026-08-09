@@ -30,3 +30,12 @@ func WriteJSONErr(cmd *cobra.Command, err error) error {
 	cmd.PrintErr(string(out) + "\n")
 	return ErrAPICommandFailed
 }
+
+// WriteJSONErrCode is WriteJSONErr plus a stable "code" field, so a
+// script-driven caller can branch on the failure type without parsing the
+// human-readable "error" string.
+func WriteJSONErrCode(cmd *cobra.Command, err error, code string) error {
+	out, _ := json.Marshal(map[string]string{"error": err.Error(), "code": code})
+	cmd.PrintErr(string(out) + "\n")
+	return ErrAPICommandFailed
+}

@@ -240,6 +240,17 @@ done`
 	if !strings.Contains(combined, "force quit aborted") {
 		t.Errorf("expected 'force quit aborted', got: %s", combined)
 	}
+
+	// The process is still alive and the operator declined to kill it: the
+	// boot-recovery flag must not have been touched, or nothing would ever
+	// adopt or reap this process on the next daemon start.
+	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
+	if err != nil {
+		t.Fatalf("GetServiceCatalogEntry: %v", err)
+	}
+	if !entry.Enabled {
+		t.Error("expected Enabled to remain true after a declined force quit leaves the process running")
+	}
 }
 
 // TestStopCommandForceFlagStopServiceErrorLogged covers cmd/stop.go's
