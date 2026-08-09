@@ -388,6 +388,75 @@ install_sqlite3() {
     return 1
 }
 
+# install_openssl installs openssl through the detected package manager so a
+# release signature can be verified. Mirrors install_sqlite3 above — same
+# package managers, same fail-closed contract: the caller only proceeds with
+# verification once this returns 0.
+install_openssl() {
+    local pkg_manager="$1"
+
+    step "Installing openssl..."
+
+    case $pkg_manager in
+        apt)
+            if apt-get update -qq && apt-get install -y -qq openssl > /dev/null 2>&1; then
+                success "openssl installed via apt"
+                return 0
+            fi
+            ;;
+        yum)
+            if yum install -y -q openssl > /dev/null 2>&1; then
+                success "openssl installed via yum"
+                return 0
+            fi
+            ;;
+        dnf)
+            if dnf install -y -q openssl > /dev/null 2>&1; then
+                success "openssl installed via dnf"
+                return 0
+            fi
+            ;;
+        apk)
+            if apk add --quiet openssl > /dev/null 2>&1; then
+                success "openssl installed via apk"
+                return 0
+            fi
+            ;;
+        pacman)
+            if pacman -S --noconfirm --quiet openssl > /dev/null 2>&1; then
+                success "openssl installed via pacman"
+                return 0
+            fi
+            ;;
+        brew)
+            # Homebrew refuses to run as root by design, and this script
+            # requires root (check_root) — can't auto-install here. In
+            # practice this rarely matters: macOS ships /usr/bin/openssl
+            # out of the box, so the command -v check above almost always
+            # already passes before this function is ever reached on Darwin.
+            warn "Homebrew refuses to run as root — can't auto-install via sudo"
+            dim "  Run without sudo, then re-run this installer: brew install openssl"
+            return 1
+            ;;
+        *)
+            warn "Could not detect package manager"
+            echo ""
+            echo "Please install openssl manually:"
+            dim "  Debian/Ubuntu:  apt-get install openssl"
+            dim "  RHEL/CentOS:    yum install openssl"
+            dim "  Fedora:         dnf install openssl"
+            dim "  Alpine:         apk add openssl"
+            dim "  Arch:           pacman -S openssl"
+            dim "  macOS:          brew install openssl (without sudo)"
+            echo ""
+            return 1
+            ;;
+    esac
+
+    error "Failed to install openssl"
+    return 1
+}
+
 stop_running_daemon() {
     local eos_bin="${INSTALL_DIR}/${BINARY_NAME}"
 
@@ -708,10 +777,13 @@ main() {
 
         if download_file "$sig_url" "$tmp_sig" "$download_tool" && [[ -s "$tmp_sig" ]]; then
             if ! command -v openssl &> /dev/null; then
-                error "sha256sums.txt.sig is present but openssl is not installed — cannot verify it"
-                dim "  Install openssl or use --local with a binary you've verified yourself"
-                rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
-                exit 1
+                warn "sha256sums.txt.sig is present but openssl is not installed"
+                if ! install_openssl "$pkg_manager" || ! command -v openssl &> /dev/null; then
+                    error "Could not install openssl — cannot verify the release signature"
+                    dim "  Install openssl manually or use --local with a binary you've verified yourself"
+                    rm -f "$tmp_binary" "$tmp_checksums" "$tmp_sig"
+                    exit 1
+                fi
             fi
 
             local tmp_pubkey="${tmp_dir}/release-signing-pubkey.pem"

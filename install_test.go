@@ -183,3 +183,65 @@ func TestFetchLatestVersionAllPrereleaseFallback(t *testing.T) {
 		t.Errorf("fetch_latest_version = %q, want the highest prerelease %q", out, "v0.1.0-rc.2")
 	}
 }
+
+// TestInstallOpensslViaPackageManagers reproduces issue #242: Fedora and
+// Alpine don't ship openssl by default, so the signature-verification step
+// must install it through the detected package manager instead of refusing
+// outright. Each package manager's install command is stubbed as a shell
+// function so no real package installs happen.
+func TestInstallOpensslViaPackageManagers(t *testing.T) {
+	cases := []struct {
+		pkgManager string
+		stubCmd    string
+		wantMsg    string
+	}{
+		{"apt", "apt-get", "openssl installed via apt"},
+		{"yum", "yum", "openssl installed via yum"},
+		{"dnf", "dnf", "openssl installed via dnf"},
+		{"apk", "apk", "openssl installed via apk"},
+		{"pacman", "pacman", "openssl installed via pacman"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.pkgManager, func(t *testing.T) {
+			script := tc.stubCmd + `() { return 0; }; install_openssl ` + tc.pkgManager
+			out, err := runInstallFunc(t, script, nil)
+			if err != nil {
+				t.Fatalf("install_openssl %s failed: %v\n%s", tc.pkgManager, err, out)
+			}
+			if !strings.Contains(out, tc.wantMsg) {
+				t.Errorf("install_openssl %s output = %q, want substring %q", tc.pkgManager, out, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestInstallOpensslPropagatesPackageManagerFailure(t *testing.T) {
+	out, err := runInstallFunc(t, `apt-get() { return 1; }; install_openssl apt`, nil)
+	if err == nil {
+		t.Fatalf("install_openssl apt (mock failure) = success, want failure\n%s", out)
+	}
+	if !strings.Contains(out, "Failed to install openssl") {
+		t.Errorf("install_openssl apt (mock failure) output = %q, want the failure message", out)
+	}
+}
+
+func TestInstallOpensslBrewRefusesUnderSudo(t *testing.T) {
+	out, err := runInstallFunc(t, `install_openssl brew`, nil)
+	if err == nil {
+		t.Fatalf("install_openssl brew = success, want failure (Homebrew refuses to run as root)\n%s", out)
+	}
+	if !strings.Contains(out, "Homebrew refuses to run as root") {
+		t.Errorf("install_openssl brew output = %q, want the root-refusal message", out)
+	}
+}
+
+func TestInstallOpensslUnknownPackageManager(t *testing.T) {
+	out, err := runInstallFunc(t, `install_openssl unknown`, nil)
+	if err == nil {
+		t.Fatalf("install_openssl unknown = success, want failure\n%s", out)
+	}
+	if !strings.Contains(out, "Could not detect package manager") {
+		t.Errorf("install_openssl unknown output = %q, want the manual-install message", out)
+	}
+}
