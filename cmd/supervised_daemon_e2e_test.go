@@ -170,11 +170,11 @@ func procPPIDAndPGID(t *testing.T, pid int) (ppid, pgid int, alive bool) {
 	}
 	closing := strings.LastIndex(string(raw), ")")
 	if closing < 0 {
-		t.Fatalf("unparseable /proc/%d/stat: %q", pid, raw)
+		t.Fatalf("unparsable /proc/%d/stat: %q", pid, raw)
 	}
 	fields := strings.Fields(string(raw)[closing+1:])
 	if len(fields) < 3 {
-		t.Fatalf("unparseable /proc/%d/stat tail: %q", pid, raw)
+		t.Fatalf("unparsable /proc/%d/stat tail: %q", pid, raw)
 	}
 	ppid, err = strconv.Atoi(fields[1])
 	if err != nil {
