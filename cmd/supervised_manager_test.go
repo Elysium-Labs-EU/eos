@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
@@ -189,6 +192,107 @@ func TestNewManagerNoDaemonFlagWinsOverLiveDaemon(t *testing.T) {
 			t.Cleanup(cleanup)
 		})
 	}
+}
+
+// TestNewManagerStandaloneLiveUsesDaemonManager covers the branch standalone
+// takes when the operator did NOT pass --no-daemon: it goes through
+// NewDaemonManager, which eos may fork on demand, and reports a clean localMode
+// even though a daemon is answering — a standalone daemon the CLI is talking to
+// is not something the guards should refuse.
+//
+// The PID file names this test process, which is by definition alive, so
+// NewDaemonManager takes its already-running short circuit instead of forking a
+// real daemon out of the test binary.
+func TestNewManagerStandaloneLiveUsesDaemonManager(t *testing.T) {
+	sock := listenSocket(t)
+	pidFile := filepath.Join(filepath.Dir(sock), "eos.pid")
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("writing pid file: %v", err)
+	}
+
+	mgr, cleanup, mode, err := newManager(newManagerCmd(t, false), t.TempDir(),
+		config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{
+			SocketPath:    sock,
+			PIDFile:       pidFile,
+			SocketTimeout: time.Second,
+		}}, nil)
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+	if _, ok := mgr.(*manager.DaemonManager); !ok {
+		t.Fatalf("expected a *manager.DaemonManager for a live standalone daemon, got %T", mgr)
+	}
+	if mode != (localMode{}) {
+		t.Errorf("expected a clean localMode when talking to the daemon, got %+v", mode)
+	}
+	if cleanup != nil {
+		t.Error("expected no cleanup func for the daemon-backed manager")
+	}
+}
+
+// TestNewManagerStandaloneStartFailurePropagates covers the error return of the
+// standalone branch. The PID file sits in a directory that does not exist, so
+// preparing the fork fails before anything is spawned.
+func TestNewManagerStandaloneStartFailurePropagates(t *testing.T) {
+	dir := shortTempSocketDir(t)
+	_, _, _, err := newManager(newManagerCmd(t, false), t.TempDir(),
+		config.DaemonConfig{Standalone: &config.StandaloneDaemonConfig{
+			SocketPath:    filepath.Join(dir, "eos.sock"),
+			PIDFile:       filepath.Join(dir, "no-such-dir", "eos.pid"),
+			SocketTimeout: 100 * time.Millisecond,
+		}}, nil)
+	if err == nil {
+		t.Fatal("expected newManager to surface the daemon start failure")
+	}
+}
+
+// TestNewManagerFlagLookupError covers the guard on the --no-daemon lookup: a
+// root command that never registered the flag is a wiring bug, and newManager
+// reports it rather than silently choosing a manager on a default.
+func TestNewManagerFlagLookupError(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "eos"}
+	rootCmd.SetContext(t.Context())
+
+	if _, _, _, err := newManager(rootCmd, t.TempDir(), config.DaemonConfig{}, nil); err == nil {
+		t.Fatal("expected an error when the no-daemon flag is not registered")
+	}
+}
+
+// TestNewManagerLocalManagerErrorPropagates covers the error return of the
+// in-process fallback: a base dir that is a regular file cannot hold a state
+// database, and that failure must surface instead of yielding a nil manager.
+func TestNewManagerLocalManagerErrorPropagates(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "state-dir-that-is-a-file")
+	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	if _, _, _, err := newManager(newManagerCmd(t, true), notADir, config.DaemonConfig{}, nil); err == nil {
+		t.Fatal("expected newManager to surface the database open failure")
+	}
+}
+
+// TestNewManagerUnconfiguredWithoutNoDaemonFlag covers the fallback taken when
+// no supervisor is configured at all and no flag was passed: there is nothing
+// to probe and nothing to bypass, so the in-process manager is the plain
+// answer, not a conflict.
+func TestNewManagerUnconfiguredWithoutNoDaemonFlag(t *testing.T) {
+	_, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	mgr, cleanup, mode, err := newManager(newManagerCmd(t, false), td, config.DaemonConfig{}, nil)
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+	if _, ok := mgr.(*manager.DaemonManager); ok {
+		t.Fatal("expected the local manager when no daemon is configured")
+	}
+	if mode != (localMode{}) {
+		t.Errorf("expected a clean localMode with no daemon configured, got %+v", mode)
+	}
+	if cleanup == nil {
+		t.Fatal("expected a cleanup func for the local manager")
+	}
+	t.Cleanup(cleanup)
 }
 
 // TestNewManagerStandaloneDownIsNotAnOutage covers the supervisor eos owns
