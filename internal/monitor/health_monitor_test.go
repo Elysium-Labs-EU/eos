@@ -3511,12 +3511,12 @@ func TestHealthMonitor_CheckFailedProcess_SurfacesChildStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open error log: %v", err)
 	}
-	logutil.NewJSONLogger(errFile, false).Info("bind: Address already in use", "service", serviceName, "source", "stderr")
+	fakePGID := 999997
+	logutil.NewJSONLogger(errFile, false).Info("bind: Address already in use", "service", serviceName, "pgid", fakePGID, "source", "stderr")
 	if err = errFile.Close(); err != nil {
 		t.Fatalf("Failed to close error log: %v", err)
 	}
 
-	fakePGID := 999997
 	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed); err != nil {
 		t.Fatalf("Failed to register fake process history: %v", err)
 	}
@@ -3640,12 +3640,12 @@ func TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles(
 	if err != nil {
 		t.Fatalf("Failed to open error log: %v", err)
 	}
-	logutil.NewJSONLogger(errFile, false).Info("exec: \"eos-runtime\": executable file not found in $PATH", "service", serviceName, "source", "stderr")
+	fakePGID := 999996
+	logutil.NewJSONLogger(errFile, false).Info("exec: \"eos-runtime\": executable file not found in $PATH", "service", serviceName, "pgid", fakePGID, "source", "stderr")
 	if err = errFile.Close(); err != nil {
 		t.Fatalf("Failed to close error log: %v", err)
 	}
 
-	fakePGID := 999996
 	if _, err = db.RegisterProcessHistoryEntry(t.Context(), fakePGID, 0, serviceName, types.ProcessStateFailed); err != nil {
 		t.Fatalf("Failed to register fake process history: %v", err)
 	}

@@ -561,8 +561,11 @@ func (m *LocalManager) closePipeOnCancel(r *os.File) func() {
 // write end closed). w is only ever written to here, never closed directly:
 // other holders (e.g. a concurrent health-monitor breadcrumb write) may still
 // be using the shared writer, so releaseServiceLogWriter decides whether the
-// underlying file actually closes.
-func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
+// underlying file actually closes. pgid (this launch's own process group)
+// tags every line so a reader scanning the shared file later — see
+// pipeToErrorLogFile and logutil.LastLogMessage — can tell this launch's
+// lines apart from a different launch's that shares the same log file.
+func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, pgid int, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
 	if wg != nil {
 		defer wg.Done()
@@ -572,7 +575,7 @@ func (m *LocalManager) pipeToLogFile(r *os.File, w io.Writer, name string, sinks
 	logger := logutil.NewJSONLogger(w, false)
 	scanner := bufio.NewScanner(r)
 	scanErr := lmScanAndForward(scanner, "stdout", sinks, func(line string) {
-		logger.Info(line, "service", name, "source", "stdout")
+		logger.Info(line, "service", name, "pgid", pgid, "source", "stdout")
 	})
 	if scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning log pipe", "service", name, "error", scanErr)
@@ -604,8 +607,11 @@ func lmScanAndForward(scanner *bufio.Scanner, stream string, sinks []*sinkProces
 // pipeToErrorLogFile forwards r (the service's stderr) into errFileLogger
 // line by line, and releases the caller's acquire of the shared error-log
 // writer once r hits EOF. See pipeToLogFile for why release (not a direct
-// Close) is correct here.
-func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger, name string, sinks []*sinkProcess, wg *sync.WaitGroup) {
+// Close) is correct here, and why pgid tags every line: GetServiceLastErrorLine
+// (via logutil.LastLogMessage) uses it to bound a crash-reason search to the
+// process group being reported on, since a restarted attempt's own lines can
+// already share this same file by the time that search runs.
+func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger, name string, pgid int, sinks []*sinkProcess, wg *sync.WaitGroup) {
 	defer m.pipeWg.Done()
 	if wg != nil {
 		defer wg.Done()
@@ -614,7 +620,7 @@ func (m *LocalManager) pipeToErrorLogFile(r *os.File, errFileLogger *slog.Logger
 	defer stop()
 	scanner := bufio.NewScanner(r)
 	scanErr := lmScanAndForward(scanner, "stderr", sinks, func(line string) {
-		errFileLogger.Info(line, "service", name, "source", "stderr")
+		errFileLogger.Info(line, "service", name, "pgid", pgid, "source", "stderr")
 	})
 	if scanErr != nil && m.ctx.Err() == nil {
 		m.logger.Error("scanning error log pipe", "service", name, "error", scanErr)
@@ -746,8 +752,10 @@ func (m *LocalManager) buildLaunchCommand(service *types.ServiceCatalogEntry, co
 
 // wireLogPipes closes the now-handed-off write ends, starts any log sinks, and
 // launches the goroutines that forward the process's stdout/stderr to the log
-// files and sinks. It must be called once Start has succeeded.
-func (m *LocalManager) wireLogPipes(lio launchIO, resolvedSinks []types.LogSink, name string) error {
+// files and sinks. It must be called once Start has succeeded. pgid is this
+// launch's own process group (the leader's PID, already known from cmd.Start
+// before this runs); it is threaded down to tag every forwarded log line.
+func (m *LocalManager) wireLogPipes(lio launchIO, resolvedSinks []types.LogSink, name string, pgid int) error {
 	if closeErr := lio.writeLog.Close(); closeErr != nil {
 		return fmt.Errorf("closing write log file pipe for %s: %w", name, closeErr)
 	}
@@ -768,8 +776,8 @@ func (m *LocalManager) wireLogPipes(lio launchIO, resolvedSinks []types.LogSink,
 	}
 
 	m.pipeWg.Add(2)
-	go m.pipeToLogFile(lio.readLog, lio.logFile, name, sinks, sinkWg)
-	go m.pipeToErrorLogFile(lio.readErr, errFileLogger, name, sinks, sinkWg)
+	go m.pipeToLogFile(lio.readLog, lio.logFile, name, pgid, sinks, sinkWg)
+	go m.pipeToErrorLogFile(lio.readErr, errFileLogger, name, pgid, sinks, sinkWg)
 	return nil
 }
 
@@ -896,7 +904,13 @@ func (m *LocalManager) launchAndCapture(service *types.ServiceCatalogEntry, conf
 	}
 	*launchSuccess = true
 
-	if wireErr := m.wireLogPipes(lio, resolvedSinks, service.Name); wireErr != nil {
+	// The leader's PID is also this launch's PGID (Setpgid, see
+	// buildLaunchCommand) and is already known here, before captureIdentity
+	// runs below — wireLogPipes needs it now to tag this launch's own log
+	// lines so a later crash-reason search can tell them apart from another
+	// launch's sharing the same log file.
+	pgid = cmd.Process.Pid
+	if wireErr := m.wireLogPipes(lio, resolvedSinks, service.Name, pgid); wireErr != nil {
 		return 0, 0, wireErr
 	}
 

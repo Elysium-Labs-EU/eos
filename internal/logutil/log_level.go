@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 )
 
 // NewTextLogger returns a *slog.Logger writing human-readable text to w.
@@ -38,21 +39,57 @@ func slogLevel(verbose bool) slog.Level {
 // child output.
 const HealthBreadcrumbSource = "health"
 
-// LastLogMessage returns the "msg" field of the last well-formed JSON log
-// line (as written by NewJSONLogger) in the file at path, scanning from the
-// end, skipping lines tagged with source=HealthBreadcrumbSource. Without that
-// skip, a caller that re-reads its own previously-written breadcrumb (e.g.
-// the health monitor snapshotting a service's error log across repeated
-// restart-failure cycles) would keep nesting its own prior message into the
-// next one, growing without bound. It returns ("", false) if the file can't
-// be read, is empty, or contains no non-breadcrumb line that decodes to a
-// JSON object with a non-empty msg field.
-func LastLogMessage(path string) (string, bool) {
+// errorLineMarkers are case-insensitive substrings that mark a line as
+// plausibly naming a genuine crash reason, as opposed to a runtime's own
+// startup/version banner (e.g. "Bun v1.3.14 (Linux arm64)", "Node.js
+// v20.20.2"). It is deliberately short: a miss only falls back to
+// LastLogMessage's prior last-non-empty-line behavior (see there), so
+// growing coverage here can only improve results, never regress them the way
+// a denylist of banner shapes would if a runtime's banner format changed.
+var errorLineMarkers = []string{"error", "exception", "panic", "fatal", "errno", "code:"}
+
+// looksLikeErrorLine reports whether msg contains one of errorLineMarkers.
+func looksLikeErrorLine(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, marker := range errorLineMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// LastLogMessage returns the crash-reason line for pgid's own output within
+// the JSON log file at path (as written by NewJSONLogger), scanning from the
+// end and considering only lines tagged with a matching "pgid" field —
+// skipping both health-monitor breadcrumbs (source=HealthBreadcrumbSource)
+// and any other process group's lines sharing the same file, such as a
+// restarted attempt's own startup banner already appended by the time this
+// runs. Restricting to pgid is what makes that bound possible: a denylist of
+// banner text can't tell "this restart's real error" from "that restart's
+// banner" when both are literally the last line at different moments, since
+// both are just text with no notion of which cycle wrote them.
+//
+// Within pgid's window it prefers the most recent line that
+// looksLikeErrorLine, since real multi-line Node.js/Bun crash output often
+// ends in a trailing banner or blank separator that carries no diagnostic
+// value even though it belongs to the same process group. If no line in the
+// window matches, it falls back to that window's own most recent non-empty
+// line (the original heuristic, now at least scoped to the right process)
+// rather than reporting nothing — most synthetic single-line crash scripts
+// have no line that matches a marker at all.
+//
+// It returns ("", false) only when pgid's window is empty: the file can't be
+// read, or the process group logged nothing but breadcrumbs (or nothing at
+// all).
+func LastLogMessage(path string, pgid int) (string, bool) {
 	data, err := os.ReadFile(path) //nolint:gosec // path is caller-controlled, not user input
 	if err != nil {
 		return "", false
 	}
 
+	var fallback string
+	haveFallback := false
 	lines := bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n"))
 	for _, raw := range slices.Backward(lines) {
 		line := bytes.TrimSpace(raw)
@@ -62,13 +99,20 @@ func LastLogMessage(path string) (string, bool) {
 		var entry struct {
 			Msg    string `json:"msg"`
 			Source string `json:"source"`
+			PGID   int    `json:"pgid"`
 		}
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
-		if entry.Msg != "" && entry.Source != HealthBreadcrumbSource {
+		if entry.Msg == "" || entry.Source == HealthBreadcrumbSource || entry.PGID != pgid {
+			continue
+		}
+		if !haveFallback {
+			fallback, haveFallback = entry.Msg, true
+		}
+		if looksLikeErrorLine(entry.Msg) {
 			return entry.Msg, true
 		}
 	}
-	return "", false
+	return fallback, haveFallback
 }

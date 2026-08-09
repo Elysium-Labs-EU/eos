@@ -103,16 +103,19 @@ func TestTimestampWriter_Write_partial(t *testing.T) {
 }
 
 // jsonLine builds one JSON log line in the shape NewJSONLogger/slog's JSON
-// handler produces, with the given msg and source field.
-func jsonLine(msg, source string) string {
-	return fmt.Sprintf(`{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":%q,"source":%q}`, msg, source)
+// handler produces, with the given msg, source, and pgid fields.
+func jsonLine(msg, source string, pgid int) string {
+	return fmt.Sprintf(`{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":%q,"source":%q,"pgid":%d}`, msg, source, pgid)
 }
+
+const testPGID = 4242
 
 func TestLastLogMessage(t *testing.T) {
 	tests := []struct {
 		name     string
 		content  string // "" and missing file are handled via notFile below
 		wantLine string
+		pgid     int  // defaults to testPGID when zero
 		notFile  bool // if true, don't create the file at all
 		wantOK   bool
 	}{
@@ -138,13 +141,13 @@ func TestLastLogMessage(t *testing.T) {
 		},
 		{
 			name:     "single genuine stderr line",
-			content:  jsonLine("bind: Address already in use", "stderr") + "\n",
+			content:  jsonLine("bind: Address already in use", "stderr", testPGID) + "\n",
 			wantLine: "bind: Address already in use",
 			wantOK:   true,
 		},
 		{
 			name:    "only a health breadcrumb line is skipped, not returned",
-			content: jsonLine("[svc] restarting", "health") + "\n",
+			content: jsonLine("[svc] restarting", "health", testPGID) + "\n",
 			wantOK:  false,
 		},
 		{
@@ -153,31 +156,65 @@ func TestLastLogMessage(t *testing.T) {
 			// genuine child-stderr line from an earlier write must still be
 			// the one returned, not the breadcrumb.
 			name: "health breadcrumb after a genuine line skips the breadcrumb and returns the genuine line",
-			content: jsonLine("exec: runtime not found", "stderr") + "\n" +
-				jsonLine("[svc] restart failed: exec: runtime not found (exec: runtime not found)", "health") + "\n",
+			content: jsonLine("exec: runtime not found", "stderr", testPGID) + "\n" +
+				jsonLine("[svc] restart failed: exec: runtime not found (exec: runtime not found)", "health", testPGID) + "\n",
 			wantLine: "exec: runtime not found",
 			wantOK:   true,
 		},
 		{
-			name: "multiple genuine lines returns the most recent, not the first",
-			content: jsonLine("first failure", "stderr") + "\n" +
-				jsonLine("second failure", "stderr") + "\n" +
-				jsonLine("third failure", "stderr") + "\n",
+			name: "multiple genuine lines with no error marker returns the most recent, not the first",
+			content: jsonLine("first failure", "stderr", testPGID) + "\n" +
+				jsonLine("second failure", "stderr", testPGID) + "\n" +
+				jsonLine("third failure", "stderr", testPGID) + "\n",
 			wantLine: "third failure",
 			wantOK:   true,
 		},
 		{
 			name:    "empty msg field is skipped",
-			content: `{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":"","source":"stderr"}` + "\n",
+			content: `{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":"","source":"stderr","pgid":4242}` + "\n",
 			wantOK:  false,
 		},
 		{
 			name: "malformed and empty lines interleaved with a genuine line are skipped",
 			content: "garbage\n\n" +
-				jsonLine("real cause", "stderr") + "\n" +
+				jsonLine("real cause", "stderr", testPGID) + "\n" +
 				"\nmore garbage\n",
 			wantLine: "real cause",
 			wantOK:   true,
+		},
+		{
+			// Node's own uncaught-exception handler prints its version as the
+			// literal last line after the stack/error object — the trailing
+			// banner from issue reproduction, still written by the same
+			// process group as the real cause above it.
+			name: "trailing version banner is skipped in favor of an earlier error-shaped line in the same pgid",
+			content: jsonLine("Error: listen EADDRINUSE: address already in use :::3000", "stderr", testPGID) + "\n" +
+				jsonLine("    at Server.setupListenHandle [as _listen2] (node:net:1817:16)", "stderr", testPGID) + "\n" +
+				jsonLine("  errno: -98,", "stderr", testPGID) + "\n" +
+				jsonLine("  code: 'EADDRINUSE',", "stderr", testPGID) + "\n" +
+				jsonLine("}", "stderr", testPGID) + "\n" +
+				jsonLine("", "stderr", testPGID) + "\n" +
+				jsonLine("Node.js v20.20.2", "stderr", testPGID) + "\n",
+			wantLine: "  code: 'EADDRINUSE',",
+			wantOK:   true,
+		},
+		{
+			// A restarted attempt (pgid 999) already appended its own startup
+			// banner to the same file by the time the health monitor reads
+			// it for the process it's actually reporting on (pgid testPGID).
+			// Bounding to pgid must return the earlier pgid's own last line,
+			// not reach into the newer pgid's banner.
+			name: "a later pgid's banner sharing the file is not mistaken for this pgid's reason",
+			content: jsonLine(`error: Failed to start server. Is port 3000 in use?`, "stderr", testPGID) + "\n" +
+				jsonLine(`    code: "EADDRINUSE"`, "stderr", testPGID) + "\n" +
+				jsonLine("Bun v1.3.14 (Linux arm64)", "stderr", 999) + "\n",
+			wantLine: `    code: "EADDRINUSE"`,
+			wantOK:   true,
+		},
+		{
+			name:    "no line at all belongs to the requested pgid",
+			content: jsonLine("some other process's error", "stderr", 999) + "\n",
+			wantOK:  false,
 		},
 	}
 
@@ -193,7 +230,12 @@ func TestLastLogMessage(t *testing.T) {
 				}
 			}
 
-			line, ok := LastLogMessage(path)
+			pgid := tt.pgid
+			if pgid == 0 {
+				pgid = testPGID
+			}
+
+			line, ok := LastLogMessage(path, pgid)
 			if ok != tt.wantOK {
 				t.Fatalf("LastLogMessage() ok = %v, want %v (line=%q)", ok, tt.wantOK, line)
 			}
@@ -201,5 +243,29 @@ func TestLastLogMessage(t *testing.T) {
 				t.Errorf("LastLogMessage() = %q, want %q", line, tt.wantLine)
 			}
 		})
+	}
+}
+
+func TestLooksLikeErrorLine(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want bool
+	}{
+		{"Error: listen EADDRINUSE: address already in use :::3000", true},
+		{"Uncaught Exception", true},
+		{"panic: runtime error: index out of range", true},
+		{"fatal: could not read config", true},
+		{"errno: -98,", true},
+		{"code: 'EADDRINUSE',", true},
+		{"CODE: 'eaddrinuse'", true}, // case-insensitive
+		{"Node.js v20.20.2", false},
+		{"Bun v1.3.14 (Linux arm64)", false},
+		{"bad", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := looksLikeErrorLine(tt.msg); got != tt.want {
+			t.Errorf("looksLikeErrorLine(%q) = %v, want %v", tt.msg, got, tt.want)
+		}
 	}
 }
