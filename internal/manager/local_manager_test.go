@@ -468,6 +468,149 @@ func TestStartServiceBlocksWhenServiceInstanceLive(t *testing.T) {
 	}
 }
 
+// TestStartServiceBlocksWhenUnknownEntryLive is the direct regression test:
+// a graceful stop that exceeds its grace period leaves the most recent
+// history row Unknown (see updateProcessHistoryEntriesAsUnknown) while the
+// process itself is still alive. livePGIDInHistory only recognizes
+// Running/Starting rows, so lmCheckAlreadyRunning can't catch this case —
+// reconcileStartHistory must. Before the fix, Unknown was grouped with the
+// terminal states and StartService sailed past it, spawning a second
+// instance on top of the live one.
+func TestStartServiceBlocksWhenUnknownEntryLive(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	livePGID, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+	livePGIDStartedAtTicks, err := procutil.StartTime(livePGID)
+	if err != nil {
+		t.Fatalf("StartTime: %v", err)
+	}
+
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, livePGIDStartedAtTicks, "test-service", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	_, err = manager.StartService(t.Context(), "test-service")
+	if err == nil {
+		t.Fatal("expected StartService to refuse a start while an Unknown-state PGID is live")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("expected an already-running error, got: %v", err)
+	}
+}
+
+// TestStartServiceSelfHealsStaleUnknownEntry confirms the flip side: an
+// Unknown row whose process is actually gone must self-heal to Stopped and
+// let the start proceed, not permanently block or leak a phantom entry.
+func TestStartServiceSelfHealsStaleUnknownEntry(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	const deadPGID = 999997
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Unknown self-heal", deadPGID)
+	}
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "./start-script.sh",
+		Port:    1337,
+		Runtime: types.Runtime{
+			Type: "nodejs",
+		},
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	if err = db.RegisterServiceInstance(t.Context(), "test-service"); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "test-service", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	pgid, err := manager.StartService(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("StartService should self-heal a dead Unknown entry, got error: %v", err)
+	}
+	if pgid == 0 {
+		t.Fatal("StartService should return a non-zero PGID, got 0")
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "test-service")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	var staleEntry *types.ProcessHistory
+	for i := range entries {
+		if entries[i].PGID == deadPGID {
+			staleEntry = &entries[i]
+		}
+	}
+	if staleEntry == nil {
+		t.Fatalf("expected stale entry with PGID %d to still exist, got %+v", deadPGID, entries)
+		return
+	}
+	if staleEntry.State != types.ProcessStateStopped {
+		t.Errorf("expected stale entry to be marked Stopped, got state %q", staleEntry.State)
+	}
+}
+
 func TestStartServiceWithValidEnvLocation(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
@@ -2122,4 +2265,47 @@ func TestReconcileStartHistory_LiveEntryErrors(t *testing.T) {
 			t.Fatal("expected error for a live starting entry")
 		}
 	})
+
+	t.Run("unknown", func(t *testing.T) {
+		err := mgr.reconcileStartHistory("svc-unknown", []types.ProcessHistory{
+			{PGID: pgid, StartedAtTicks: ticks, State: types.ProcessStateUnknown},
+		})
+		if err == nil {
+			t.Fatal("expected error for a live unknown entry")
+		}
+	})
+}
+
+// TestReconcileStartHistory_UnknownDeadEntrySelfHeals confirms an Unknown row
+// left behind by a stop that couldn't confirm the kill (see
+// updateProcessHistoryEntriesAsUnknown) self-heals to Stopped once the
+// process is actually gone, rather than being permanently skipped as
+// terminal.
+func TestReconcileStartHistory_UnknownDeadEntrySelfHeals(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const deadPGID = 999996
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test stale Unknown cleanup", deadPGID)
+	}
+
+	if _, err := db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, "svc-unknown-dead", types.ProcessStateUnknown); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry: %v", err)
+	}
+
+	err := mgr.reconcileStartHistory("svc-unknown-dead", []types.ProcessHistory{
+		{PGID: deadPGID, StartedAtTicks: 0, State: types.ProcessStateUnknown},
+	})
+	if err != nil {
+		t.Fatalf("expected a dead unknown entry to self-heal, got error: %v", err)
+	}
+
+	entries, err := db.GetProcessHistoryEntriesByServiceName(t.Context(), "svc-unknown-dead")
+	if err != nil {
+		t.Fatalf("GetProcessHistoryEntriesByServiceName: %v", err)
+	}
+	if len(entries) != 1 || entries[0].State != types.ProcessStateStopped {
+		t.Errorf("expected the unknown entry to be marked Stopped, got %+v", entries)
+	}
 }
