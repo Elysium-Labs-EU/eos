@@ -19,6 +19,11 @@ import (
 //   - Root (or sudo)
 //   - Run via: make test-integration
 //     or on OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v
+//
+// The two tests below carry "Supervised" in their names so make
+// test-supervision-orb's -run 'Supervised' filter picks them up; a
+// supervision/daemon-routing test added later needs the same naming to be
+// covered by that target.
 
 func requireSystemd(t *testing.T) {
 	t.Helper()
@@ -39,7 +44,7 @@ func requireSystemd(t *testing.T) {
 // find it by name — a tempdir doesn't work, systemd doesn't search it.
 const testUnitName = "eos-integration-test"
 
-func TestStartupCmdIntegration(t *testing.T) {
+func TestSupervisedStartupCmdIntegration(t *testing.T) {
 	requireSystemd(t)
 
 	tempDir := t.TempDir()
@@ -101,7 +106,7 @@ func TestStartupCmdIntegration(t *testing.T) {
 	}
 }
 
-func TestUnstartupCmdIntegration(t *testing.T) {
+func TestSupervisedUnstartupCmdIntegration(t *testing.T) {
 	requireSystemd(t)
 
 	systemdDir := config.SystemdTargetDir
