@@ -1014,6 +1014,7 @@ var requestHandlers = map[types.MethodName]requestHandler{
 	types.MethodUpdateServiceCatalogEntry:        handleUpdateServiceCatalogEntry,
 	types.MethodSetServiceEnabled:                handleSetServiceEnabled,
 	types.MethodGetMostRecentProcessHistoryEntry: handleGetMostRecentProcessHistoryEntry,
+	types.MethodGetLiveOrphanProcessGroups:       handleGetLiveOrphanProcessGroups,
 	types.MethodSetDependencyWaitStatus:          handleSetDependencyWaitStatus,
 	types.MethodClearDependencyWaitStatus:        handleClearDependencyWaitStatus,
 	types.MethodGetDependencyWaitStatus:          handleGetDependencyWaitStatus,
@@ -1368,6 +1369,28 @@ func handleGetMostRecentProcessHistoryEntry(ctx context.Context, mgr manager.Ser
 	}
 	data, err := json.Marshal(types.GetMostRecentProcessHistoryEntryResponse{
 		ProcessEntry: *result,
+	})
+	if err != nil {
+		return errorResponse(fmt.Sprintf("marshaling response: %v", err))
+	}
+
+	return types.DaemonResponse{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func handleGetLiveOrphanProcessGroups(ctx context.Context, mgr manager.ServiceManager, rawArgs json.RawMessage) types.DaemonResponse {
+	var args types.GetLiveOrphanProcessGroupsArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return errorResponse(fmt.Sprintf("invalid MethodGetLiveOrphanProcessGroups args: %v", err))
+	}
+	result, err := mgr.GetLiveOrphanProcessGroups(ctx, args.Name)
+	if err != nil {
+		return sentinelErrorResponse(err)
+	}
+	data, err := json.Marshal(types.GetLiveOrphanProcessGroupsResponse{
+		Entries: result,
 	})
 	if err != nil {
 		return errorResponse(fmt.Sprintf("marshaling response: %v", err))

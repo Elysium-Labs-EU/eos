@@ -8,9 +8,23 @@ import (
 )
 
 func TestCompileProcessInfoObject(t *testing.T) {
-	t.Run("nil entry returns nil", func(t *testing.T) {
-		if got := compileProcessInfoObject(nil); got != nil {
+	t.Run("nil entry and no orphans returns nil", func(t *testing.T) {
+		if got := compileProcessInfoObject(nil, nil); got != nil {
 			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("nil entry with a live orphan still returns an orphaned object", func(t *testing.T) {
+		got := compileProcessInfoObject(nil, []types.ProcessHistory{{PGID: 1763}})
+		if got == nil {
+			t.Fatal("expected non-nil result")
+			return
+		}
+		if got.Status != types.ServiceStatusOrphaned {
+			t.Errorf("expected status orphaned, got %q", got.Status)
+		}
+		if len(got.OrphanedPGIDs) != 1 || got.OrphanedPGIDs[0] != 1763 {
+			t.Errorf("expected orphaned pgids [1763], got %v", got.OrphanedPGIDs)
 		}
 	})
 
@@ -19,7 +33,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 			State:       types.ProcessStateStopped,
 			PGID:        123,
 			RssMemoryKb: 4096,
-		})
+		}, nil)
 		if got == nil {
 			t.Fatal("expected non-nil result")
 			return
@@ -48,7 +62,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 			PGID:        456,
 			RssMemoryKb: 2048,
 			StartedAt:   &startedAt,
-		})
+		}, nil)
 		if got == nil {
 			t.Fatal("expected non-nil result")
 			return
@@ -69,7 +83,7 @@ func TestCompileProcessInfoObject(t *testing.T) {
 		got := compileProcessInfoObject(&types.ProcessHistory{
 			State: types.ProcessStateFailed,
 			Error: &errMsg,
-		})
+		}, nil)
 		if got == nil {
 			t.Fatal("expected non-nil result")
 			return

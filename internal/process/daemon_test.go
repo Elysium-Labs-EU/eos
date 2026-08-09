@@ -692,21 +692,22 @@ func TestReconcileOrphans_Mixed(t *testing.T) {
 // handleRestartService, handleStopService, and handleGetVersion invoke.
 type fakeServiceManager struct {
 	manager.ServiceManager
-	restartFunc                   func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
-	stopFunc                      func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
-	getVersionFunc                func() (types.GetVersionResponse, error)
-	getServiceInstanceFunc        func(name string) (*types.ServiceInstance, error)
-	removeServiceInstanceFunc     func(name string) (bool, error)
-	startServiceFunc              func(name string) (int, error)
-	forceStopServiceFunc          func(name string) (manager.StopServiceResult, error)
-	addServiceCatalogEntryFunc    func(service *types.ServiceCatalogEntry) error
-	getServiceCatalogEntryFunc    func(name string) (types.ServiceCatalogEntry, error)
-	isServiceRegisteredFunc       func(name string) (bool, error)
-	removeServiceCatalogEntryFunc func(name string) (bool, error)
-	updateServiceCatalogEntryFunc func(name, newDirectoryPath, newConfigFileName string) error
-	getMostRecentProcessHistFunc  func(name string) (*types.ProcessHistory, error)
-	newServiceLogFilesFunc        func(serviceName string) (string, string, error)
-	getServiceLogFilePathFunc     func(serviceName string, errorLog bool) (*string, error)
+	restartFunc                    func(name string, gracePeriod, tickerPeriod time.Duration) (int, error)
+	stopFunc                       func(name string, gracePeriod, tickerPeriod time.Duration) (manager.StopServiceResult, error)
+	getVersionFunc                 func() (types.GetVersionResponse, error)
+	getServiceInstanceFunc         func(name string) (*types.ServiceInstance, error)
+	removeServiceInstanceFunc      func(name string) (bool, error)
+	startServiceFunc               func(name string) (int, error)
+	forceStopServiceFunc           func(name string) (manager.StopServiceResult, error)
+	addServiceCatalogEntryFunc     func(service *types.ServiceCatalogEntry) error
+	getServiceCatalogEntryFunc     func(name string) (types.ServiceCatalogEntry, error)
+	isServiceRegisteredFunc        func(name string) (bool, error)
+	removeServiceCatalogEntryFunc  func(name string) (bool, error)
+	updateServiceCatalogEntryFunc  func(name, newDirectoryPath, newConfigFileName string) error
+	getMostRecentProcessHistFunc   func(name string) (*types.ProcessHistory, error)
+	getLiveOrphanProcessGroupsFunc func(name string) ([]types.ProcessHistory, error)
+	newServiceLogFilesFunc         func(serviceName string) (string, string, error)
+	getServiceLogFilePathFunc      func(serviceName string, errorLog bool) (*string, error)
 }
 
 func (f *fakeServiceManager) RestartService(_ context.Context, name string, gracePeriod, tickerPeriod time.Duration) (int, error) {
@@ -759,6 +760,10 @@ func (f *fakeServiceManager) UpdateServiceCatalogEntry(_ context.Context, name, 
 
 func (f *fakeServiceManager) GetMostRecentProcessHistoryEntry(_ context.Context, name string) (*types.ProcessHistory, error) {
 	return f.getMostRecentProcessHistFunc(name)
+}
+
+func (f *fakeServiceManager) GetLiveOrphanProcessGroups(_ context.Context, name string) ([]types.ProcessHistory, error) {
+	return f.getLiveOrphanProcessGroupsFunc(name)
 }
 
 func (f *fakeServiceManager) NewServiceLogFiles(_ context.Context, serviceName string) (string, string, error) {
@@ -1214,6 +1219,46 @@ func TestHandleGetMostRecentProcessHistoryEntry(t *testing.T) {
 		}
 		if got.ProcessEntry.ServiceName != "svc" {
 			t.Errorf("expected service name svc, got %s", got.ProcessEntry.ServiceName)
+		}
+	})
+}
+
+func TestHandleGetLiveOrphanProcessGroups(t *testing.T) {
+	t.Run("invalid args", func(t *testing.T) {
+		mgr := &fakeServiceManager{}
+		resp := handleGetLiveOrphanProcessGroups(t.Context(), mgr, json.RawMessage(`{`))
+		if resp.Success {
+			t.Fatal("expected failure for invalid args")
+		}
+	})
+
+	t.Run("mgr returns error", func(t *testing.T) {
+		wantErr := errors.New("lookup failed")
+		mgr := &fakeServiceManager{getLiveOrphanProcessGroupsFunc: func(name string) ([]types.ProcessHistory, error) {
+			return nil, wantErr
+		}}
+		raw, _ := json.Marshal(types.GetLiveOrphanProcessGroupsArgs{Name: "svc"})
+		resp := handleGetLiveOrphanProcessGroups(t.Context(), mgr, raw)
+		if resp.Success {
+			t.Fatal("expected failure when mgr.GetLiveOrphanProcessGroups errors")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		mgr := &fakeServiceManager{getLiveOrphanProcessGroupsFunc: func(name string) ([]types.ProcessHistory, error) {
+			return []types.ProcessHistory{{ServiceName: name, PGID: 1763}}, nil
+		}}
+		raw, _ := json.Marshal(types.GetLiveOrphanProcessGroupsArgs{Name: "svc"})
+		resp := handleGetLiveOrphanProcessGroups(t.Context(), mgr, raw)
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+		var got types.GetLiveOrphanProcessGroupsResponse
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("unmarshaling response data: %v", err)
+		}
+		if len(got.Entries) != 1 || got.Entries[0].PGID != 1763 {
+			t.Errorf("expected [{PGID:1763}], got %+v", got.Entries)
 		}
 	})
 }

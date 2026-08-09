@@ -355,6 +355,29 @@ func TestDaemonManager_GetMostRecentProcessHistoryEntry(t *testing.T) {
 	}
 }
 
+func TestDaemonManager_GetLiveOrphanProcessGroups(t *testing.T) {
+	socketPath := fakeServer(t, func(_ types.DaemonRequest) types.DaemonResponse {
+		return okResponse(types.GetLiveOrphanProcessGroupsResponse{
+			Entries: []types.ProcessHistory{{PGID: 1763}},
+		})
+	})
+	dm := newTestDM(t, socketPath)
+	entries, err := dm.GetLiveOrphanProcessGroups(t.Context(), "my-svc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].PGID != 1763 {
+		t.Errorf("expected [{PGID:1763}], got %+v", entries)
+	}
+}
+
+func TestDaemonManager_GetLiveOrphanProcessGroups_requestError(t *testing.T) {
+	dm := &DaemonManager{socketPath: "/nonexistent/socket.sock"}
+	if _, err := dm.GetLiveOrphanProcessGroups(t.Context(), "my-svc"); err == nil {
+		t.Fatal("expected error when the daemon is unreachable")
+	}
+}
+
 func TestDaemonManager_SetDependencyWaitStatus(t *testing.T) {
 	var gotArgs types.SetDependencyWaitStatusArgs
 	socketPath := fakeServer(t, func(req types.DaemonRequest) types.DaemonResponse {

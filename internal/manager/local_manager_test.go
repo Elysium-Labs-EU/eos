@@ -1730,6 +1730,141 @@ func TestLocalManager_GetMostRecentProcessHistoryEntry_NilStartedAt(t *testing.T
 	}
 }
 
+// TestLiveOrphanRows_excludesMostRecentAndDeadRows proves the pure scanner
+// underlying GetLiveOrphanProcessGroups: an older row whose PGID is alive
+// counts as an orphan, the most-recent row's own PGID is never reported back
+// as its own orphan even if alive, and a dead PGID is skipped entirely.
+func TestLiveOrphanRows_excludesMostRecentAndDeadRows(t *testing.T) {
+	livePGID, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+	liveTicks, err := procutil.StartTime(livePGID)
+	if err != nil {
+		t.Fatalf("StartTime: %v", err)
+	}
+
+	const deadPGID = 999994
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test the dead-row branch", deadPGID)
+	}
+
+	history := []types.ProcessHistory{
+		{PGID: livePGID, StartedAtTicks: liveTicks},
+		{PGID: deadPGID, StartedAtTicks: 0},
+		{PGID: 0, StartedAtTicks: 0}, // never-started placeholder row, must be skipped
+	}
+
+	orphans := liveOrphanRows(history, deadPGID)
+	if len(orphans) != 1 || orphans[0].PGID != livePGID {
+		t.Fatalf("expected only the live PGID as an orphan, got %+v", orphans)
+	}
+
+	// The live row is excluded when it IS the most recent PGID.
+	if orphans := liveOrphanRows(history, livePGID); len(orphans) != 0 {
+		t.Errorf("expected no orphans when the live PGID is the most recent row, got %+v", orphans)
+	}
+
+	if orphans := liveOrphanRows(nil, livePGID); len(orphans) != 0 {
+		t.Errorf("expected no orphans for empty history, got %+v", orphans)
+	}
+}
+
+// TestLocalManager_GetLiveOrphanProcessGroups_surfacesOlderLiveRow is the
+// direct regression test for the read-path bug: a live process group
+// belonging to an OLDER process_history row must be reported even though the
+// newest row for the same service is unrelated and inactive.
+func TestLocalManager_GetLiveOrphanProcessGroups_surfacesOlderLiveRow(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	serviceName := "orphan-surface-svc"
+	if err := db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("RegisterServiceInstance: %v", err)
+	}
+
+	livePGID, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid: %v", err)
+	}
+	liveTicks, err := procutil.StartTime(livePGID)
+	if err != nil {
+		t.Fatalf("StartTime: %v", err)
+	}
+
+	// Older row: still alive, but not the most recent — this is exactly the
+	// row a most-recent-only read would hide.
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), livePGID, liveTicks, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry (older, live): %v", err)
+	}
+
+	const deadPGID = 999995
+	if isProcessAlive(deadPGID) {
+		t.Skipf("pgid %d is alive — cannot test the inactive most-recent row", deadPGID)
+	}
+	// Newer row: the one GetMostRecentProcessHistoryEntry alone would return.
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, serviceName, types.ProcessStateStopped); err != nil {
+		t.Fatalf("RegisterProcessHistoryEntry (newer, dead): %v", err)
+	}
+
+	orphans, err := mgr.GetLiveOrphanProcessGroups(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("GetLiveOrphanProcessGroups: %v", err)
+	}
+	if len(orphans) != 1 || orphans[0].PGID != livePGID {
+		t.Fatalf("expected the older live PGID %d as the sole orphan, got %+v", livePGID, orphans)
+	}
+}
+
+// TestLocalManager_GetLiveOrphanProcessGroups_noHistory proves an
+// unregistered/never-started service reports zero orphans rather than an
+// error — GetMostRecentProcessHistoryEntryByName's ErrProcessHistoryNotFound
+// must be absorbed, not propagated.
+func TestLocalManager_GetLiveOrphanProcessGroups_noHistory(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	orphans, err := mgr.GetLiveOrphanProcessGroups(t.Context(), "never-started-svc")
+	if err != nil {
+		t.Fatalf("expected no error for a service with no history, got: %v", err)
+	}
+	if len(orphans) != 0 {
+		t.Errorf("expected zero orphans, got %+v", orphans)
+	}
+}
+
+// failOnMostRecentDB fails GetMostRecentProcessHistoryEntryByName
+// unconditionally, delegating every other method to the real
+// database.Database it wraps.
+type failOnMostRecentDB struct {
+	database.Database
+	err error
+}
+
+func (f *failOnMostRecentDB) GetMostRecentProcessHistoryEntryByName(ctx context.Context, name string) (types.ProcessHistory, error) {
+	return types.ProcessHistory{}, f.err
+}
+
+// TestLocalManager_GetLiveOrphanProcessGroups_dbErrors proves both of
+// GetLiveOrphanProcessGroups's DB calls surface a genuine (non-NotFound)
+// failure instead of silently reporting zero orphans.
+func TestLocalManager_GetLiveOrphanProcessGroups_dbErrors(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	sentinel := errors.New("db unavailable")
+
+	mgr.db = &failOnCallHistoryDB{Database: db, failOnCall: 1, err: sentinel}
+	if _, err := mgr.GetLiveOrphanProcessGroups(t.Context(), "svc"); !errors.Is(err, sentinel) {
+		t.Errorf("expected the history-fetch error to be surfaced, got: %v", err)
+	}
+
+	mgr.db = &failOnMostRecentDB{Database: db, err: sentinel}
+	if _, err := mgr.GetLiveOrphanProcessGroups(t.Context(), "svc"); !errors.Is(err, sentinel) {
+		t.Errorf("expected the most-recent-lookup error to be surfaced, got: %v", err)
+	}
+}
+
 func TestUpdateServiceCatalogEntry(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))

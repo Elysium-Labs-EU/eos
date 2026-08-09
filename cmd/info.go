@@ -39,13 +39,14 @@ func newInfoCmd(getManager func() manager.ServiceManager) *cobra.Command {
 
 			serviceInstance := infoFetchServiceInstance(cmd, cmd.Context(), mgr, serviceName)
 			processEntry := infoFetchProcessEntry(cmd, cmd.Context(), mgr, serviceName)
+			orphanGroups := infoFetchOrphanGroups(cmd, cmd.Context(), mgr, serviceName)
 
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			logPath := infoFetchLogPath(cmd, cmd.Context(), mgr, serviceName, false, serviceInstance)
 			// TODO: Is there a way to make the fact the log files only exist on services that have run once more explicit?
 			errorLogPath := infoFetchLogPath(cmd, cmd.Context(), mgr, serviceName, true, serviceInstance)
 
-			infoPrintProcessSection(cmd, processEntry)
+			infoPrintProcessSection(cmd, processEntry, orphanGroups)
 			infoPrintServiceSection(cmd, &registeredService)
 			infoPrintLoggingSection(cmd, logPath, errorLogPath, config)
 			infoPrintInstanceSection(cmd, serviceInstance)
@@ -90,6 +91,14 @@ func infoFetchProcessEntry(cmd *cobra.Command, ctx context.Context, mgr manager.
 	return processEntry
 }
 
+func infoFetchOrphanGroups(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string) []types.ProcessHistory {
+	orphanGroups, err := mgr.GetLiveOrphanProcessGroups(ctx, serviceName)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting orphaned process groups: %v", err))
+	}
+	return orphanGroups
+}
+
 func infoFetchLogPath(cmd *cobra.Command, ctx context.Context, mgr manager.ServiceManager, serviceName string, errorLog bool, serviceInstance *types.ServiceInstance) *string {
 	logPath, err := mgr.GetServiceLogFilePath(ctx, serviceName, errorLog)
 	if err != nil && serviceInstance != nil {
@@ -102,13 +111,13 @@ func infoFetchLogPath(cmd *cobra.Command, ctx context.Context, mgr manager.Servi
 	return logPath
 }
 
-func infoPrintProcessSection(cmd *cobra.Command, processEntry *types.ProcessHistory) {
+func infoPrintProcessSection(cmd *cobra.Command, processEntry *types.ProcessHistory, orphanGroups []types.ProcessHistory) {
 	helpers.PrintSection(cmd, "Process")
 	if processEntry == nil {
 		cmd.PrintErr(ui.TextMuted.Render("  no process found\n"))
 		return
 	}
-	status := helpers.DetermineServiceStatus(processEntry)
+	status := helpers.DetermineServiceStatus(processEntry, len(orphanGroups) > 0)
 	helpers.PrintKV(cmd, "status", helpers.PrintStatus(status))
 	helpers.PrintKV(cmd, "pgid", fmt.Sprintf("%d", processEntry.PGID))
 	helpers.PrintKV(cmd, "uptime", helpers.DetermineUptimeHuman(processEntry))
@@ -118,6 +127,9 @@ func infoPrintProcessSection(cmd *cobra.Command, processEntry *types.ProcessHist
 		helpers.PrintKV(cmd, "error", "N/A")
 	} else {
 		helpers.PrintKV(cmd, "error", fmt.Sprintf("%v", *processEntry.Error))
+	}
+	if len(orphanGroups) > 0 {
+		helpers.PrintKV(cmd, "orphaned pgids", helpers.DetermineOrphanedPGIDsHuman(helpers.ExtractPGIDs(orphanGroups)))
 	}
 }
 

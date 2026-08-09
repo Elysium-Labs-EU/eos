@@ -112,6 +112,90 @@ func TestStatusCommandGetProcessHistoryError(t *testing.T) {
 	}
 }
 
+func TestStatusCommandGetOrphanGroupsError(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, manager.ErrServiceNotRunning
+		},
+		getLiveOrphans: func(string) ([]types.ProcessHistory, error) {
+			return nil, fmt.Errorf("orphan lookup failed")
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "getting orphaned process groups") {
+		t.Errorf("expected orphaned process groups error message, got: %s", errBuf.String())
+	}
+}
+
+func TestStatusCommandShowsLiveOrphan(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return nil, manager.ErrServiceNotRunning
+		},
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return &types.ProcessHistory{State: types.ProcessStateStopped, PGID: 100}, nil
+		},
+		getLiveOrphans: func(string) ([]types.ProcessHistory, error) {
+			return []types.ProcessHistory{{PGID: 1763}}, nil
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v\n%s", err, errBuf.String())
+	}
+	output := outBuf.String()
+	if !strings.Contains(output, "orphaned") {
+		t.Errorf("expected 'orphaned' status in output, got: %s", output)
+	}
+	if !strings.Contains(output, "1763") {
+		t.Errorf("expected orphaned pgid 1763 in output, got: %s", output)
+	}
+}
+
+func TestBuildStatusRowsIncludesOrphanedColumn(t *testing.T) {
+	rows, _ := buildStatusRows(nil)
+	if len(rows) != 1 || len(rows[0]) != 11 {
+		t.Fatalf("expected a single 11-column fallback row, got: %v", rows)
+	}
+	if rows[0][10] != "-" {
+		t.Errorf("expected fallback orphaned pgids cell to be '-', got: %q", rows[0][10])
+	}
+
+	entries := []statusServiceEntry{{Name: "svc", OrphanedPGIDs: []int{1763, 2001}}}
+	rows, _ = buildStatusRows(entries)
+	if len(rows) != 1 || len(rows[0]) != 11 {
+		t.Fatalf("expected a single 11-column row, got: %v", rows)
+	}
+	if rows[0][10] != "1763, 2001" {
+		t.Errorf("expected orphaned pgids cell '1763, 2001', got: %q", rows[0][10])
+	}
+}
+
 func TestStatusCommandWithRegisteredService(t *testing.T) {
 	cmd, outBuf, _, tempDir := setupCmd(t)
 

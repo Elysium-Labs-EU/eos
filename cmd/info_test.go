@@ -345,12 +345,12 @@ func TestInfoConfigLoadError(t *testing.T) {
 // that are impractical to reach through a real DB-backed manager.
 type infoFakeManager struct {
 	manager.ServiceManager
-
-	instance    *types.ServiceInstance
-	instanceErr error
-
-	processEntry *types.ProcessHistory
-	processErr   error
+	instanceErr   error
+	processErr    error
+	orphanErr     error
+	instance      *types.ServiceInstance
+	processEntry  *types.ProcessHistory
+	orphanEntries []types.ProcessHistory
 }
 
 func (f *infoFakeManager) GetServiceInstance(context.Context, string) (*types.ServiceInstance, error) {
@@ -359,6 +359,10 @@ func (f *infoFakeManager) GetServiceInstance(context.Context, string) (*types.Se
 
 func (f *infoFakeManager) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return f.processEntry, f.processErr
+}
+
+func (f *infoFakeManager) GetLiveOrphanProcessGroups(context.Context, string) ([]types.ProcessHistory, error) {
+	return f.orphanEntries, f.orphanErr
 }
 
 func infoNewTestCmd() (*cobra.Command, *bytes.Buffer) {
@@ -393,6 +397,40 @@ func TestInfoFetchProcessEntryGenericError(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "getting process history") {
 		t.Errorf("expected 'getting process history' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoFetchOrphanGroupsGenericError(t *testing.T) {
+	cmd, errBuf := infoNewTestCmd()
+	wantErr := errors.New("boom")
+
+	orphans := infoFetchOrphanGroups(cmd, t.Context(), &infoFakeManager{orphanErr: wantErr}, "svc")
+
+	if orphans != nil {
+		t.Errorf("expected nil orphan groups on error, got: %+v", orphans)
+	}
+	if !strings.Contains(errBuf.String(), "getting orphaned process groups") {
+		t.Errorf("expected 'getting orphaned process groups' error, got: %s", errBuf.String())
+	}
+}
+
+func TestInfoPrintProcessSectionWithLiveOrphan(t *testing.T) {
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	processEntry := &types.ProcessHistory{State: types.ProcessStateStopped, PGID: 100}
+	orphans := []types.ProcessHistory{{PGID: 1763}}
+
+	infoPrintProcessSection(cmd, processEntry, orphans)
+
+	output := out.String()
+	if !strings.Contains(output, "orphaned") {
+		t.Errorf("expected 'orphaned' status in output, got: %s", output)
+	}
+	if !strings.Contains(output, "1763") {
+		t.Errorf("expected orphaned pgid 1763 in output, got: %s", output)
 	}
 }
 
@@ -502,6 +540,10 @@ func (f *fakeInfoMgr) GetServiceInstance(context.Context, string) (*types.Servic
 
 func (f *fakeInfoMgr) GetMostRecentProcessHistoryEntry(context.Context, string) (*types.ProcessHistory, error) {
 	return nil, f.historyErr
+}
+
+func (f *fakeInfoMgr) GetLiveOrphanProcessGroups(context.Context, string) ([]types.ProcessHistory, error) {
+	return nil, nil
 }
 
 func (f *fakeInfoMgr) GetServiceLogFilePath(context.Context, string, bool) (*string, error) {

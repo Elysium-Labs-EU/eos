@@ -11,21 +11,28 @@ import (
 
 func TestDetermineServiceStatus(t *testing.T) {
 	tests := []struct {
-		name  string
-		input *types.ProcessHistory
-		want  types.ServiceStatus
+		input         *types.ProcessHistory
+		name          string
+		want          types.ServiceStatus
+		hasLiveOrphan bool
 	}{
-		{"nil", nil, types.ServiceStatusStopped},
-		{"stopped", &types.ProcessHistory{State: types.ProcessStateStopped}, types.ServiceStatusStopped},
-		{"failed", &types.ProcessHistory{State: types.ProcessStateFailed}, types.ServiceStatusFailed},
-		{"running", &types.ProcessHistory{State: types.ProcessStateRunning}, types.ServiceStatusRunning},
-		{"starting", &types.ProcessHistory{State: types.ProcessStateStarting}, types.ServiceStatusStarting},
-		{"unknown", &types.ProcessHistory{State: types.ProcessStateUnknown}, types.ServiceStatusUnknown},
-		{"default", &types.ProcessHistory{State: "bogus"}, types.ServiceStatusUnknown},
+		{name: "nil", input: nil, hasLiveOrphan: false, want: types.ServiceStatusStopped},
+		{name: "stopped", input: &types.ProcessHistory{State: types.ProcessStateStopped}, hasLiveOrphan: false, want: types.ServiceStatusStopped},
+		{name: "failed", input: &types.ProcessHistory{State: types.ProcessStateFailed}, hasLiveOrphan: false, want: types.ServiceStatusFailed},
+		{name: "running", input: &types.ProcessHistory{State: types.ProcessStateRunning}, hasLiveOrphan: false, want: types.ServiceStatusRunning},
+		{name: "starting", input: &types.ProcessHistory{State: types.ProcessStateStarting}, hasLiveOrphan: false, want: types.ServiceStatusStarting},
+		{name: "unknown", input: &types.ProcessHistory{State: types.ProcessStateUnknown}, hasLiveOrphan: false, want: types.ServiceStatusUnknown},
+		{name: "default", input: &types.ProcessHistory{State: "bogus"}, hasLiveOrphan: false, want: types.ServiceStatusUnknown},
+		{name: "nil with live orphan", input: nil, hasLiveOrphan: true, want: types.ServiceStatusOrphaned},
+		{name: "stopped with live orphan", input: &types.ProcessHistory{State: types.ProcessStateStopped}, hasLiveOrphan: true, want: types.ServiceStatusOrphaned},
+		{name: "failed with live orphan", input: &types.ProcessHistory{State: types.ProcessStateFailed}, hasLiveOrphan: true, want: types.ServiceStatusOrphaned},
+		{name: "unknown with live orphan", input: &types.ProcessHistory{State: types.ProcessStateUnknown}, hasLiveOrphan: true, want: types.ServiceStatusOrphaned},
+		{name: "running with live orphan stays running", input: &types.ProcessHistory{State: types.ProcessStateRunning}, hasLiveOrphan: true, want: types.ServiceStatusRunning},
+		{name: "starting with live orphan stays starting", input: &types.ProcessHistory{State: types.ProcessStateStarting}, hasLiveOrphan: true, want: types.ServiceStatusStarting},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := DetermineServiceStatus(tt.input); got != tt.want {
+			if got := DetermineServiceStatus(tt.input, tt.hasLiveOrphan); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
@@ -105,6 +112,7 @@ func TestDetermineProcessMemoryInMbHuman(t *testing.T) {
 	}{
 		{name: "failed status", kb: 1024, status: types.ServiceStatusFailed, want: "-"},
 		{name: "stopped status", kb: 1024, status: types.ServiceStatusStopped, want: "-"},
+		{name: "orphaned status", kb: 1024, status: types.ServiceStatusOrphaned, want: "-"},
 		{name: "zero kb", kb: 0, status: types.ServiceStatusRunning, want: "-"},
 		{name: "negative kb", kb: -1, status: types.ServiceStatusRunning, want: "-"},
 		{name: "1 MB", kb: 1024, status: types.ServiceStatusRunning, want: "1.0 MB"},
@@ -128,6 +136,7 @@ func TestDetermineProcessCPUHuman(t *testing.T) {
 	}{
 		{name: "failed status", percent: 50, status: types.ServiceStatusFailed, want: "-"},
 		{name: "stopped status", percent: 50, status: types.ServiceStatusStopped, want: "-"},
+		{name: "orphaned status", percent: 50, status: types.ServiceStatusOrphaned, want: "-"},
 		{name: "negative percent", percent: -1, status: types.ServiceStatusRunning, want: "-"},
 		{name: "idle running", percent: 0, status: types.ServiceStatusRunning, want: "0.0%"},
 		{name: "partial core", percent: 12.5, status: types.ServiceStatusRunning, want: "12.5%"},
@@ -155,6 +164,9 @@ func TestDetermineProcessMemoryInMbAPI(t *testing.T) {
 	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusFailed); got != nil {
 		t.Errorf("expected nil for failed status, got %v", got)
 	}
+	if got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusOrphaned); got != nil {
+		t.Errorf("expected nil for orphaned status, got %v", got)
+	}
 	got := DetermineProcessMemoryInMbAPI(1024, types.ServiceStatusRunning)
 	if got == nil {
 		t.Fatal("expected non-nil for 1024 kb")
@@ -175,6 +187,43 @@ func TestDetermineError(t *testing.T) {
 	msg := "connection refused"
 	if got := DetermineError(&msg); got != "connection refused" {
 		t.Errorf("got %q, want %q", got, "connection refused")
+	}
+}
+
+func TestExtractPGIDs(t *testing.T) {
+	if got := ExtractPGIDs(nil); len(got) != 0 {
+		t.Errorf("expected empty slice for nil input, got %v", got)
+	}
+	history := []types.ProcessHistory{{PGID: 111}, {PGID: 222}, {PGID: 333}}
+	got := ExtractPGIDs(history)
+	want := []int{111, 222, 333}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("index %d: got %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDetermineOrphanedPGIDsHuman(t *testing.T) {
+	tests := []struct {
+		name  string
+		want  string
+		pgids []int
+	}{
+		{name: "nil", pgids: nil, want: "-"},
+		{name: "empty", pgids: []int{}, want: "-"},
+		{name: "single", pgids: []int{1763}, want: "1763"},
+		{name: "multiple", pgids: []int{1763, 2001}, want: "1763, 2001"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetermineOrphanedPGIDsHuman(tt.pgids); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
