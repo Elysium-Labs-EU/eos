@@ -284,14 +284,24 @@ sg-rules: ## List all ast-grep rules
 
 adr-find: ## Find ADRs and related code for a concept: make adr-find Q="daemon liveness"
 	@test -n "$(Q)" || { echo "Usage: make adr-find Q=\"concept\""; exit 1; }
-	@command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }
-	@test -f .gitnexus/run.cjs || { echo ".gitnexus/run.cjs not found. Run: npx gitnexus analyze"; exit 1; }
 	@echo "--- docs/adr matching \"$(Q)\" ---"
 	@grep -ril -- "$(Q)" docs/adr/*.md 2>/dev/null || echo "  (no filename/content match, try a narrower term)"
 	@echo "--- code comments citing an ADR (ast-grep) ---"
-	@ast-grep scan --rule docs/adr/adr-reference.sgrule.yml . 2>/dev/null || echo "  (none found)"
+# Both enrichment sections degrade to a notice rather than failing the target:
+# ast-grep is an optional host tool, and .gitnexus/ is gitignored so it is absent
+# from every git worktree. Exiting non-zero there would withhold the ADR list
+# above, which is the part that always works and the reason to run this at all.
+	@if command -v ast-grep >/dev/null 2>&1; then \
+		ast-grep scan --rule docs/adr/adr-reference.sgrule.yml . 2>/dev/null || echo "  (none found)"; \
+	else \
+		echo "  (skipped: ast-grep not installed — brew install ast-grep)"; \
+	fi
 	@echo "--- related code via GitNexus ---"
-	@node .gitnexus/run.cjs augment "$(Q)" 2>&1 | { grep -v '^Progress:\|^\[WARN\]\|node_modules\|^Packages:\|^\+\+' || true; }
+	@if test -f .gitnexus/run.cjs; then \
+		node .gitnexus/run.cjs augment "$(Q)" 2>&1 | { grep -v '^Progress:\|^\[WARN\]\|node_modules\|^Packages:\|^\+\+' || true; }; \
+	else \
+		echo "  (skipped: no .gitnexus index here — npx gitnexus analyze)"; \
+	fi
 
 secrets: ## Scan working tree and history for leaked secrets (requires: go install github.com/zricethezav/gitleaks/v8@latest)
 	@command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks not found. Run: make setup"; exit 1; }
