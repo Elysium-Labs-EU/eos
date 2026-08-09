@@ -999,13 +999,29 @@ func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int,
 // calls the unlocked stop core directly: the caller already holds the
 // per-service lock, and the mutex is not reentrant, so StopService (which
 // re-acquires it) would deadlock.
+//
+// A restart's intent is unambiguous: replace whatever is running under this
+// name, including a row left over from a much earlier instance that no
+// longer responds to SIGTERM. If the grace period expires with rows still
+// alive, escalate straight to SIGKILL instead of failing the restart — a
+// service must not become permanently unrestartable because one historical
+// process group refuses to die.
 func (m *LocalManager) lmStopForRestart(name string, gracePeriod, tickerPeriod time.Duration) error {
 	stopResult, err := m.stopServiceLocked(name, gracePeriod, tickerPeriod)
 	if err != nil {
 		return fmt.Errorf("stopping process(es) for %s: %w", name, err)
 	}
-	if len(stopResult.Errored) > 0 {
-		return fmt.Errorf("stopping process(es) for %s: %v", name, stopResult.Errored)
+	if len(stopResult.Errored) == 0 {
+		return nil
+	}
+
+	m.logger.Warn("SIGTERM grace period exceeded, escalating to SIGKILL", "service", name, "errored", stopResult.Errored)
+	killResult, err := m.forceKillServiceLocked(name)
+	if err != nil {
+		return fmt.Errorf("force-killing process(es) for %s: %w", name, err)
+	}
+	if len(killResult.Errored) > 0 {
+		return fmt.Errorf("force-killing process(es) for %s: %v", name, killResult.Errored)
 	}
 	return nil
 }
@@ -1232,6 +1248,16 @@ func (m *LocalManager) ForceStopService(_ context.Context, name string) (result 
 		otelx.RecordOutcome(m.ctx, m.telemetry.ServiceStops, name, err)
 	}()
 
+	return m.forceKillServiceLocked(name)
+}
+
+// forceKillServiceLocked SIGKILLs name's process history and records the
+// outcome. The caller must already hold the per-service lock (via
+// lockService or lmStopForRestart's caller). Shared by ForceStopService and
+// lmStopForRestart's grace-period escalation, so both a manual force-stop and
+// an automatic restart-after-timeout classify and persist history the same
+// way.
+func (m *LocalManager) forceKillServiceLocked(name string) (StopServiceResult, error) {
 	stopResult, err := m.stopServiceWithSignal(name, syscall.SIGKILL)
 	if err != nil {
 		return StopServiceResult{}, err
