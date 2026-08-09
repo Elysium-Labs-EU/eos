@@ -317,7 +317,7 @@ func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, g
 }
 
 // --wait, optional flag will be added later.
-func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, managerMode localModeFn) *cobra.Command {
 	runCmd := &cobra.Command{
 		Use:   cmdnames.Run + " [flags] [name]",
 		Short: "Start or restart a service",
@@ -338,6 +338,13 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 			cfg := getConfig()
+
+			// Before any registration or DB write: starting a service in-process
+			// orphans it, both beside a live daemon and inside a managed
+			// daemon's outage window.
+			if err := refuseLocalStart(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			serviceFile, once, err := runParseFlags(cmd)
 			if err != nil {

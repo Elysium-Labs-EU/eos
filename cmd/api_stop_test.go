@@ -365,6 +365,7 @@ func newTestAPIStopCmd(fake *apiStopFakeManager) (*cobra.Command, *bytes.Buffer,
 		func() *config.SystemConfig {
 			return &config.SystemConfig{Shutdown: config.ShutdownConfig{GracePeriod: time.Millisecond}}
 		},
+		func() localMode { return localMode{} },
 	)
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)

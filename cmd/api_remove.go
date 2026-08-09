@@ -15,7 +15,7 @@ type apiRemoveResult struct {
 	Removed bool   `json:"removed"`
 }
 
-func newAPIRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newAPIRemoveCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   cmdnames.UseRemove,
 		Short: "Unregister a service; always outputs JSON",
@@ -41,6 +41,10 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
+
+			if err := apiRefuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			exists, err := mgr.IsServiceRegistered(cmd.Context(), serviceName)
 			if err != nil {

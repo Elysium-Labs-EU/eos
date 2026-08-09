@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newAddCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newAddCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   cmdnames.UseAdd,
 		Short: "Register a service from a directory",
@@ -29,6 +29,12 @@ hand with "eos stop".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectPath := args[0]
 			mgr := getManager()
+
+			// Registering in-process writes the catalog entry into a state DB a
+			// live supervised daemon is also writing.
+			if err := refuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			yamlFile, err := helpers.DetermineYamlFile(projectPath)
 			if err != nil {

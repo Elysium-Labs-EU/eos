@@ -196,7 +196,7 @@ func loadSystemConfigAndFlags(cmd *cobra.Command, printCmd *cobra.Command) (inst
 	return installDir, systemConfig, identity, verbose, flagYes, nil
 }
 
-func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newSystemCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, managerMode localModeFn) *cobra.Command {
 	var ctrl DaemonController // closed over by all subcommands below
 
 	systemCmd := &cobra.Command{
@@ -302,7 +302,7 @@ On OpenRC, removes the system-wide init script at /etc/init.d/eos and requires r
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return sysRunUninstall(cmd, systemCmd, getManager, getConfig, ctrl)
+			return sysRunUninstall(cmd, systemCmd, getManager, getConfig, ctrl, managerMode)
 		},
 	}
 	uninstallCmd.Flags().BoolP("yes", "y", false, flagDescSkipConfirm)
@@ -548,7 +548,14 @@ func sysRunUpdate(cmd *cobra.Command, systemCmd *cobra.Command, ctrl DaemonContr
 }
 
 // sysRunUninstall backs the "system uninstall" subcommand's RunE.
-func sysRunUninstall(cmd *cobra.Command, systemCmd *cobra.Command, getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, ctrl DaemonController) error {
+func sysRunUninstall(cmd *cobra.Command, systemCmd *cobra.Command, getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, ctrl DaemonController, managerMode localModeFn) error {
+	// Uninstall stops every service and deletes its instance row before it
+	// touches the daemon, so in-process it is the widest state-changing command
+	// there is; it takes the same refusal the narrow ones do.
+	if err := refuseLocalWrite(systemCmd, managerMode()); err != nil {
+		return err
+	}
+
 	installDir, baseDir, _, _, err := newSystemConfig()
 	if err != nil {
 		systemCmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("getting system configuration: %v", err))
@@ -587,20 +594,7 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 	cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("install dir:"), installDir)
 	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("base dir:"), baseDir)
 	cmd.Printf(fmtHeading, ui.TextBold.Render("Daemon"))
-	if config.Daemon.Standalone != nil {
-		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), false)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("pid file:"), config.Daemon.Standalone.PIDFile)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), config.Daemon.Standalone.SocketPath)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket timeout:"), config.Daemon.Standalone.SocketTimeout)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log dir:"), config.Daemon.Standalone.Log.LogDir)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log file:"), config.Daemon.Standalone.Log.LogFileName)
-		cmd.Printf("  %s %d\n", ui.TextMuted.Render("log max files:"), config.Daemon.Standalone.Log.LogMaxFiles)
-		cmd.Printf("  %s %d\n\n", ui.TextMuted.Render("log size limit:"), config.Daemon.Standalone.Log.LogFileSizeLimit)
-	} else {
-		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), true)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target directory:"), config.Daemon.Systemd.SystemdTargetDir)
-		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target filename:"), config.Daemon.Systemd.SystemdTargetFileName)
-	}
+	printDaemonInfo(cmd, config.Daemon)
 	cmd.Printf(fmtHeading, ui.TextBold.Render("Health Check"))
 	cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("timeout enabled:"), config.Health.Timeout.Enable)
 	if config.Health.Timeout.Enable {
@@ -617,6 +611,44 @@ func infoCmd(cmd *cobra.Command, installDir string, baseDir string, config *conf
 		cmd.Printf(fmtIndentLabelAnyLn, ui.TextMuted.Render("insecure:"), config.Telemetry.Insecure)
 	}
 	cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("hint:"), fmt.Sprintf("sinks, telemetry, and health thresholds as configured in config.yaml: %s", ui.TextCommand.Render(cmdnames.HintConfigShow)))
+}
+
+// printDaemonInfo renders the Daemon block of "eos system info" for whichever
+// supervisor is active. Every mode prints the socket the CLI talks to: the
+// block covered standalone and systemd only, so a launchd- or OpenRC-managed
+// install hit the systemd branch and dereferenced a nil SystemdConfig, and no
+// mode but standalone ever showed a socket at all.
+func printDaemonInfo(cmd *cobra.Command, daemon config.DaemonConfig) {
+	switch {
+	case daemon.Standalone != nil:
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), false)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("pid file:"), daemon.Standalone.PIDFile)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), daemon.Standalone.SocketPath)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket timeout:"), daemon.Standalone.SocketTimeout)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log dir:"), daemon.Standalone.Log.LogDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("log file:"), daemon.Standalone.Log.LogFileName)
+		cmd.Printf("  %s %d\n", ui.TextMuted.Render("log max files:"), daemon.Standalone.Log.LogMaxFiles)
+		cmd.Printf("  %s %d\n\n", ui.TextMuted.Render("log size limit:"), daemon.Standalone.Log.LogFileSizeLimit)
+	case daemon.Systemd != nil:
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("systemd managed:"), true)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target directory:"), daemon.Systemd.SystemdTargetDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("systemd target filename:"), daemon.Systemd.SystemdTargetFileName)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), daemon.Systemd.SocketPath)
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("user unit:"), daemon.Systemd.UserUnit)
+	case daemon.Launchd != nil:
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("launchd managed:"), true)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("launchd target directory:"), daemon.Launchd.LaunchdTargetDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("launchd plist filename:"), daemon.Launchd.LaunchdPlistFileName)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("socket:"), daemon.Launchd.SocketPath)
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("user agent:"), daemon.Launchd.UserAgent)
+	case daemon.OpenRC != nil:
+		cmd.Printf(fmtIndentLabelAny, ui.TextMuted.Render("openrc managed:"), true)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("openrc init directory:"), daemon.OpenRC.InitDir)
+		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("openrc init filename:"), daemon.OpenRC.InitFileName)
+		cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("socket:"), daemon.OpenRC.SocketPath)
+	default:
+		cmd.Printf(fmtIndentLabelMsg, ui.TextMuted.Render("supervisor:"), "(none configured)")
+	}
 }
 
 // resolveDaemonVersion queries the version of the actual running daemon
@@ -655,12 +687,10 @@ func resolveStandaloneDaemonVersion(ctx context.Context, cfg *config.StandaloneD
 	return version.Version, nil
 }
 
-// resolveSystemdDaemonVersion handles the case systemd-managed daemons aren't
-// reachable through the IPC socket path above (see newManager in root.go: a
-// systemd-managed DaemonConfig always resolves to a local in-process manager,
-// never DaemonManager) by instead following /proc/<pid>/exe to the actual
-// running binary and asking it directly — the same drift
-// systemdDaemonRunningVersion already reports in 'eos daemon info'.
+// resolveSystemdDaemonVersion follows /proc/<pid>/exe to the actual running
+// binary and asks it directly — the same drift systemdDaemonRunningVersion
+// already reports in 'eos daemon info'. That works whether or not the unit's
+// socket is currently answering, which the IPC path above requires.
 func resolveSystemdDaemonVersion(ctx context.Context, cfg *config.SystemdConfig) (string, error) {
 	full, err := systemdDaemonRunningVersion(ctx, cfg.UserUnit)
 	if err != nil {

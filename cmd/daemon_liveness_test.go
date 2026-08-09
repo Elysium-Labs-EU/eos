@@ -234,12 +234,51 @@ func TestDaemonIsDown_SystemdScopedToBaseDir(t *testing.T) {
 }
 
 func TestDaemonIsDown_Unconfigured(t *testing.T) {
-	// Neither systemd nor standalone (e.g. launchd, or nothing configured):
-	// liveness is not probed here, so never report a false outage.
+	// No supervisor at all: there is no socket to probe, so never report a
+	// false outage.
 	if daemonIsDown(t.Context(), &config.DaemonConfig{}) {
-		t.Error("expected daemonIsDown=false when no probeable supervisor is configured")
+		t.Error("expected daemonIsDown=false when no supervisor is configured")
 	}
-	if daemonIsDown(t.Context(), &config.DaemonConfig{Launchd: &config.LaunchdConfig{}}) {
-		t.Error("expected daemonIsDown=false for a launchd-managed daemon")
+}
+
+// TestDaemonIsDown_LaunchdAndOpenRCSocket covers the two supervisors that used
+// to carry no SocketPath and were therefore never probed: both now key off the
+// same base-dir socket systemd and standalone use.
+func TestDaemonIsDown_LaunchdAndOpenRCSocket(t *testing.T) {
+	for _, tc := range []struct {
+		daemon func(sock string) *config.DaemonConfig
+		name   string
+	}{
+		{
+			name: "launchd",
+			daemon: func(sock string) *config.DaemonConfig {
+				return &config.DaemonConfig{Launchd: &config.LaunchdConfig{SocketPath: sock}}
+			},
+		},
+		{
+			name: "openrc",
+			daemon: func(sock string) *config.DaemonConfig {
+				return &config.DaemonConfig{OpenRC: &config.OpenRCConfig{SocketPath: sock}}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sockPath := filepath.Join(shortTempSocketDir(t), "eos.sock")
+			daemon := tc.daemon(sockPath)
+
+			if !daemonIsDown(t.Context(), daemon) {
+				t.Error("expected daemonIsDown=true when nothing is listening on the socket")
+			}
+
+			ln, err := net.Listen("unix", sockPath)
+			if err != nil {
+				t.Fatalf("net.Listen unix: %v", err)
+			}
+			defer func() { _ = ln.Close() }()
+
+			if daemonIsDown(t.Context(), daemon) {
+				t.Error("expected daemonIsDown=false once the socket accepts connections")
+			}
+		})
 	}
 }

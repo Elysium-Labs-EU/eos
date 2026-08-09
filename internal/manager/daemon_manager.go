@@ -87,6 +87,20 @@ func NewDaemonManager(ctx context.Context, socketPath string, pidFile string, so
 	return &DaemonManager{socketPath: socketPath}, nil
 }
 
+// NewSupervisedDaemonManager returns a manager for a daemon whose lifecycle an
+// external supervisor (systemd, launchd, OpenRC) owns. Unlike NewDaemonManager
+// it neither reads a PID file nor forks a daemon of its own: the supervisor
+// writes no eos PID file, and spawning a second daemon beside the supervised
+// one is the split-brain this exists to avoid.
+//
+// Liveness stays at the call site rather than inside the constructor: the CLI
+// probes the socket first and falls back to a local, read-only manager when it
+// does not answer, so a stopped unit still serves last-known state instead of
+// failing the command outright.
+func NewSupervisedDaemonManager(socketPath string) *DaemonManager {
+	return &DaemonManager{socketPath: socketPath}
+}
+
 func isDaemonRunning(pidFile string) bool {
 	data, err := os.ReadFile(pidFile) // #nosec G304 -- path sanitized in config.NewDaemonConfig
 	if err != nil {

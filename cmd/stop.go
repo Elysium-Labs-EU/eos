@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newStopCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, managerMode localModeFn) *cobra.Command {
 	var forceQuit bool
 
 	cmd := &cobra.Command{
@@ -32,6 +32,12 @@ service stays down until you bring it back with "eos run".`,
 			serviceName := args[0]
 			mgr := getManager()
 			cfg := getConfig()
+
+			// An in-process stop signals PGIDs the live daemon still supervises
+			// and rewrites its state DB behind its back.
+			if err := refuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			stopCmdPrintStarting(cmd, serviceName, forceQuit)
 

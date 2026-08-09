@@ -86,7 +86,12 @@ type SystemdConfig struct {
 type LaunchdConfig struct {
 	LaunchdTargetDir     string `json:"launchd_target_dir" yaml:"launchdTargetDir"`
 	LaunchdPlistFileName string `json:"launchd_plist_file_name" yaml:"launchdPlistFileName"`
-	UserAgent            bool   `json:"user_agent" yaml:"userAgent"`
+	// SocketPath is the Unix socket the launchd-managed daemon listens on for
+	// THIS base dir, the launchd analog of SystemdConfig.SocketPath. See that
+	// field's comment for why the socket — not the supervisor's own job
+	// listing — is the base-dir-scoped signal.
+	SocketPath string `json:"socket_path" yaml:"socketPath"`
+	UserAgent  bool   `json:"user_agent" yaml:"userAgent"`
 }
 
 // OpenRCConfig is the OpenRC analog of SystemdConfig. OpenRC has no per-user
@@ -96,6 +101,64 @@ type LaunchdConfig struct {
 type OpenRCConfig struct {
 	InitDir      string `json:"init_dir" yaml:"initDir"`
 	InitFileName string `json:"init_file_name" yaml:"initFileName"`
+	// SocketPath is the Unix socket the OpenRC-managed daemon listens on for
+	// THIS base dir, the OpenRC analog of SystemdConfig.SocketPath.
+	SocketPath string `json:"socket_path" yaml:"socketPath"`
+}
+
+// DaemonEndpoint is the resolved IPC endpoint of the daemon serving one base
+// dir: the Unix socket a CLI invocation must talk to instead of managing
+// services in-process.
+//
+// Supervised distinguishes the two lifecycles. For the standalone supervisor
+// eos owns the daemon itself, so PIDFile and Timeout are set and a caller may
+// fork one on demand. For systemd, launchd and OpenRC the supervisor owns the
+// lifecycle: there is no eos-written PID file to read and forking a second
+// daemon beside the supervised one is precisely the split-brain to avoid, so
+// both fields are deliberately zero.
+type DaemonEndpoint struct {
+	SocketPath string
+	PIDFile    string
+	Timeout    time.Duration
+	Supervised bool
+}
+
+// ResolveDaemonEndpoint returns the daemon endpoint for whichever supervisor
+// cfg names, reporting false when cfg configures no daemon at all. Pure — no
+// I/O: whether that daemon is actually alive is the caller's concern.
+func ResolveDaemonEndpoint(cfg DaemonConfig) (DaemonEndpoint, bool) {
+	switch {
+	case cfg.Standalone != nil:
+		return DaemonEndpoint{
+			SocketPath: cfg.Standalone.SocketPath,
+			PIDFile:    cfg.Standalone.PIDFile,
+			Timeout:    cfg.Standalone.SocketTimeout,
+			Supervised: false, // eos forks and reaps this daemon itself
+		}, true
+	case cfg.Systemd != nil:
+		return DaemonEndpoint{
+			SocketPath: cfg.Systemd.SocketPath,
+			PIDFile:    "", // systemd owns the lifecycle; eos writes no PID file
+			Timeout:    0,  // never waits on a fork it did not make
+			Supervised: true,
+		}, true
+	case cfg.Launchd != nil:
+		return DaemonEndpoint{
+			SocketPath: cfg.Launchd.SocketPath,
+			PIDFile:    "", // launchd owns the lifecycle
+			Timeout:    0,
+			Supervised: true,
+		}, true
+	case cfg.OpenRC != nil:
+		return DaemonEndpoint{
+			SocketPath: cfg.OpenRC.SocketPath,
+			PIDFile:    "", // supervise-daemon owns the lifecycle
+			Timeout:    0,
+			Supervised: true,
+		}, true
+	default:
+		return DaemonEndpoint{}, false
+	}
 }
 
 type TimeOutConfig struct {
