@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
+func newRemoveCmd(getManager func() manager.ServiceManager, managerMode localModeFn) *cobra.Command {
 	return &cobra.Command{
 		Use:               cmdnames.UseRemove,
 		Short:             "Remove a service from the registry",
@@ -25,6 +25,13 @@ func newRemoveCmd(getManager func() manager.ServiceManager) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
 			mgr := getManager()
+
+			// Deleting the instance and catalog rows in-process tears state out
+			// from under a daemon that is still supervising the live process for
+			// this service.
+			if err := refuseLocalWrite(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			if err := removeCmdEnsureRegistered(cmd, mgr, serviceName); err != nil {
 				return err

@@ -45,7 +45,7 @@ func apiRunShouldSkip(ctx context.Context, mgr manager.ServiceManager, once bool
 	return isServiceRunning(ctx, mgr, serviceName)
 }
 
-func newAPIRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig) *cobra.Command {
+func newAPIRunCmd(getManager func() manager.ServiceManager, getConfig func() *config.SystemConfig, managerMode localModeFn) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [-f <file>] [--once] [name]",
 		Short: "Start or restart a service; always outputs JSON",
@@ -77,6 +77,10 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := getManager()
 			cfg := getConfig()
+
+			if err := apiRefuseLocalStart(cmd, managerMode()); err != nil {
+				return err
+			}
 
 			serviceFile, _ := cmd.Flags().GetString("file")
 			once, _ := cmd.Flags().GetBool("once")
