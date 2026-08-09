@@ -1,4 +1,4 @@
-.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb adr-find
 
 .DEFAULT_GOAL := help
 
@@ -281,6 +281,17 @@ sg-test: ## Run ast-grep rule tests
 
 sg-rules: ## List all ast-grep rules
 	@find rules -name '*.yml' | sort
+
+adr-find: ## Find ADRs and related code for a concept: make adr-find Q="daemon liveness"
+	@test -n "$(Q)" || { echo "Usage: make adr-find Q=\"concept\""; exit 1; }
+	@command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }
+	@test -f .gitnexus/run.cjs || { echo ".gitnexus/run.cjs not found. Run: npx gitnexus analyze"; exit 1; }
+	@echo "--- docs/adr matching \"$(Q)\" ---"
+	@grep -ril -- "$(Q)" docs/adr/*.md 2>/dev/null || echo "  (no filename/content match, try a narrower term)"
+	@echo "--- code comments citing an ADR (ast-grep) ---"
+	@ast-grep scan --rule docs/adr/adr-reference.sgrule.yml . 2>/dev/null || echo "  (none found)"
+	@echo "--- related code via GitNexus ---"
+	@node .gitnexus/run.cjs augment "$(Q)" 2>&1 | { grep -v '^Progress:\|^\[WARN\]\|node_modules\|^Packages:\|^\+\+' || true; }
 
 secrets: ## Scan working tree and history for leaked secrets (requires: go install github.com/zricethezav/gitleaks/v8@latest)
 	@command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks not found. Run: make setup"; exit 1; }
