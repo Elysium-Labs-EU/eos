@@ -1129,17 +1129,40 @@ func daemonCmdWarnSystemdUserBus(cmd *cobra.Command) {
 
 // daemonCmdPrintSystemdRunState prints whether the systemd-managed daemon is
 // currently running (and its PID when resolvable), based on the same
-// base-dir-scoped socket probe daemonIsDown() uses.
+// base-dir-scoped socket probe daemonIsDown() uses. When the PID resolves, it
+// also carries the same stale-binary warning standalone daemons already give
+// (see process.DiscoverDaemons): systemd has no equivalent today, so an
+// operator who updated but never restarted the unit gets a plain "running"
+// with no sign they're on old code.
 func daemonCmdPrintSystemdRunState(cmd *cobra.Command, cfg config.SystemdConfig) {
 	if !socketResponds(cmd.Context(), cfg.SocketPath) {
 		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelInfo.Render("○"), ui.TextMuted.Render("not running"))
 		return
 	}
-	if pid, err := systemdMainPID(cmd.Context(), cfg.UserUnit); err == nil {
-		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
+	pid, err := systemdMainPID(cmd.Context(), cfg.UserUnit)
+	if err != nil {
+		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), "running")
 		return
 	}
-	cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), "running")
+	renderSystemdRunState(cmd, pid, systemdStaleBinary(pid, process.CurrentExecutableInode()))
+}
+
+// renderSystemdRunState prints the running-state line for a resolved pid, given
+// whether it is stale. Split out from daemonCmdPrintSystemdRunState so the
+// print formatting is testable without a real process or systemctl.
+func renderSystemdRunState(cmd *cobra.Command, pid int, stale bool) {
+	if stale {
+		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelWarning.Render("⚠"), fmt.Sprintf("running (pid %d) — on a since-replaced binary, restart needed", pid))
+		return
+	}
+	cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
+}
+
+// systemdStaleBinary reports whether pid is still running a binary other than the one at
+// currentIno, reusing process.RunningExeInode — the same /proc/<pid>/exe inode comparison
+// standalone daemons use — rather than deriving the fact a second way.
+func systemdStaleBinary(pid int, currentIno uint64) bool {
+	return currentIno != 0 && process.RunningExeInode(pid) != currentIno
 }
 
 // daemonCmdPrintSystemdVersion prints the version embedded in the binary
@@ -1147,10 +1170,26 @@ func daemonCmdPrintSystemdRunState(cmd *cobra.Command, cfg config.SystemdConfig)
 // be resolved.
 func daemonCmdPrintSystemdVersion(cmd *cobra.Command, cfg config.SystemdConfig) {
 	version, err := systemdDaemonRunningVersion(cmd.Context(), cfg.UserUnit)
-	if err != nil {
+	renderSystemdVersion(cmd, version, err)
+}
+
+// renderSystemdVersion writes the outcome of systemdDaemonRunningVersion: the
+// version line on success, nothing for an errVersionUnresolvable failure (no
+// pid to query, or the process exited before it could be queried — expected,
+// not worth mentioning), or a warning for any other failure, since that means
+// a pid resolved and its own /proc/<pid>/exe could not be run for a real
+// reason (permissions, a broken binary) the operator should know about. Split
+// out from daemonCmdPrintSystemdVersion so this classification is testable
+// with synthetic errors, without a real process or systemctl.
+func renderSystemdVersion(cmd *cobra.Command, version string, err error) {
+	if err == nil {
+		cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
 		return
 	}
-	cmd.Printf("  %s %s\n", ui.TextMuted.Render("running version:"), version)
+	if errors.Is(err, errVersionUnresolvable) {
+		return
+	}
+	cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), fmt.Sprintf("could not determine running daemon version: %v", err))
 }
 
 // systemdUserBusReachable reports whether $XDG_RUNTIME_DIR, as exported in this process's own
@@ -1202,6 +1241,12 @@ func systemdMainPID(ctx context.Context, userUnit bool) (int, error) {
 	return pid, nil
 }
 
+// errVersionUnresolvable marks a systemdDaemonRunningVersion/runningExeVersion failure that
+// is expected and should stay silent — no pid to query, or the process exited between
+// resolving the pid and exec'ing its /proc/<pid>/exe — rather than surfaced to the operator
+// as a warning.
+var errVersionUnresolvable = errors.New("daemon version unresolvable")
+
 // systemdDaemonRunningVersion resolves the version string embedded in the binary
 // actually backing the running systemd-managed daemon process, by following
 // /proc/<pid>/exe rather than trusting the currently installed binary — the two
@@ -1210,14 +1255,24 @@ func systemdMainPID(ctx context.Context, userUnit bool) (int, error) {
 func systemdDaemonRunningVersion(ctx context.Context, userUnit bool) (string, error) {
 	pid, err := systemdMainPID(ctx, userUnit)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errVersionUnresolvable, err)
 	}
-	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	return runningExeVersion(ctx, pid)
+}
+
+// runningExeVersion execs pid's own /proc/<pid>/exe with --version and returns its output.
+// It runs the magic symlink path itself rather than os.Readlink-ing it first: the kernel
+// resolves /proc/<pid>/exe to the inode the process actually exec'd regardless of what has
+// happened to that path on disk since, so this works even after install.sh's `mv -f` has
+// renamed the on-disk binary out from under a still-running daemon (readlink would instead
+// return a path suffixed " (deleted)", which fails to exec at all).
+func runningExeVersion(ctx context.Context, pid int) (string, error) {
+	exePath := fmt.Sprintf("/proc/%d/exe", pid)
+	out, err := exec.CommandContext(ctx, exePath, "--version").Output() // #nosec G204 -- exePath is /proc/<pid>/exe of the daemon's own resolved pid, not external input
 	if err != nil {
-		return "", fmt.Errorf("resolving daemon binary: %w", err)
-	}
-	out, err := exec.CommandContext(ctx, exePath, "--version").Output() // #nosec G204 -- exePath resolved from the daemon's own /proc/<pid>/exe, not external input
-	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%w: %w", errVersionUnresolvable, err)
+		}
 		return "", fmt.Errorf("running %s --version: %w", exePath, err)
 	}
 	return strings.TrimSpace(string(out)), nil
