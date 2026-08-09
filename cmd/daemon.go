@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -108,12 +109,27 @@ func (c *standaloneDaemonController) Info(cmd *cobra.Command) {
 		cmd.Printf(fmtLabelMsg, ui.LabelInfo.Render("info"), ui.TextMuted.Render("daemon is not running"))
 		return
 	}
-	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
+	renderStandaloneRunState(cmd, staleBinary(*status.Pid, process.CurrentExecutableInode()))
 	if version, err := resolveStandaloneDaemonVersion(cmd.Context(), &c.cfg); err == nil {
 		cmd.Printf(fmtIndentLabelMsgLn, ui.TextMuted.Render("running version:"), version)
 	}
 	cmd.Println()
 	printStandaloneDaemonDetails(cmd, *status.Pid, &c.cfg)
+}
+
+// renderStandaloneRunState prints "eos daemon info"'s running-state header line
+// for a standalone daemon, warning when it is stale — the same
+// since-replaced-binary drift discoverDaemonsIn/renderDaemonSummaries and the
+// systemd path already surface, so a single-daemon standalone lookup was
+// previously the one place an operator could see a stale daemon and be told
+// everything is fine. Split out from Info so this classification is testable
+// without a real process.
+func renderStandaloneRunState(cmd *cobra.Command, stale bool) {
+	if stale {
+		cmd.Printf(fmtLabelMsgLn, ui.LabelWarning.Render("⚠"), ui.TextBold.Render("daemon is running — on a since-replaced binary, restart needed"))
+		return
+	}
+	cmd.Printf(fmtLabelMsgLn, ui.LabelSuccess.Render("✓"), ui.TextBold.Render("daemon is running"))
 }
 
 func (c *standaloneDaemonController) LogsHint() string {
@@ -1144,7 +1160,7 @@ func daemonCmdPrintSystemdRunState(cmd *cobra.Command, cfg config.SystemdConfig)
 		cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), "running")
 		return
 	}
-	renderSystemdRunState(cmd, pid, systemdStaleBinary(pid, process.CurrentExecutableInode()))
+	renderSystemdRunState(cmd, pid, staleBinary(pid, process.CurrentExecutableInode()))
 }
 
 // renderSystemdRunState prints the running-state line for a resolved pid, given
@@ -1158,11 +1174,20 @@ func renderSystemdRunState(cmd *cobra.Command, pid int, stale bool) {
 	cmd.Printf(fmtIndentLabelMsgLn, ui.LabelSuccess.Render("✓"), fmt.Sprintf("running (pid %d)", pid))
 }
 
-// systemdStaleBinary reports whether pid is still running a binary other than the one at
-// currentIno, reusing process.RunningExeInode — the same /proc/<pid>/exe inode comparison
-// standalone daemons use — rather than deriving the fact a second way.
-func systemdStaleBinary(pid int, currentIno uint64) bool {
-	return currentIno != 0 && process.RunningExeInode(pid) != currentIno
+// staleBinary reports whether pid is still running a binary other than the one at
+// currentIno, reusing process.RunningExeInode — the same /proc/<pid>/exe inode
+// comparison discoverDaemonsIn uses for "eos daemon info --all" — rather than
+// deriving the fact a third way. Shared by both the systemd and standalone
+// single-daemon "eos daemon info" paths.
+//
+// Gated to Linux explicitly rather than incidentally: RunningExeInode reads
+// /proc/<pid>/exe, which doesn't exist on other platforms, so it always reads
+// back 0 there and every live daemon would otherwise misreport as stale. The
+// systemd path never hit this in practice — systemctl itself is unresolvable
+// off Linux — but standalone daemons run on macOS too, so this call site
+// needs the guard spelled out rather than relying on that coincidence.
+func staleBinary(pid int, currentIno uint64) bool {
+	return runtime.GOOS == "linux" && currentIno != 0 && process.RunningExeInode(pid) != currentIno
 }
 
 // daemonCmdPrintSystemdVersion prints the version embedded in the binary

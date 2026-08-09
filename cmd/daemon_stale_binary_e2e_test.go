@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,103 @@ func TestSupervisedDaemonE2E_StaleBinaryAfterReplace(t *testing.T) {
 	var status apiStatusOut
 	if unmarshalErr := json.Unmarshal([]byte(statusOut), &status); unmarshalErr != nil {
 		t.Fatalf("eos api status did not emit the documented JSON (%v): %q", unmarshalErr, statusOut)
+	}
+}
+
+// isolatedHomeEosCmd is eosCmd plus one addition: HOME points at a throwaway
+// directory too, not just EOS_BASE_DIR/EOS_SYSTEMD_TARGET_DIR.
+// config.ResolveSystemdScope falls back to the real per-user systemd dir
+// (~/.config/systemd/user) whenever the EOS_SYSTEMD_TARGET_DIR override isn't
+// itself managed — correct standalone-vs-systemd detection in general, but it
+// means on a host that already has a real "eos.service" user unit installed
+// (left over from prior manual testing, say), eosCmd's isolation silently
+// stops working and this test would run against systemd instead of
+// standalone. Redirecting HOME sidesteps that fallback entirely.
+func isolatedHomeEosCmd(t *testing.T, bin, baseDir, homeDir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), bin, args...)
+	cmd.Env = append(os.Environ(),
+		"HOME="+homeDir,
+		"EOS_BASE_DIR="+baseDir,
+		"EOS_SYSTEMD_TARGET_DIR=/nonexistent-eos-e2e",
+	)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// startIsolatedDaemon is startDaemon, using isolatedHomeEosCmd instead of
+// eosCmd so the daemon it starts can't collide with a real systemd user unit
+// already installed on the host (see isolatedHomeEosCmd).
+func startIsolatedDaemon(t *testing.T, bin, baseDir, homeDir string) {
+	t.Helper()
+	if out, err := isolatedHomeEosCmd(t, bin, baseDir, homeDir, "daemon", "start", "--detach"); err != nil {
+		t.Fatalf("daemon start: %v\n%s", err, out)
+	}
+
+	sockFile := filepath.Join(baseDir, "eos.sock")
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sockFile); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("daemon did not start within 8s (socket never appeared)")
+}
+
+// stopIsolatedDaemon is stopDaemon's isolatedHomeEosCmd counterpart.
+func stopIsolatedDaemon(t *testing.T, bin, baseDir, homeDir string) {
+	t.Helper()
+	if out, err := isolatedHomeEosCmd(t, bin, baseDir, homeDir, "daemon", "stop"); err != nil {
+		t.Logf("daemon stop output: %s", out)
+	}
+}
+
+// TestStandaloneDaemonE2E_StaleBinaryAfterReplace is the standalone analog of
+// TestSupervisedDaemonE2E_StaleBinaryAfterReplace: this is the regression test
+// for the actual bug reported — a standalone (non-systemd) daemon kept running
+// after install.sh's `mv -f` replaced the on-disk binary out from under it, and
+// unlike the systemd path, neither "eos daemon info" nor "eos system info" said
+// anything was wrong. The drift itself was always caught (discoverDaemonsIn's
+// "--all" scan already flagged it); this was the one place an operator running
+// the single-daemon default lookup would see a clean bill of health regardless.
+func TestStandaloneDaemonE2E_StaleBinaryAfterReplace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc/<pid>/exe resolution is Linux-only")
+	}
+	oldVersion := "v0.0.1-old"
+	newVersion := "v0.0.2-new"
+	oldBin := buildEosBinaryVersioned(t, oldVersion)
+	baseDir := e2eTempDir(t)
+	homeDir := e2eTempDir(t)
+
+	startIsolatedDaemon(t, oldBin, baseDir, homeDir)
+	t.Cleanup(func() { stopIsolatedDaemon(t, oldBin, baseDir, homeDir) })
+
+	// Simulate install.sh: build a second binary and rename it over the path the
+	// daemon is still running from. The daemon process keeps its own (now
+	// unlinked) inode; only the path on disk points at the new content.
+	newBin := buildEosBinaryVersioned(t, newVersion)
+	if err := os.Rename(newBin, oldBin); err != nil {
+		t.Fatalf("simulating install.sh's binary replace (rename %s -> %s): %v", newBin, oldBin, err)
+	}
+	t.Logf("replaced %s in place with a %s build (mv -f semantics)", oldBin, newVersion)
+
+	infoOut, err := isolatedHomeEosCmd(t, oldBin, baseDir, homeDir, "daemon", "info")
+	if err != nil {
+		t.Fatalf("eos daemon info: %v\n%s", err, infoOut)
+	}
+	t.Logf("eos daemon info after replace:\n%s", infoOut)
+	if !strings.Contains(infoOut, "since-replaced binary, restart needed") {
+		t.Errorf("expected 'eos daemon info' to warn about the stale binary, got:\n%s", infoOut)
+	}
+
+	sysInfoOut, err := isolatedHomeEosCmd(t, oldBin, baseDir, homeDir, "system", "info")
+	if err != nil {
+		t.Fatalf("eos system info: %v\n%s", err, sysInfoOut)
+	}
+	t.Logf("eos system info after replace:\n%s", sysInfoOut)
+	if !strings.Contains(sysInfoOut, "since-replaced binary, restart needed") {
+		t.Errorf("expected 'eos system info' to warn about the stale binary, got:\n%s", sysInfoOut)
 	}
 }
