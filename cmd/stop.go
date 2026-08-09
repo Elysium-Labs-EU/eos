@@ -45,15 +45,6 @@ service stays down until you bring it back with "eos run".`,
 				return err
 			}
 
-			// Persist the stop as this service's desired boot state, regardless of
-			// whether a process was actually still running to kill below: the
-			// operator's intent is "don't bring this back", and bootPersistedServices
-			// reads this flag to skip it on the next daemon start/reboot (issue #172).
-			if err := mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("persisting stopped state: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
 			if forceQuit {
 				forceStopService(cmd, serviceName, mgr)
 				return nil
@@ -101,6 +92,9 @@ func stopCmdHandleResult(cmd *cobra.Command, serviceName string, mgr manager.Ser
 	countStaleData := len(stopResult.StaleData)
 
 	if countStopped == 0 && countError == 0 {
+		if err := persistDisabled(cmd, mgr, serviceName); err != nil {
+			return err
+		}
 		cmd.Printf(fmtLabelMsg, ui.LabelWarning.Render("warning"), "no running processes found")
 		cleanupServiceInstance(cmd, serviceName, mgr)
 		return nil
@@ -110,11 +104,26 @@ func stopCmdHandleResult(cmd *cobra.Command, serviceName string, mgr manager.Ser
 	stopCmdPrintStaleDataWarning(cmd, countStaleData)
 
 	if countError == 0 {
+		if err := persistDisabled(cmd, mgr, serviceName); err != nil {
+			return err
+		}
 		cleanupServiceInstance(cmd, serviceName, mgr)
 		return nil
 	}
 
 	return stopCmdConfirmForceQuit(cmd, serviceName, mgr, stopResult.Errored)
+}
+
+// persistDisabled marks serviceName as the operator's desired boot state.
+// Call only once a stop has actually succeeded (see stopCmdHandleResult and
+// forceStopService): a process still running after a failed or declined stop
+// must keep its boot-recovery flag untouched, or nothing supervises it again.
+func persistDisabled(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string) error {
+	if err := mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("persisting stopped state: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	return nil
 }
 
 func stopCmdPrintStoppedCount(cmd *cobra.Command, countStopped int) {
@@ -178,6 +187,10 @@ func forceStopService(cmd *cobra.Command, serviceName string, mgr manager.Servic
 		}
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render("kill -9 <pgid>") + ui.TextMuted.Render(" to use a PGID listed above for manual kill") + "\n")
 		cmd.PrintErr(ui.TextMuted.Render("  run: ") + ui.TextCommand.Render(fmt.Sprintf(cmdnames.FmtHintInfo, serviceName)) + ui.TextMuted.Render(" to view service info") + "\n")
+		return
+	}
+
+	if err := persistDisabled(cmd, mgr, serviceName); err != nil {
 		return
 	}
 

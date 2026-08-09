@@ -34,7 +34,13 @@ Output schema (stdout, JSON):
   }
 
 Error schema (stderr, JSON):
-  { "error": "string" }
+  {
+    "error": string  -- human-readable message
+    "code":  string  -- present on some failures; a stable, script-matchable
+                         reason. "grace_period_exceeded" means the process(es)
+                         are still alive and a retry with --force is required
+                         to actually kill them.
+  }
 
 Exit codes:
   0  success
@@ -62,17 +68,21 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("service %q not found", serviceName))
 			}
 
-			// Persist the stop as this service's desired boot state; see the
-			// identical call in newStopCmd for why this happens regardless of
-			// whether a process was actually still running (issue #172).
-			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting stopped state: %w", err))
-			}
-
 			if force {
 				forceResult, forceErr := mgr.ForceStopService(cmd.Context(), serviceName)
 				if forceErr != nil {
 					return helpers.WriteJSONErr(cmd, fmt.Errorf("force stopping service: %w", forceErr))
+				}
+				// Persist the stop as this service's desired boot state only
+				// once every process is confirmed gone: a live process left
+				// behind by a failed kill must keep boot recovery armed, or
+				// nothing will ever adopt or reap it. See the identical
+				// ordering below for the graceful path, and newStopCmd for
+				// the interactive counterpart.
+				if len(forceResult.Errored) == 0 {
+					if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
+						return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting stopped state: %w", err))
+					}
 				}
 				_, _ = mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 				return helpers.WriteJSON(cmd, apiStopResult{
@@ -88,7 +98,18 @@ Exit codes:
 				return helpers.WriteJSONErr(cmd, fmt.Errorf("stopping service: %w", err))
 			}
 			if len(result.Errored) > 0 {
-				return helpers.WriteJSONErr(cmd, fmt.Errorf("graceful stop failed for %d process(es)", len(result.Errored)))
+				return helpers.WriteJSONErrCode(cmd,
+					fmt.Errorf("graceful stop failed for %d process(es): exceeded grace period; retry with --force to force kill", len(result.Errored)),
+					"grace_period_exceeded")
+			}
+
+			// Persist the stop as this service's desired boot state; see the
+			// identical call above for the force path and newStopCmd for the
+			// interactive counterpart. Deferred to here (rather than up front)
+			// so a caller that never reaches this line never records a still-
+			// running process as "will not start at boot".
+			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, false); err != nil {
+				return helpers.WriteJSONErr(cmd, fmt.Errorf("persisting stopped state: %w", err))
 			}
 			_, _ = mgr.RemoveServiceInstance(cmd.Context(), serviceName)
 			return helpers.WriteJSON(cmd, apiStopResult{Name: serviceName, Stopped: len(result.Stopped)})
