@@ -773,7 +773,7 @@ func DiscoverDaemons() ([]DaemonSummary, error) {
 		return nil, err
 	}
 
-	return discoverDaemonsIn(homeDirs, currentExecutableInode()), nil
+	return discoverDaemonsIn(homeDirs, CurrentExecutableInode()), nil
 }
 
 // readHomeDirs lists the entries under /home as full paths. A missing /home
@@ -824,7 +824,7 @@ func discoverDaemonsIn(homeDirs []string, currentIno uint64) []DaemonSummary {
 			Err:      statusErr,
 		}
 		if statusErr == nil && status.Running && status.Pid != nil && currentIno != 0 {
-			summary.StaleBinary = runningExeInode(*status.Pid) != currentIno
+			summary.StaleBinary = RunningExeInode(*status.Pid) != currentIno
 		}
 		summaries = append(summaries, summary)
 	}
@@ -833,9 +833,9 @@ func discoverDaemonsIn(homeDirs []string, currentIno uint64) []DaemonSummary {
 	return summaries
 }
 
-// currentExecutableInode returns the inode of the currently running eos binary, or 0 if
+// CurrentExecutableInode returns the inode of the currently running eos binary, or 0 if
 // it can't be determined.
-func currentExecutableInode() uint64 {
+func CurrentExecutableInode() uint64 {
 	exe, err := os.Executable()
 	if err != nil {
 		return 0
@@ -843,11 +843,13 @@ func currentExecutableInode() uint64 {
 	return inodeOf(exe)
 }
 
-// runningExeInode returns the inode backing pid's executable, resolved via /proc/<pid>/exe.
+// RunningExeInode returns the inode backing pid's executable, resolved via /proc/<pid>/exe.
 // This magic symlink stats the original inode a process exec'd, even after that path has
-// been renamed or overwritten on disk — so it differs from currentExecutableInode() exactly
-// when the process is still running the pre-update binary.
-func runningExeInode(pid int) uint64 {
+// been renamed or overwritten on disk — so it differs from CurrentExecutableInode() exactly
+// when the process is still running the pre-update binary. Exported so callers outside this
+// package (the systemd-managed daemon path in cmd) can reuse the same inode comparison
+// standalone daemons use here, rather than re-deriving it.
+func RunningExeInode(pid int) uint64 {
 	return inodeOf(fmt.Sprintf("/proc/%d/exe", pid))
 }
 
