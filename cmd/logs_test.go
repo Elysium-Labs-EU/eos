@@ -60,7 +60,7 @@ func writeServiceYAML(t *testing.T, tempDir string, cfg *types.ServiceConfig) st
 }
 
 func TestLogsCommand(t *testing.T) {
-	cmd, outBuf, _, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -70,10 +70,10 @@ func TestLogsCommand(t *testing.T) {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Run command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, cfg.Name)
 
 	cmd.SetArgs([]string{"logs", cfg.Name, "--follow=false"})
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
@@ -91,7 +91,7 @@ func TestLogsCommand(t *testing.T) {
 }
 
 func TestLogsCommandUnresolvableTail(t *testing.T) {
-	cmd, _, errBuf, tempDir := setupCmd(t)
+	cmd, _, errBuf, tempDir, mgr := setupCmdWithManager(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -101,10 +101,10 @@ func TestLogsCommandUnresolvableTail(t *testing.T) {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Run command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, cfg.Name)
 
 	t.Setenv("PATH", t.TempDir()) // a dir with no "tail" executable in it
 
@@ -177,10 +177,10 @@ func TestLogsCommandLinesOutOfRange(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Add command failed: %v", err)
 	}
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Run command failed: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, cfg.Name)
 	mgr.WaitPipes()
 
 	for _, lines := range []string{"-1", "10001"} {
@@ -230,10 +230,10 @@ func TestLogsCommandSingleStreamModes(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Add command failed: %v", err)
 	}
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Run command failed: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, cfg.Name)
 	mgr.WaitPipes()
 
 	outBuf.Reset()
@@ -285,7 +285,7 @@ func (s *syncBuffer) String() string {
 }
 
 func TestLogsCommandFollow(t *testing.T) {
-	cmd, _, _, tempDir := setupCmd(t)
+	cmd, _, _, tempDir, mgr := setupCmdWithManager(t)
 
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
 	path := writeServiceYAML(t, tempDir, cfg)
@@ -298,10 +298,11 @@ func TestLogsCommandFollow(t *testing.T) {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("Add command failed: %v", err)
 	}
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("Run command failed: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startResult := startServiceForTest(t, mgr, cfg.Name)
+	t.Cleanup(func() { killGroup(startResult.PGID) })
 
 	var followOut syncBuffer
 	cmd.SetOut(&followOut)

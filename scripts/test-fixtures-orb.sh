@@ -133,6 +133,38 @@ ensure_runtimes() {
 
 api() { "$EOS_BIN" --no-daemon api "$@"; }
 
+# run_service_background starts "name" via the real "eos run" (not "eos api
+# run", which now refuses every local start outright -- see
+# docs/adr/0009-local-mode-blocks-and-supervises.md) in the background:
+# local-mode "eos run" blocks in the foreground supervising the service
+# until interrupted or the service exits on its own, so a script embedding
+# it has to background it the same way this one does. Sets RUN_PID as a side
+# effect; its own stdout/stderr (the "supervising"/"stopped" banners, not the
+# service's own output -- that still lands in the usual service log files
+# eos writes) go to $SCRATCH_DIR/run-<name>.log for post-mortem inspection.
+run_service_background() {
+	local name="$1"
+	shift
+	"$EOS_BIN" --no-daemon run "$name" "$@" >"$SCRATCH_DIR/run-$name.log" 2>&1 &
+	RUN_PID=$!
+}
+
+# wait_for_run_exit waits up to 10s for a backgrounded "eos run" (see
+# run_service_background) to notice its service died -- via a separate `api
+# stop`, or the service exiting on its own -- and return on its own;
+# falls back to killing it directly so the script never leaves one behind.
+wait_for_run_exit() {
+	local pid="$1" tries=50
+	while [ "$tries" -gt 0 ] && kill -0 "$pid" 2>/dev/null; do
+		tries=$((tries - 1))
+		sleep 0.2
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		log "run pid $pid did not exit on its own within 10s, killing it"
+		kill -9 "$pid" 2>/dev/null || true
+	fi
+}
+
 wait_for_http() {
 	local port="$1" path="${2:-/}" tries="$HTTP_WAIT_SECONDS"
 	while [ "$tries" -gt 0 ]; do
@@ -186,12 +218,14 @@ run_server_fixture() {
 	local name="$1" dir="$2" port="$3" path="${4:-/}"
 	log "=== $name ==="
 	api add "$dir" >/dev/null || { log "FAIL $name: eos api add failed"; return 1; }
-	api run "$name" >/dev/null || { log "FAIL $name: eos api run failed"; return 1; }
+	run_service_background "$name"
+	local run_pid="$RUN_PID"
 
 	if ! wait_for_http "$port" "$path"; then
 		api logs "$name" --lines 50 | jq -r '.lines[]' >&2 || true
 		log "FAIL $name: no HTTP response on $path:$port within timeout"
 		api stop "$name" --force >/dev/null 2>&1 || true
+		wait_for_run_exit "$run_pid"
 		api remove "$name" >/dev/null 2>&1 || true
 		return 1
 	fi
@@ -202,6 +236,7 @@ run_server_fixture() {
 	if [ "${logs_out:-0}" -le 0 ]; then
 		log "FAIL $name: eos api logs returned no captured output"
 		api stop "$name" --force >/dev/null 2>&1 || true
+		wait_for_run_exit "$run_pid"
 		api remove "$name" >/dev/null 2>&1 || true
 		return 1
 	fi
@@ -213,6 +248,7 @@ run_server_fixture() {
 		return 1
 	fi
 	log "$name: stopped cleanly"
+	wait_for_run_exit "$run_pid"
 
 	api remove "$name" >/dev/null || { log "FAIL $name: eos api remove failed"; return 1; }
 	return 0
@@ -220,8 +256,8 @@ run_server_fixture() {
 
 # ---- negative path: simulate the fixture's interpreter going missing -----
 # Shadows the given tool name(s) off PATH with a stub that exits 127, scoped
-# to the `eos api run` call only (prep/build already happened with the real
-# toolchain). Asserts eos surfaces a clean non-"starting" status rather than
+# to the backgrounded `eos run` call only (prep/build already happened with
+# the real toolchain). Asserts eos surfaces a clean non-"starting" status rather than
 # hanging forever with a dead pgid and no diagnostics -- see eos#195, which
 # this exact mechanism found: as of 2ef7ae5 it does NOT, so this assertion
 # is expected to fail until #195 is fixed. That's intentional: once fixed,
@@ -238,7 +274,8 @@ run_missing_runtime_fixture() {
 		chmod +x "$stub_dir/$t"
 	done
 
-	PATH="$stub_dir:$PATH" "$EOS_BIN" --no-daemon api run "$name" >/dev/null 2>&1
+	PATH="$stub_dir:$PATH" run_service_background "$name"
+	local run_pid="$RUN_PID"
 	rm -rf "$stub_dir"
 
 	local tries=15 status
@@ -257,6 +294,7 @@ run_missing_runtime_fixture() {
 	fi
 
 	api stop "$name" --force >/dev/null 2>&1 || true
+	wait_for_run_exit "$run_pid"
 	api remove "$name" >/dev/null 2>&1 || true
 
 	if [ "$alive" -eq 1 ]; then
@@ -296,10 +334,12 @@ run_vite_fixture() {
 		stub_dir="$(mktemp -d)"
 		printf '#!/bin/sh\necho "pnpm: command not found (simulated missing runtime via test-fixtures-orb)" >&2\nexit 127\n' >"$stub_dir/pnpm"
 		chmod +x "$stub_dir/pnpm"
-		PATH="$stub_dir:$PATH" "$EOS_BIN" --no-daemon api run vite --once >/dev/null 2>&1
+		PATH="$stub_dir:$PATH" run_service_background vite --once
+		local run_pid="$RUN_PID"
 		rm -rf "$stub_dir"
 		sleep 3
 		api stop vite --force >/dev/null 2>&1 || true
+		wait_for_run_exit "$run_pid"
 		api remove vite >/dev/null 2>&1 || true
 		if [ -f "$dir/dist/index.html" ]; then
 			log "FAIL vite: dist/index.html exists even with pnpm shadowed off PATH -- build must have used a real pnpm found elsewhere"
@@ -310,7 +350,8 @@ run_vite_fixture() {
 	fi
 
 	log "=== vite (build-only) ==="
-	api run vite --once >/dev/null || { log "FAIL vite: eos api run failed"; return 1; }
+	run_service_background vite --once
+	local run_pid="$RUN_PID"
 	local tries="$HTTP_WAIT_SECONDS"
 	while [ "$tries" -gt 0 ] && [ ! -f "$dir/dist/index.html" ]; do
 		tries=$((tries - 1))
@@ -320,10 +361,12 @@ run_vite_fixture() {
 		api logs vite --lines 100 | jq -r '.lines[]' >&2 || true
 		log "FAIL vite: build did not produce dist/index.html within timeout"
 		api stop vite --force >/dev/null 2>&1 || true
+		wait_for_run_exit "$run_pid"
 		api remove vite >/dev/null 2>&1 || true
 		return 1
 	fi
 	api stop vite --force >/dev/null 2>&1 || true
+	wait_for_run_exit "$run_pid"
 	api remove vite >/dev/null || { log "FAIL vite: eos api remove failed"; return 1; }
 	log "PASS vite: build completed, dist/index.html present"
 	return 0

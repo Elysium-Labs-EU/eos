@@ -100,8 +100,11 @@ func TestAPILogsFetchLines(t *testing.T) {
 }
 
 // startServiceForLogsTest is a shared fixture for this file: it runs a real
-// service via "api run -f" so its stdout/stderr log files exist and have
-// content for the logs command to read, and returns the service name.
+// service so its stdout/stderr log files exist and have content for the
+// logs command to read, and returns the service name. Started directly
+// through runResolveAndStart (the same real start logic newRunCmd's RunE
+// calls) rather than through "eos api run -f": that command now refuses
+// every local start outright, so it can no longer be used as test setup.
 func startServiceForLogsTest(t *testing.T, mgr manager.ServiceManager, tempDir string) string {
 	t.Helper()
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -111,10 +114,11 @@ func startServiceForLogsTest(t *testing.T, mgr manager.ServiceManager, tempDir s
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
 	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "-f", yamlPath})
+	c.SetArgs([]string{"api", "add", yamlPath})
 	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("failed to start service for logs test: %v\n%s", err, errBuf.String())
+		t.Fatalf("failed to register service for logs test: %v\n%s", err, errBuf.String())
 	}
+	startServiceForTest(t, mgr, testFile.Name)
 	return testFile.Name
 }
 

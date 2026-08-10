@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/procutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
@@ -302,18 +305,160 @@ func runGateServiceDependencies(cmd *cobra.Command, mgr manager.ServiceManager, 
 	return nil
 }
 
-func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) error {
+func runStartRegisteredService(cmd *cobra.Command, mgr manager.ServiceManager, gracePeriod time.Duration, registeredService *types.ServiceCatalogEntry) (ServiceStartResult, error) {
 	serviceRunResult, err := startOrRestartService(cmd.Context(), mgr, gracePeriod, registeredService)
 	if err != nil {
 		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("running service: %v", err))
-		return helpers.ErrCommandFailed
+		return ServiceStartResult{}, helpers.ErrCommandFailed
 	}
 	if serviceRunResult.Restarted {
 		printRestartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 	} else {
 		printStartedSuccessOutput(cmd, registeredService.Name, serviceRunResult.PGID)
 	}
+	return serviceRunResult, nil
+}
+
+// runSuperviseIfLocal blocks the CLI process for as long as the service it
+// just (re)started keeps running, when mgr is the in-process LocalManager
+// (--no-daemon, or a supervised install whose unit is currently down). In
+// local mode nothing outside this process supervises the service — the
+// pre-fix behavior of returning immediately the instant the service was
+// launched left it parented to init with no reader for its stdout/stderr
+// and no one to stop it gracefully (issue #235). Talking to a live daemon
+// over IPC (mgr is *manager.DaemonManager, LocalManager returns false here)
+// needs none of this: the daemon already supervises the service on its own,
+// so this is a no-op and RunE returns immediately as it always has.
+func runSuperviseIfLocal(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, pgid int, gracePeriod time.Duration) error {
+	if _, ok := mgr.(*manager.LocalManager); !ok {
+		return nil
+	}
+	startedAtTicks, err := runResolveStartedAtTicks(cmd.Context(), mgr, serviceName, pgid)
+	if err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("resolving service start time: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	return runBlockAndSupervise(cmd, mgr, serviceName, pgid, startedAtTicks, gracePeriod)
+}
+
+// runResolveStartedAtTicks fetches the StartedAtTicks the just-completed
+// start/restart recorded for pgid, so runBlockAndSupervise can tell a live
+// pgid from a kernel-recycled one via procutil.IsAliveMatching — the same
+// disambiguation every other lifecycle liveness check in this codebase
+// already does (see lmReconcileHistoryEntry) — instead of a bare pgid check.
+func runResolveStartedAtTicks(ctx context.Context, mgr manager.ServiceManager, serviceName string, pgid int) (int64, error) {
+	entry, err := mgr.GetMostRecentProcessHistoryEntry(ctx, serviceName)
+	if err != nil {
+		return 0, fmt.Errorf("getting process history: %w", err)
+	}
+	if entry.PGID != pgid {
+		return 0, fmt.Errorf("most recent process history entry is for pgid %d, not the just-started %d", entry.PGID, pgid)
+	}
+	return entry.StartedAtTicks, nil
+}
+
+// runSupervisePollInterval is how often runBlockAndSupervise checks whether
+// its own service has exited on its own — a crash, or a separate `eos
+// stop`/`eos api stop` invocation against the same service — so a
+// backgrounded `eos run` doesn't keep supervising nothing once the process
+// it started is already gone.
+const runSupervisePollInterval = 500 * time.Millisecond
+
+// runBlockAndSupervise is the local-mode foreground supervisor loop. It
+// returns once either this process receives SIGINT/SIGTERM — at which point
+// it stops the service itself, gracefully, using the same grace period the
+// daemon would — or the service exits on its own, in which case there is
+// nothing left to stop. This is what makes local mode's launch coherent:
+// the command that starts a service is the only thing in local mode that
+// can ever notice it needs supervising, so it has to stay alive for as long
+// as the service does rather than returning the instant it starts.
+func runBlockAndSupervise(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, pgid int, startedAtTicks int64, gracePeriod time.Duration) error {
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "supervising", ui.TextBold.Render(serviceName))
+	cmd.PrintErrf(fmtLabelMsgLn, ui.LabelInfo.Render("note:"), "no daemon is running — this command supervises the service in the foreground; press Ctrl-C to stop it")
+
+	sigCtx, stopNotify := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopNotify()
+
+	ticker := time.NewTicker(runSupervisePollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sigCtx.Done():
+			return runStopSupervisedService(cmd, mgr, serviceName, gracePeriod)
+		case <-ticker.C:
+			if !procutil.IsAliveMatching(pgid, startedAtTicks) {
+				cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), ui.TextBold.Render(serviceName), "is no longer running, ending supervision")
+				return nil
+			}
+		}
+	}
+}
+
+// runStopSupervisedService gracefully stops the supervised service on
+// SIGINT/SIGTERM. It deliberately calls StopService directly rather than
+// reusing eos stop's full CLI flow (persistDisabled, cleanupServiceInstance):
+// interrupting a foreground `eos run` ends this supervision session, it does
+// not mean "disable this service" the way an explicit `eos stop` does.
+func runStopSupervisedService(cmd *cobra.Command, mgr manager.ServiceManager, serviceName string, gracePeriod time.Duration) error {
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelInfo.Render("info"), "stopping", ui.TextBold.Render(serviceName))
+	if _, err := mgr.StopService(cmd.Context(), serviceName, gracePeriod, 200*time.Millisecond); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("stopping service: %v", err))
+		return helpers.ErrCommandFailed
+	}
+	cmd.Printf(fmtLabelTwoMsg, ui.LabelSuccess.Render("success"), ui.TextBold.Render(serviceName), "stopped")
 	return nil
+}
+
+// runResolveAndStart is everything newRunCmd's RunE does up to the point
+// where local mode must decide whether to supervise the result: resolve the
+// service selector, persist it as the desired boot state, honor --once,
+// gate on dependencies, and start (or restart) it. Split out from RunE so
+// tests can drive this real start/restart logic directly against a real
+// LocalManager and a real OS process without also going through
+// runSuperviseIfLocal's blocking wait — that's a property of the CLI
+// command, not of starting a service, and has its own dedicated tests.
+// skip=true means --once found the service already running, in which case
+// result is the zero value and there is nothing to supervise.
+func runResolveAndStart(cmd *cobra.Command, mgr manager.ServiceManager, cfg *config.SystemConfig, args []string, serviceFile string, once bool) (result ServiceStartResult, serviceName string, skip bool, err error) {
+	serviceName, err = runResolveServiceSelector(cmd, mgr, args, serviceFile)
+	if err != nil {
+		return ServiceStartResult{}, "", false, err
+	}
+
+	// Persist the run as this service's desired boot state, clearing any
+	// stop recorded by a prior "eos stop" — bootPersistedServices reads
+	// this flag on the next daemon start/reboot (issue #172).
+	if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
+		cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
+		return ServiceStartResult{}, serviceName, false, helpers.ErrCommandFailed
+	}
+
+	skip, onceErr := runHandleOnceFlag(cmd, mgr, once, serviceName)
+	if onceErr != nil {
+		return ServiceStartResult{}, serviceName, false, onceErr
+	}
+	if skip {
+		return ServiceStartResult{}, serviceName, true, nil
+	}
+
+	registeredService, err := runGetRegisteredService(cmd, mgr, serviceName)
+	if err != nil {
+		return ServiceStartResult{}, serviceName, false, err
+	}
+
+	// mgr is already built (getManager ran above), so in standalone mode
+	// the daemon has been auto-started and this probe no longer fires;
+	// only a genuinely down supervisor (e.g. a stopped systemd unit) warns
+	// that the service will start but never leave 'starting'.
+	warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
+
+	if depErr := runGateServiceDependencies(cmd, mgr, &registeredService); depErr != nil {
+		return ServiceStartResult{}, serviceName, false, depErr
+	}
+
+	result, err = runStartRegisteredService(cmd, mgr, cfg.Shutdown.GracePeriod, &registeredService)
+	return result, serviceName, false, err
 }
 
 // --wait, optional flag will be added later.
@@ -324,6 +469,14 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 		Long: `Start a service by name or from a service file.
 
 		If the service is already running it will be restarted, unless --once is set.
+
+		Talking to a live eos daemon, this returns as soon as the service starts
+		and the daemon supervises it from then on. Without a daemon (--no-daemon,
+		or a supervised install whose unit is currently down), there is nothing
+		else to supervise the service: this command blocks in the foreground and
+		does so itself, until interrupted with Ctrl-C (SIGINT/SIGTERM), at which
+		point it stops the service gracefully before exiting. Run it in the
+		background (eos run myservice &) to script it in local mode.
 
 		Examples:
 		eos run myservice              start or restart a registered service
@@ -352,43 +505,14 @@ func newRunCmd(getManager func() manager.ServiceManager, getConfig func() *confi
 				return helpers.ErrCommandFailed
 			}
 
-			serviceName, err := runResolveServiceSelector(cmd, mgr, args, serviceFile)
+			startResult, serviceName, skip, err := runResolveAndStart(cmd, mgr, cfg, args, serviceFile, once)
 			if err != nil {
 				return err
-			}
-
-			// Persist the run as this service's desired boot state, clearing any
-			// stop recorded by a prior "eos stop" — bootPersistedServices reads
-			// this flag on the next daemon start/reboot (issue #172).
-			if err = mgr.SetServiceEnabled(cmd.Context(), serviceName, true); err != nil {
-				cmd.PrintErrf(fmtLabelMsg, ui.LabelError.Render("error"), fmt.Sprintf("persisting run state: %v", err))
-				return helpers.ErrCommandFailed
-			}
-
-			skip, onceErr := runHandleOnceFlag(cmd, mgr, once, serviceName)
-			if onceErr != nil {
-				return onceErr
 			}
 			if skip {
 				return nil
 			}
-
-			registeredService, err := runGetRegisteredService(cmd, mgr, serviceName)
-			if err != nil {
-				return err
-			}
-
-			// mgr is already built (getManager ran above), so in standalone mode
-			// the daemon has been auto-started and this probe no longer fires;
-			// only a genuinely down supervisor (e.g. a stopped systemd unit) warns
-			// that the service will start but never leave 'starting'.
-			warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
-
-			if depErr := runGateServiceDependencies(cmd, mgr, &registeredService); depErr != nil {
-				return depErr
-			}
-
-			return runStartRegisteredService(cmd, mgr, cfg.Shutdown.GracePeriod, &registeredService)
+			return runSuperviseIfLocal(cmd, mgr, serviceName, startResult.PGID, cfg.Shutdown.GracePeriod)
 		},
 	}
 

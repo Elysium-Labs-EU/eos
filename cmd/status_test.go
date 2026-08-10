@@ -340,11 +340,8 @@ func TestStatusCommandWithRunningService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add should not return an error, got: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("run should not return an error, got: %v", err)
-	}
+	startResult := startServiceForTest(t, mgr, testFile.Name)
+	t.Cleanup(func() { killGroup(startResult.PGID) })
 
 	mostRecent, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), testFile.Name)
 	if err != nil {
@@ -722,10 +719,8 @@ func TestPrintStatusTable_StaleRow(t *testing.T) {
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add should not return an error, got: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run should not return an error, got: %v", err)
-	}
+	staleRowResult := startServiceForTest(t, mgr, testFile.Name)
+	t.Cleanup(func() { killGroup(staleRowResult.PGID) })
 
 	// updated_at is only populated by an explicit update, always stamped with
 	// the current time; sleep afterward so it reads as stale against a
@@ -802,10 +797,8 @@ func TestPrintStatusTable_NextRestartScheduledAndOddRow(t *testing.T) {
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add svc-b should not return an error, got: %v", err)
 	}
-	cmd.SetArgs([]string{"run", "svc-b"})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run svc-b should not return an error, got: %v", err)
-	}
+	svcBResult := startServiceForTest(t, mgr, "svc-b")
+	t.Cleanup(func() { killGroup(svcBResult.PGID) })
 
 	nextRestart := time.Now().Add(time.Hour)
 	if err = db.UpdateServiceInstance(t.Context(), "svc-b", database.ServiceInstanceUpdate{NextRestartAt: &nextRestart}); err != nil {

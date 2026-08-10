@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -145,17 +146,38 @@ func apiRefuseLocalWrite(cmd *cobra.Command, mode localMode) error {
 	))
 }
 
-// apiRefuseLocalStart is the machine-facing refuseLocalStart.
-func apiRefuseLocalStart(cmd *cobra.Command, mode localMode) error {
+// apiRefuseLocalStart is the machine-facing refuseLocalStart, plus a third
+// refusal unique to the API contract. isLocal is true whenever the manager
+// backing this invocation is the in-process LocalManager for any reason at
+// all (SupervisorDown, a live-daemon conflict, or a plain unsupervised
+// --no-daemon start) rather than a live daemon reached over IPC — mode
+// alone can't tell that apart from "talking to the daemon", since both read
+// as the same zero localMode{} (see localMode's doc comment).
+//
+// "eos api run" promises a pgid for a process that will still exist once
+// the command exits; without a daemon nothing supervises it, so that
+// promise can't be kept. Unlike "eos run" — which has a real interactive
+// and scripted use blocking in the foreground to supervise a service itself
+// — "eos api run" has no way to honor its own documented JSON-then-exit
+// contract locally: blocking would hang every script piping its output
+// through jq, and returning immediately would hand back a pgid for a
+// process about to be orphaned. Refusing outright is the only response that
+// doesn't hand a caller a false success.
+func apiRefuseLocalStart(cmd *cobra.Command, mode localMode, isLocal bool) error {
 	if err := apiRefuseLocalWrite(cmd, mode); err != nil {
 		return err
 	}
-	if !mode.SupervisorDown {
+	if mode.SupervisorDown {
+		return helpers.WriteJSONErr(cmd, fmt.Errorf(
+			"refusing to start in-process: the eos daemon is supervisor-managed but its unit is not running, so this service would be orphaned to init; start the daemon with %q, or use \"eos run\" to supervise it in the foreground",
+			cmdnames.HintDaemonStart,
+		))
+	}
+	if !isLocal {
 		return nil
 	}
-	return helpers.WriteJSONErr(cmd, fmt.Errorf(
-		"refusing to start in-process: the eos daemon is supervisor-managed but its unit is not running, so this service would be orphaned to init; start the daemon with %q, or pass --no-daemon to run it unsupervised",
-		cmdnames.HintDaemonStart,
+	return helpers.WriteJSONErr(cmd, errors.New(
+		"refusing to start in-process: local mode has no daemon to supervise a service after this command exits; use \"eos run\" to supervise it in the foreground instead",
 	))
 }
 

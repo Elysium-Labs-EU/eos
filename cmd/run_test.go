@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/database"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
@@ -18,6 +20,41 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+// killGroup best-effort force-kills a process group started by a test,
+// tolerating a pgid of 0 (nothing started) or one already dead.
+func killGroup(pgid int) {
+	if pgid > 1 {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+}
+
+// startServiceForTest starts (or restarts) an already-registered service
+// directly through runResolveAndStart — the same real start logic
+// newRunCmd's RunE calls — for tests whose subject is a different command
+// (logs, stop, status, remove...) and just need a real running service as
+// setup. It deliberately does not go through the run command itself:
+// local-mode "eos run" now blocks supervising the service for as long as
+// it stays alive (runSuperviseIfLocal), which would hang any setup that
+// used it with a long-lived process. Callers are responsible for killing
+// the returned PGID once the test is done with it.
+func startServiceForTest(t *testing.T, mgr manager.ServiceManager, serviceName string) ServiceStartResult {
+	t.Helper()
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetContext(t.Context())
+
+	result, _, skip, err := runResolveAndStart(cmd, mgr, &config.SystemConfig{}, []string{serviceName}, "", false)
+	if err != nil {
+		t.Fatalf("starting %q for test setup: %v\n%s", serviceName, err, buf.String())
+	}
+	if skip {
+		t.Fatalf("starting %q for test setup: unexpectedly skipped\n%s", serviceName, buf.String())
+	}
+	return result
+}
 
 func TestRunWithServiceFileCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
@@ -73,13 +110,19 @@ func TestRunWithServiceFileCommand(t *testing.T) {
 	}
 }
 
+// TestRunWithServiceNameCommand proves the start-then-restart transition
+// against a real LocalManager and a real long-lived OS process. Local-mode
+// "eos run" now blocks supervising the service for as long as it stays
+// alive (runSuperviseIfLocal), so this drives runResolveAndStart directly
+// twice — the same real start/restart logic newRunCmd's RunE calls before
+// deciding whether to supervise — rather than through the full blocking
+// command, which would never return for a still-running "sleep 30".
 func TestRunWithServiceNameCommand(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	manager := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-	t.Cleanup(manager.WaitPipes)
-	cmd := newTestRootCmd(manager)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
 
-	// Needs a genuinely long-lived process: StartService now verifies OS
+	// Needs a genuinely long-lived process: StartService verifies OS
 	// liveness before reporting "already running" (#96), so a command that
 	// exits immediately (like "./start-script.sh") would already be dead by
 	// the second run and get self-healed into a fresh start instead of a
@@ -90,9 +133,6 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to marshal test config: %v", err)
 	}
-
-	testStartScript := `#!/bin/bash
-						echo TESTING BOOTED UP`
 
 	fullDirPath := filepath.Join(tempDir, "test-project")
 	err = os.MkdirAll(fullDirPath, 0755)
@@ -108,22 +148,23 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatalf("error occurred during writing the yaml file, got: %v\n", err)
 	}
 
-	fullPathScript := filepath.Join(fullDirPath, "start-script.sh")
-	err = os.WriteFile(fullPathScript, []byte(testStartScript), 0755)
-	if err != nil {
-		t.Fatalf("error occurred during writing the start script file, got: %v\n", err)
-	}
-
-	var outBuf, errBuf bytes.Buffer
-
+	var outBuf bytes.Buffer
+	cmd := &cobra.Command{}
 	cmd.SetOut(&outBuf)
-	cmd.SetErr(&errBuf)
-	cmd.SetArgs([]string{"run", "-f", fullPathYaml})
+	cmd.SetErr(&outBuf)
+	cmd.SetContext(t.Context())
+	cfg := &config.SystemConfig{}
 
-	err = cmd.ExecuteContext(t.Context())
-
+	first, _, skip, err := runResolveAndStart(cmd, mgr, cfg, []string{}, fullPathYaml, false)
 	if err != nil {
 		t.Fatalf("run should not return an error, got: %v\n", err)
+	}
+	if skip {
+		t.Fatal("expected a fresh start, not a --once skip")
+	}
+	t.Cleanup(func() { killGroup(first.PGID) })
+	if first.Restarted {
+		t.Fatal("expected a fresh start, got Restarted=true")
 	}
 
 	output := outBuf.String()
@@ -131,16 +172,17 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 		t.Fatal("didn't complete successfully, no PGID was returned")
 	}
 	outBuf.Reset()
-	errBuf.Reset()
-	cmd = newTestRootCmd(manager)
-	cmd.SetOut(&outBuf)
-	cmd.SetErr(&errBuf)
-	cmd.SetArgs([]string{"run", testFile.Name})
 
-	err = cmd.ExecuteContext(t.Context())
-
+	second, _, skip, err := runResolveAndStart(cmd, mgr, cfg, []string{testFile.Name}, "", false)
 	if err != nil {
 		t.Fatalf("run should not return an error, got: %v\n", err)
+	}
+	if skip {
+		t.Fatal("expected a restart, not a --once skip")
+	}
+	t.Cleanup(func() { killGroup(second.PGID) })
+	if !second.Restarted {
+		t.Fatal("expected the second run to restart the still-live service")
 	}
 
 	secondOutput := outBuf.String()
@@ -149,14 +191,43 @@ func TestRunWithServiceNameCommand(t *testing.T) {
 	}
 }
 
+// waitForRunningPGID polls until serviceName has a recorded process history
+// entry with a live pgid distinct from previousPGID (0 if there is none
+// yet). SetServiceEnabled runs synchronously, early in runResolveAndStart,
+// well before the service is actually spawned, so a freshly recorded pgid is
+// proof that whole start (enable flip included) has already landed — safe to
+// race a concurrent "eos stop" or an Enabled assertion against once this
+// returns. Matching on a fresh pgid rather than just "pgid > 0" matters
+// because the goroutine driving "eos run" is asynchronous: without it, a
+// second start racing a still-fresh row from the previous one would return
+// immediately, before the second SetServiceEnabled call has even run.
+func waitForRunningPGID(t *testing.T, mgr manager.ServiceManager, serviceName string, previousPGID int) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		entry, err := mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+		if err == nil && entry != nil && entry.PGID > 0 && entry.PGID != previousPGID {
+			return entry.PGID
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%q never recorded a fresh running pgid (previous: %d)", serviceName, previousPGID)
+	return 0
+}
+
 // TestRunCommandReEnablesAfterStop proves issue #172's fix: "eos run" clears
 // the disabled flag "eos stop" persisted, so the service is picked back up on
-// the next daemon boot.
+// the next daemon boot. Local-mode "eos run" now blocks supervising the
+// service in the foreground (runSuperviseIfLocal) rather than returning once
+// started, so this can no longer call it synchronously in the test goroutine
+// the way a plain add/stop can — it drives it the way a real second terminal
+// would: start it in the background, then stop it from a separate command
+// instance while the first is still supervising, exactly as "eos stop" ending
+// a backgrounded "eos run" does outside tests.
 func TestRunCommandReEnablesAfterStop(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
-	cmd := newTestRootCmd(mgr)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
 	yamlData, err := yaml.Marshal(testFile)
@@ -172,21 +243,41 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
 	}
 
-	var outBuf bytes.Buffer
-	cmd.SetOut(&outBuf)
-	cmd.SetErr(&outBuf)
+	addCmd := newTestRootCmd(mgr)
+	var addBuf bytes.Buffer
+	addCmd.SetOut(&addBuf)
+	addCmd.SetErr(&addBuf)
+	addCmd.SetArgs([]string{"add", fullPathYaml})
+	if err = addCmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("add should not return an error, got: %v\n%s", err, addBuf.String())
+	}
 
-	cmd.SetArgs([]string{"add", fullPathYaml})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("add should not return an error, got: %v", err)
+	runInBackground := func() <-chan error {
+		done := make(chan error, 1)
+		runCmd := newTestRootCmd(mgr)
+		var runBuf bytes.Buffer
+		runCmd.SetOut(&runBuf)
+		runCmd.SetErr(&runBuf)
+		runCmd.SetArgs([]string{"run", testFile.Name})
+		go func() { done <- runCmd.ExecuteContext(t.Context()) }()
+		return done
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run should not return an error, got: %v", err)
+
+	firstRun := runInBackground()
+	firstPGID := waitForRunningPGID(t, mgr, testFile.Name, 0)
+	t.Cleanup(func() { killGroup(firstPGID) })
+
+	stopCmd := newTestRootCmd(mgr)
+	var stopBuf bytes.Buffer
+	stopCmd.SetOut(&stopBuf)
+	stopCmd.SetErr(&stopBuf)
+	stopCmd.SetArgs([]string{"stop", testFile.Name})
+	if err = stopCmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("stop should not return an error, got: %v\n%s", err, stopBuf.String())
 	}
-	cmd.SetArgs([]string{"stop", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("stop should not return an error, got: %v", err)
+
+	if err = <-firstRun; err != nil {
+		t.Fatalf("run should not return an error once the service is stopped, got: %v", err)
 	}
 
 	entry, err := mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
@@ -197,10 +288,9 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 		t.Fatal("expected Enabled=false after 'eos stop'")
 	}
 
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run should not return an error, got: %v", err)
-	}
+	secondRun := runInBackground()
+	secondPGID := waitForRunningPGID(t, mgr, testFile.Name, firstPGID)
+	t.Cleanup(func() { killGroup(secondPGID) })
 
 	entry, err = mgr.GetServiceCatalogEntry(t.Context(), testFile.Name)
 	if err != nil {
@@ -208,6 +298,11 @@ func TestRunCommandReEnablesAfterStop(t *testing.T) {
 	}
 	if !entry.Enabled {
 		t.Error("expected Enabled=true after re-running with 'eos run'")
+	}
+
+	killGroup(secondPGID)
+	if err = <-secondRun; err != nil {
+		t.Fatalf("run should not return an error once the service is killed, got: %v", err)
 	}
 }
 
@@ -1111,7 +1206,7 @@ func TestRunStartRegisteredServiceError(t *testing.T) {
 
 	fake := &runFakeManager{startErr: errors.New("spawn failed")}
 	entry := types.ServiceCatalogEntry{Name: "svc"}
-	if err := runStartRegisteredService(cmd, fake, 0, &entry); !errors.Is(err, helpers.ErrCommandFailed) {
+	if _, err := runStartRegisteredService(cmd, fake, 0, &entry); !errors.Is(err, helpers.ErrCommandFailed) {
 		t.Fatalf("expected ErrCommandFailed, got: %v", err)
 	}
 }

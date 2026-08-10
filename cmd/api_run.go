@@ -78,7 +78,8 @@ Exit codes:
 			mgr := getManager()
 			cfg := getConfig()
 
-			if err := apiRefuseLocalStart(cmd, managerMode()); err != nil {
+			_, isLocal := mgr.(*manager.LocalManager)
+			if err := apiRefuseLocalStart(cmd, managerMode(), isLocal); err != nil {
 				return err
 			}
 

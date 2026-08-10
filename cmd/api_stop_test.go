@@ -21,8 +21,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// startServiceForStopTest registers and starts a service via "api run" so
-// tests have a running process to stop. Shared with cmd/api_remove_test.go.
+// startServiceForStopTest registers and starts a service so tests have a
+// running process to stop. Shared with cmd/api_remove_test.go. It starts the
+// service directly through runResolveAndStart (the same real start logic
+// newRunCmd's RunE calls) rather than through "eos api run": that command
+// now refuses every local start outright (its own documented pgid-outlives-
+// the-command contract is unsatisfiable without a daemon), so it can no
+// longer be used as test setup in local mode.
 func startServiceForStopTest(t *testing.T, mgr manager.ServiceManager, tempDir string) string {
 	t.Helper()
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
@@ -32,10 +37,11 @@ func startServiceForStopTest(t *testing.T, mgr manager.ServiceManager, tempDir s
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
 	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "-f", yamlPath})
+	c.SetArgs([]string{"api", "add", yamlPath})
 	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("failed to start service: %v\n%s", err, errBuf.String())
+		t.Fatalf("failed to register service: %v\n%s", err, errBuf.String())
 	}
+	startServiceForTest(t, mgr, testFile.Name)
 	return testFile.Name
 }
 
@@ -233,15 +239,9 @@ done`
 		t.Fatalf("api add: unexpected error: %v\n%s", err, errBuf.String())
 	}
 
-	outBuf.Reset()
-	errBuf.Reset()
-	c = newTestRootCmd(mgr)
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", testFile.Name})
-	if err = c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("api run: unexpected error: %v\n%s", err, errBuf.String())
-	}
+	// "eos api run" now refuses every local start outright, so start the
+	// service directly through the same real logic (runResolveAndStart).
+	startServiceForTest(t, mgr, testFile.Name)
 
 	// Wait for the trap-installed marker so SIGTERM is never sent before bash
 	// has actually installed its SIGTERM-ignoring trap.

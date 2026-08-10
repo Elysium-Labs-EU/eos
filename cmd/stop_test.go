@@ -20,7 +20,7 @@ import (
 func TestStopCommand(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "1s")
 
-	cmd, outBuf, _, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -60,12 +60,11 @@ exec sleep 3600`
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command — this
+	// test's subject is "stop", not "run".
+	startServiceForTest(t, mgr, testFile.Name)
 
 	cmd.SetArgs([]string{"stop", testFile.Name})
 	err = cmd.ExecuteContext(t.Context())
@@ -154,7 +153,7 @@ func TestStopCommandShortLivedScript(t *testing.T) {
 func TestStopCommandGracePeriod(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "250ms")
 
-	cmd, outBuf, _, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 
@@ -199,12 +198,10 @@ done`
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	cmd.SetIn(strings.NewReader("y\n"))
 	cmd.SetArgs([]string{"stop", testFile.Name})
@@ -225,7 +222,7 @@ done`
 }
 
 func TestStopCommandForceFlag(t *testing.T) {
-	cmd, outBuf, _, tempDir := setupCmd(t)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlData, err := yaml.Marshal(testFile)
@@ -254,11 +251,10 @@ func TestStopCommandForceFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	cmd.SetArgs([]string{"stop", testFile.Name, "--force"})
 	err = cmd.ExecuteContext(t.Context())
@@ -399,7 +395,7 @@ func TestStopCommandNoRunningProcesses(t *testing.T) {
 func TestStopCommandForceQuitDeclined(t *testing.T) {
 	t.Setenv("SHUTDOWN_GRACE_PERIOD", "250ms")
 
-	cmd, outBuf, errBuf, tempDir := setupCmd(t)
+	cmd, outBuf, errBuf, tempDir, mgr := setupCmdWithManager(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t,
 		testutil.WithCommand(`trap '' TERM; echo READY; while true; do sleep 0.1; done`),
@@ -427,11 +423,12 @@ func TestStopCommandForceQuitDeclined(t *testing.T) {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
 
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command — this
+	// service ignores SIGTERM and loops forever, so the blocking command
+	// would never return on its own.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	// Give the shell a moment to install its TERM trap and reach the wait
 	// loop before SIGTERM is sent, same as
@@ -669,11 +666,10 @@ func TestStopCommandMultipleProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add command should not return an error, got : %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	err = cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("Start command should not return an error, got : %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	// Register a second, unreachable PGID as a leftover "running" process
 	// for the same service; StopService should find it already dead.
