@@ -3,6 +3,7 @@
 package procutil
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"time"
@@ -89,4 +90,23 @@ func platformStartTime(pid int) (int64, error) {
 		return 0, fmt.Errorf("unexpected /proc/%d/stat starttime field", pid)
 	}
 	return ticks, nil
+}
+
+// platformReadEnviron reads pid's environment straight from the kernel's
+// /proc/<pid>/environ: the NUL-separated KEY=VALUE records a process was
+// actually launched with, not anything reconstructed from a config file.
+func platformReadEnviron(pid int) ([]string, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		return nil, fmt.Errorf("read /proc/%d/environ: %w", pid, err)
+	}
+
+	parts := bytes.Split(bytes.TrimRight(data, "\x00"), []byte{0})
+	env := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) > 0 {
+			env = append(env, string(p))
+		}
+	}
+	return env, nil
 }

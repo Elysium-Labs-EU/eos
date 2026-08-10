@@ -3,6 +3,7 @@ package procutil
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -128,6 +129,27 @@ func TestCPUTime_BusyProcess(t *testing.T) {
 		}
 	}
 	t.Errorf("busy CPUTime delta = %v after 5s, want at least %v", delta, wantDelta)
+}
+
+// TestReadEnviron_OwnProcess exercises the real, non-test-injected platform
+// dispatch: on Linux this process's own /proc/self/environ is genuinely
+// readable, so ReadEnviron must succeed; every other platform this is
+// developed and CI'd on (macOS) has no implementation, so it must fail with
+// a descriptive error rather than silently returning nothing.
+func TestReadEnviron_OwnProcess(t *testing.T) {
+	env, err := ReadEnviron(os.Getpid())
+	if runtime.GOOS == "linux" {
+		if err != nil {
+			t.Fatalf("ReadEnviron(self): %v", err)
+		}
+		if len(env) == 0 {
+			t.Error("expected a non-empty environment for this process")
+		}
+		return
+	}
+	if err == nil {
+		t.Errorf("expected an unsupported-platform error on %s, got env: %v", runtime.GOOS, env)
+	}
 }
 
 func TestStartTime(t *testing.T) {
