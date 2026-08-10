@@ -196,6 +196,9 @@ func TestAPIStatusWithOneRegisteredService(t *testing.T) {
 	}
 }
 
+// TestAPIStatusWithRunningService starts its service directly through
+// runResolveAndStart rather than "eos api run -f": that command now refuses
+// every local start outright, so it can no longer be used as test setup.
 func TestAPIStatusWithRunningService(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
@@ -208,10 +211,12 @@ func TestAPIStatusWithRunningService(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	c.SetOut(&outBuf)
 	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "-f", yamlPath})
+	c.SetArgs([]string{"api", "add", yamlPath})
 	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("failed to start: %v\n%s", err, errBuf.String())
+		t.Fatalf("failed to register: %v\n%s", err, errBuf.String())
 	}
+	startResult := startServiceForTest(t, mgr, testFile.Name)
+	t.Cleanup(func() { killGroup(startResult.PGID) })
 
 	outBuf.Reset()
 	errBuf.Reset()

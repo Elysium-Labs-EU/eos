@@ -452,23 +452,44 @@ func TestAPIRefuseLocal(t *testing.T) {
 		}
 	})
 
-	t.Run("start refusal is a JSON error", func(t *testing.T) {
+	t.Run("start refusal is a JSON error (supervisor down)", func(t *testing.T) {
 		cmd := &cobra.Command{}
 		var errBuf bytes.Buffer
 		cmd.SetErr(&errBuf)
 		cmd.SetContext(t.Context())
 
-		err := apiRefuseLocalStart(cmd, localMode{SupervisorDown: true})
+		err := apiRefuseLocalStart(cmd, localMode{SupervisorDown: true}, true)
 		if !errors.Is(err, helpers.ErrAPICommandFailed) {
 			t.Fatalf("expected helpers.ErrAPICommandFailed, got: %v", err)
 		}
 		msg := decode(t, &errBuf)
-		if !strings.Contains(msg, "orphaned to init") || !strings.Contains(msg, "--no-daemon") {
-			t.Errorf("JSON error missing consequence or opt-in, got: %q", msg)
+		if !strings.Contains(msg, "orphaned to init") || !strings.Contains(msg, "eos run") {
+			t.Errorf("JSON error missing consequence or fix, got: %q", msg)
 		}
 	})
 
-	t.Run("both proceed when there is no conflict", func(t *testing.T) {
+	// eos api run promises a pgid for a process that will still exist once
+	// the command exits; a plain unsupervised local start (no daemon
+	// configured, or --no-daemon with nothing else wrong) can't keep that
+	// promise either, even though refuseLocalStart's human-facing sibling
+	// allows it through for "eos run" (which blocks and supervises instead).
+	t.Run("start refusal is a JSON error (plain local start)", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var errBuf bytes.Buffer
+		cmd.SetErr(&errBuf)
+		cmd.SetContext(t.Context())
+
+		err := apiRefuseLocalStart(cmd, localMode{}, true)
+		if !errors.Is(err, helpers.ErrAPICommandFailed) {
+			t.Fatalf("expected helpers.ErrAPICommandFailed, got: %v", err)
+		}
+		msg := decode(t, &errBuf)
+		if !strings.Contains(msg, "eos run") {
+			t.Errorf("JSON error missing fix, got: %q", msg)
+		}
+	})
+
+	t.Run("both proceed when talking to a live daemon", func(t *testing.T) {
 		cmd := &cobra.Command{}
 		var errBuf bytes.Buffer
 		cmd.SetErr(&errBuf)
@@ -477,7 +498,7 @@ func TestAPIRefuseLocal(t *testing.T) {
 		if err := apiRefuseLocalWrite(cmd, localMode{}); err != nil {
 			t.Errorf("expected no write refusal, got: %v", err)
 		}
-		if err := apiRefuseLocalStart(cmd, localMode{}); err != nil {
+		if err := apiRefuseLocalStart(cmd, localMode{}, false); err != nil {
 			t.Errorf("expected no start refusal, got: %v", err)
 		}
 		if errBuf.Len() != 0 {

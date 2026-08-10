@@ -114,10 +114,10 @@ func TestStopCommandStaleDataWarningLogged(t *testing.T) {
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add: unexpected error: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run: unexpected error: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	const deadPGID = 999995
 	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, testFile.Name, types.ProcessStateRunning); err != nil {
@@ -196,10 +196,10 @@ done`
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add: unexpected error: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run: unexpected error: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	// Wait for the trap-installed marker so SIGTERM is never sent before bash
 	// has actually installed its SIGTERM-ignoring trap.
@@ -335,10 +335,10 @@ func TestStopCommandForceFlagMultipleProcesses(t *testing.T) {
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add: unexpected error: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run: unexpected error: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	const deadPGID = 999994
 	if _, err = db.RegisterProcessHistoryEntry(t.Context(), deadPGID, 0, testFile.Name, types.ProcessStateRunning); err != nil {
@@ -432,10 +432,10 @@ func TestStopCommandCleanupServiceInstanceErrorLogged(t *testing.T) {
 	if err = cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add: unexpected error: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err = cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run: unexpected error: %v", err)
-	}
+	// Local-mode "eos run" now blocks supervising the service for as long as
+	// it stays alive, so start it directly through the same real logic
+	// (runResolveAndStart) rather than through the blocking command.
+	startServiceForTest(t, mgr, testFile.Name)
 
 	// StopService itself only touches process_history, so dropping
 	// service_instances here only affects the cleanup step at the end.

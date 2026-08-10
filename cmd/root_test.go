@@ -202,9 +202,18 @@ func TestNewManagerLocalMode(t *testing.T) {
 
 func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string) {
 	t.Helper()
+	c, ob, eb, td, _ := setupCmdWithManager(t)
+	return c, ob, eb, td
+}
+
+// setupCmdWithManager is setupCmd plus the underlying *manager.LocalManager,
+// for tests that need to start a service directly (via startServiceForTest)
+// rather than through the now-blocking "eos run" command.
+func setupCmdWithManager(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *bytes.Buffer, tempDir string, mgr *manager.LocalManager) {
+	t.Helper()
 	db, _, td := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	t.Setenv("EOS_BASE_DIR", td)
-	mgr := manager.NewLocalManager(db, td, t.Context(), testutil.NewTestLogger(t))
+	mgr = manager.NewLocalManager(db, td, t.Context(), testutil.NewTestLogger(t))
 	t.Cleanup(mgr.WaitPipes)
 	c := newTestRootCmd(mgr)
 
@@ -212,7 +221,7 @@ func setupCmd(t *testing.T) (cmd *cobra.Command, outBuf *bytes.Buffer, errBuf *b
 	c.SetOut(&ob)
 	c.SetErr(&eb)
 
-	return c, &ob, &eb, td
+	return c, &ob, &eb, td, mgr
 }
 
 func TestRootCommand(t *testing.T) {

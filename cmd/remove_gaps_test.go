@@ -35,9 +35,13 @@ func TestRemoveCommandMissingArgs(t *testing.T) {
 	}
 }
 
-// addAndRunService writes a service.yaml + a long-lived start script under tempDir, registers
-// it, and starts it via "run" (not the deprecated "start" command), returning its name.
-func addAndRunService(t *testing.T, cmd *cobra.Command, tempDir string) string {
+// addAndRunService writes a service.yaml + a long-lived start script under
+// tempDir, registers it, and starts it directly through runResolveAndStart
+// (the same real start logic newRunCmd's RunE calls) rather than through
+// "eos run" itself — local-mode "eos run" now blocks supervising the
+// service for as long as it stays alive, which this setup helper must not
+// do — returning its name.
+func addAndRunService(t *testing.T, cmd *cobra.Command, mgr manager.ServiceManager, tempDir string) string {
 	t.Helper()
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlData, err := yaml.Marshal(testFile)
@@ -62,16 +66,13 @@ func addAndRunService(t *testing.T, cmd *cobra.Command, tempDir string) string {
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add: unexpected error: %v", err)
 	}
-	cmd.SetArgs([]string{"run", testFile.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run: unexpected error: %v", err)
-	}
+	startServiceForTest(t, mgr, testFile.Name)
 	return testFile.Name
 }
 
 func TestRemoveCommandWithActiveInstance_Decline(t *testing.T) {
-	cmd, outBuf, _, tempDir := setupCmd(t)
-	name := addAndRunService(t, cmd, tempDir)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
+	name := addAndRunService(t, cmd, mgr, tempDir)
 
 	outBuf.Reset()
 	cmd.SetIn(strings.NewReader("n\n"))
@@ -85,8 +86,8 @@ func TestRemoveCommandWithActiveInstance_Decline(t *testing.T) {
 }
 
 func TestRemoveCommandWithActiveInstance_Confirm(t *testing.T) {
-	cmd, outBuf, _, tempDir := setupCmd(t)
-	name := addAndRunService(t, cmd, tempDir)
+	cmd, outBuf, _, tempDir, mgr := setupCmdWithManager(t)
+	name := addAndRunService(t, cmd, mgr, tempDir)
 
 	outBuf.Reset()
 	cmd.SetIn(strings.NewReader("y\n"))

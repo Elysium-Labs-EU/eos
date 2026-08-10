@@ -46,6 +46,10 @@ func TestLogsProcessHistoryGenericError(t *testing.T) {
 // addAndRunLogsService adds and runs a short-lived echo service via the given
 // (LocalManager-backed) cmd, waits for its log pipes to flush, and returns the
 // service config so the caller can locate/tamper with its on-disk log files.
+// Started directly through runResolveAndStart (the same real start logic
+// newRunCmd's RunE calls) rather than through "eos run" itself: local-mode
+// "eos run" now blocks supervising the service for as long as it stays
+// alive, which this setup helper must not do.
 func addAndRunLogsService(t *testing.T, cmd *cobra.Command, mgr *manager.LocalManager, tempDir string) *types.ServiceConfig {
 	t.Helper()
 	cfg := &types.ServiceConfig{Name: "cms", Command: "./start-script.sh", Port: 1337}
@@ -59,10 +63,7 @@ func addAndRunLogsService(t *testing.T, cmd *cobra.Command, mgr *manager.LocalMa
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("add command failed: %v", err)
 	}
-	cmd.SetArgs([]string{"run", cfg.Name})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run command failed: %v", err)
-	}
+	startServiceForTest(t, mgr, cfg.Name)
 	mgr.WaitPipes()
 	return cfg
 }

@@ -1,193 +1,106 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
-	"github.com/Elysium-Labs-EU/eos/internal/database"
-	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/testutil"
 )
 
-// -f <path> registers the service from a service.yaml (if not already registered) and starts it;
-// a bare <name> looks up an already-registered service and starts or restarts it. Both paths
-// converge on the same start/restart logic once the service name is resolved.
-func TestAPIRunWithServiceFile(t *testing.T) {
-	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
+// eos api run refuses every local start outright (see apiRefuseLocalStart):
+// it promises a pgid for a process that will still exist once the command
+// exits, a promise local mode can't keep without a daemon to supervise the
+// result. -f <path> and a bare <name> both resolve to the same refusal —
+// the start/restart/once logic downstream of that point (shared with the
+// plain "eos run" via startOrRestartService) is exercised against a real
+// LocalManager in cmd/run_test.go instead, since that is the only local-mode
+// command that can actually reach it.
+func TestAPIRunWithServiceFileRefusesLocalStart(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupAPICmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
 	cmd.SetArgs([]string{"api", "run", "-f", yamlPath})
-
 	err := cmd.ExecuteContext(t.Context())
-	if err != nil {
-		t.Fatalf("expected no error, got: %v\nerr output: %s", err, errBuf.String())
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed, got: %v", err)
 	}
 
-	var result apiRunResult
-	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
-		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
+	var errResult map[string]string
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
-
-	if result.Name != testFile.Name {
-		t.Errorf("expected name %q, got %q", testFile.Name, result.Name)
-	}
-	if result.PGID <= 0 {
-		t.Errorf("expected pgid > 0, got %d", result.PGID)
-	}
-	if result.Restarted {
-		t.Errorf("expected restarted=false for a fresh start, got: %+v", result)
-	}
-	if result.Skipped {
-		t.Errorf("expected skipped=false, got: %+v", result)
+	if !strings.Contains(errResult["error"], "eos run") {
+		t.Errorf("expected the refusal to name 'eos run' as the fix, got: %+v", errResult)
 	}
 }
 
-func TestAPIRunWithServiceName(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-	t.Cleanup(mgr.WaitPipes)
-
-	// Needs a genuinely long-lived process: StartService now verifies OS
-	// liveness before reporting "already running" (#96), so a command that
-	// exits immediately (like the other tests' "./start-script.sh", which
-	// doesn't exist) would already be dead by the second run and get
-	// self-healed into a fresh start instead of a restart.
-	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("sleep 30"), testutil.WithoutRuntime())
-	yamlPath := writeServiceFiles(t, tempDir, testFile)
-
-	// First run: register and start via file
-	c := newTestRootCmd(mgr)
-	var outBuf, errBuf bytes.Buffer
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "-f", yamlPath})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("first run failed: %v\n%s", err, errBuf.String())
-	}
-
-	// Second run: by name - should restart
-	outBuf.Reset()
-	errBuf.Reset()
-	c = newTestRootCmd(mgr)
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", testFile.Name})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("second run failed: %v\n%s", err, errBuf.String())
-	}
-
-	var result apiRunResult
-	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
-		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
-	}
-	if !result.Restarted {
-		t.Errorf("expected restarted=true, got false")
-	}
-}
-
-// TestAPIRunReEnablesAfterStop proves "eos api run" clears the disabled flag
-// "eos api stop" persisted, mirroring the plain run/stop CLI (issue #172).
-func TestAPIRunReEnablesAfterStop(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-	t.Cleanup(mgr.WaitPipes)
-
-	serviceName := startServiceForStopTest(t, mgr, tempDir)
-
-	c := newTestRootCmd(mgr)
-	var outBuf, errBuf bytes.Buffer
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "stop", serviceName})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("stop failed: %v\n%s", err, errBuf.String())
-	}
-
-	outBuf.Reset()
-	errBuf.Reset()
-	c = newTestRootCmd(mgr)
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", serviceName})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("run failed: %v\n%s", err, errBuf.String())
-	}
-
-	entry, err := mgr.GetServiceCatalogEntry(t.Context(), serviceName)
-	if err != nil {
-		t.Fatalf("GetServiceCatalogEntry: %v", err)
-	}
-	if !entry.Enabled {
-		t.Error("expected Enabled=true after 'eos api run'")
-	}
-}
-
-func TestAPIRunWithOnceFlag_AlreadyRunning(t *testing.T) {
-	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
-	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
-	t.Cleanup(mgr.WaitPipes)
+// TestAPIRunWithServiceNameRefusesLocalStart is the bare-<name> counterpart
+// of TestAPIRunWithServiceFileRefusesLocalStart: the service must already be
+// registered (api run resolves the name before hitting the local-start
+// refusal, same as -f), but starting it is still refused.
+func TestAPIRunWithServiceNameRefusesLocalStart(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupAPICmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
-
-	// Start the service first
-	c := newTestRootCmd(mgr)
-	var outBuf, errBuf bytes.Buffer
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "-f", yamlPath})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("initial start failed: %v\n%s", err, errBuf.String())
+	cmd.SetArgs([]string{"api", "add", yamlPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("api add: unexpected error: %v", err)
 	}
 
-	// Run --once while already running
-	outBuf.Reset()
-	errBuf.Reset()
-	c = newTestRootCmd(mgr)
-	c.SetOut(&outBuf)
-	c.SetErr(&errBuf)
-	c.SetArgs([]string{"api", "run", "--once", testFile.Name})
-	if err := c.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("--once run failed: %v\n%s", err, errBuf.String())
+	cmd.SetArgs([]string{"api", "run", testFile.Name})
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed, got: %v", err)
 	}
 
-	var result apiRunResult
-	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
-		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
+	var errResult map[string]string
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
-	if !result.Skipped {
-		t.Errorf("expected skipped=true, got false")
+	if !strings.Contains(errResult["error"], "eos run") {
+		t.Errorf("expected the refusal to name 'eos run' as the fix, got: %+v", errResult)
 	}
 }
 
-func TestAPIRunWithOnceFlag_NotRunning(t *testing.T) {
-	cmd, outBuf, errBuf, tempDir := setupAPICmd(t)
+// TestAPIRunWithOnceFlagRefusesLocalStart proves --once does not bypass the
+// local-start refusal: the flag only controls whether an already-running
+// service is skipped, which api run never reaches locally either way.
+func TestAPIRunWithOnceFlagRefusesLocalStart(t *testing.T) {
+	cmd, _, errBuf, tempDir := setupAPICmd(t)
 
 	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithCommand("./start-script.sh"), testutil.WithoutRuntime())
 	yamlPath := writeServiceFiles(t, tempDir, testFile)
 
 	cmd.SetArgs([]string{"api", "run", "--once", "-f", yamlPath})
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("expected no error, got: %v\n%s", err, errBuf.String())
+	err := cmd.ExecuteContext(t.Context())
+	if !errors.Is(err, helpers.ErrAPICommandFailed) {
+		t.Fatalf("expected ErrAPICommandFailed, got: %v", err)
 	}
 
-	var result apiRunResult
-	if err := json.Unmarshal(outBuf.Bytes(), &result); err != nil {
-		t.Fatalf("expected valid JSON, got: %s", outBuf.String())
+	var errResult map[string]string
+	if json.NewDecoder(errBuf).Decode(&errResult) != nil {
+		t.Fatalf("expected JSON error on stderr, got: %s", errBuf.String())
 	}
-	if result.Skipped {
-		t.Errorf("expected skipped=false for a fresh --once start, got: %+v", result)
-	}
-	if result.PGID <= 0 {
-		t.Errorf("expected pgid > 0, got %d", result.PGID)
+	if errResult["error"] == "" {
+		t.Errorf("expected a non-empty refusal message, got: %+v", errResult)
 	}
 }
 
+// TestAPIRunNoArgsNoFile, TestAPIRunWithUnregisteredName and
+// TestAPIRunWithFileNotFound below now exercise apiRefuseLocalStart's
+// refusal (it runs before argument/selector resolution) rather than each
+// test's own named validation error; the assertions are generic enough
+// (ErrAPICommandFailed plus a non-empty JSON error) to still hold either
+// way, and the specific "no args", "unregistered", and "file not found"
+// validation paths they originally targeted are still exercised by the
+// equivalent plain "eos run" tests in cmd/run_test.go, the only local-mode
+// command that reaches past the local-start refusal.
 func TestAPIRunNoArgsNoFile(t *testing.T) {
 	cmd, _, errBuf, _ := setupAPICmd(t)
 
