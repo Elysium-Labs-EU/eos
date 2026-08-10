@@ -361,6 +361,142 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 	}
 }
 
+// TestHealthMonitor_CheckStartProcess_CleanExitDuringStartup covers a
+// legitimate one-shot command (a build step with no server, no `port:`) that
+// finishes before the first health tick: it must be recorded as Stopped, not
+// logged and restarted as though it had crashed.
+func TestHealthMonitor_CheckStartProcess_CleanExitDuringStartup(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up test daemon logger, got: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	serviceName := "clean-one-shot-service"
+	fullDirPath := filepath.Join(tempDir, "clean-one-shot-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("Could not create project directory: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0),
+		testutil.WithCommand("exit 0"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Creating service.yaml failed: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry failed: %v", err)
+	}
+
+	if err = mgr.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(t.Context(), serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start, got: %v", err)
+	}
+	if pgid < 1 {
+		t.Fatalf("Invalid PGID received: %d", pgid)
+	}
+
+	for range 200 {
+		if !hm.isProcessAlive(pgid) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hm.isProcessAlive(pgid) {
+		t.Fatalf("Process %d did not exit on its own", pgid)
+	}
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("Failed to get process history entry: %v", err)
+	}
+	if processHistoryEntry == nil {
+		t.Fatal("Process history entry not found")
+	}
+
+	// GetServiceExitCode is consume-once, so it can't be polled without
+	// eating the very value the check below needs — give the reaper
+	// goroutine a generous window to land instead, then check exactly once
+	// (as a real health tick would), rather than retrying checkStartProcess
+	// itself: a retry would call markProcessFailed on an earlier attempt
+	// that lost the race, leaving a stray "died during startup" line in the
+	// log this test inspects even though the final state ends up correct.
+	time.Sleep(200 * time.Millisecond)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+
+	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil || updatedEntry == nil {
+		t.Fatal("Failed to get updated process history")
+		return
+	}
+
+	if updatedEntry.State != types.ProcessStateStopped {
+		t.Errorf("Expected ProcessStateStopped, got %v", updatedEntry.State)
+	}
+	if updatedEntry.Error != nil && *updatedEntry.Error != "" {
+		t.Errorf("Expected no error recorded for a clean exit, got: %v", *updatedEntry.Error)
+	}
+	if updatedEntry.StoppedAt == nil {
+		t.Error("Expected StoppedAt to be set")
+	}
+
+	var buf bytes.Buffer
+	tailLogCommand := exec.Command("tail", "-n", "10", filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
+	tailLogCommand.Stdout = &buf
+	if err = tailLogCommand.Run(); err != nil {
+		t.Logf("Could not read log file: %v", err)
+	} else {
+		output := buf.String()
+		if strings.Contains(output, "died during startup") {
+			t.Errorf("Log should not describe a clean exit as a death, got: %s", output)
+		}
+		if !strings.Contains(output, "completed") {
+			t.Errorf("Log should describe the clean exit, got: %s", output)
+		}
+	}
+}
+
+// TestHealthMonitor_MarkProcessStoppedIfCleanExit_NoExitCodeKnown covers the
+// case markProcessStoppedIfCleanExit is meant to defer on: no exit code has
+// been recorded for pgid at all (the reaper hasn't run yet, or nothing was
+// ever captured), which must return false so the caller keeps its existing
+// Failed behavior rather than the helper guessing.
+func TestHealthMonitor_MarkProcessStoppedIfCleanExit_NoExitCodeKnown(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+
+	hm := &HealthMonitor{mgr: mgr, db: db, logger: testutil.NewTestLogger(t)}
+
+	const neverLaunchedPGID = 999998
+	if hm.markProcessStoppedIfCleanExit(t.Context(), "no-such-service", neverLaunchedPGID) {
+		t.Error("expected false when no exit code has been recorded for this pgid")
+	}
+}
+
 func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 	tempDir := t.TempDir()
 	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
@@ -1179,6 +1315,119 @@ func TestHealthMonitor_CheckRunningProcess_Failed(t *testing.T) {
 
 	if !strings.Contains(output, "is not running") {
 		t.Fatalf("Expected log about service not running, got: %s", output)
+	}
+}
+
+// TestHealthMonitor_CheckRunningProcess_CleanExit covers a one-shot command
+// that only exits after already being observed alive once (so it reached
+// Running before finishing): handleLivenessFailure must record it as Stopped
+// via the same clean-exit check checkStartProcess uses, not log it as a
+// liveness failure.
+func TestHealthMonitor_CheckRunningProcess_CleanExit(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, true, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("Unable to set up to test daemon logger, got: %v", err)
+	}
+
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	serviceName := "clean-running-service"
+	testFile := testutil.NewTestServiceConfigFile(t, testutil.WithoutRuntime(), testutil.WithName(serviceName), testutil.WithPort(0), testutil.WithCommand("exit 0"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "clean-running-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-project directory: %v\n", err)
+	}
+
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("Failed to write the service.yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := manager.NewServiceCatalogEntry(testFile.Name, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("Create service catalog entry was not able to complete, got: %v", err)
+	}
+
+	if err = mgr.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Error registering service: %v\n", err)
+	}
+
+	pgid, err := mgr.StartService(t.Context(), serviceCatalogEntry.Name)
+	if err != nil {
+		t.Fatalf("Service unable to start, got: %v", err)
+	}
+	if pgid < 1 {
+		t.Fatalf("Invalid PGID received after starting service, got: %v", err)
+	}
+
+	processHistoryEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("Service unable to get recent process history entry, got: %v", err)
+	}
+	if processHistoryEntry == nil {
+		t.Fatal("Service process history entry not found")
+	}
+
+	serviceInstance, err := hm.mgr.GetServiceInstance(t.Context(), serviceName)
+	if err != nil || serviceInstance == nil {
+		t.Fatalf("Failed to get service instance: %v", err)
+	}
+
+	for range 200 {
+		if !hm.isProcessAlive(pgid) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hm.isProcessAlive(pgid) {
+		t.Fatalf("Process %d did not exit on its own", pgid)
+	}
+
+	// GetServiceExitCode is consume-once, so it can't be polled without
+	// eating the very value the check below needs — give the reaper
+	// goroutine a generous window to land instead, then check exactly once
+	// (as a real health tick would), rather than retrying checkRunningProcess
+	// itself: a retry would call markProcessFailed on an earlier attempt
+	// that lost the race, leaving a stray "is not running" line in the log
+	// this test inspects even though the final state ends up correct.
+	time.Sleep(200 * time.Millisecond)
+	hm.checkRunningProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, serviceInstance)
+
+	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil || updatedEntry == nil {
+		t.Fatal("Failed to get updated process history")
+		return
+	}
+
+	if updatedEntry.State != types.ProcessStateStopped {
+		t.Errorf("Expected ProcessStateStopped, got %v", updatedEntry.State)
+	}
+
+	var buf bytes.Buffer
+	tailLogCommand := exec.Command("tail", "-n", "20", filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
+	tailLogCommand.Stdout = &buf
+	if err = tailLogCommand.Run(); err != nil {
+		t.Fatalf("The log command failed, got: %v", err)
+	}
+	output := buf.String()
+	if strings.Contains(output, "is not running") {
+		t.Errorf("Log should not describe a clean exit as not running, got: %s", output)
+	}
+	if !strings.Contains(output, "completed") {
+		t.Errorf("Log should describe the clean exit, got: %s", output)
 	}
 }
 
@@ -2537,6 +2786,94 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 	}
 }
 
+// TestCheckUnknownProcess_CleanExit covers the call site the exit-0 guard was
+// originally missing: a one-shot command whose process group is first
+// observed dead from the Unknown state (not Starting or Running) must still
+// be recorded Stopped, not logged as "is not running" and marked Failed.
+// Which state a short-lived process happens to be caught in on a given tick
+// depends only on timing, so all three dead-group call sites need the same
+// guard, not just the two most commonly exercised.
+func TestCheckUnknownProcess_CleanExit(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("failed to setup logger: %v", err)
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "unknown-clean-exit-svc"
+	fullDirPath := filepath.Join(tempDir, "unknown-clean-exit-project")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	testFile := testutil.NewTestServiceConfigFile(t,
+		testutil.WithoutRuntime(),
+		testutil.WithName(serviceName),
+		testutil.WithPort(0),
+		testutil.WithCommand("exit 0"))
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	fullPath := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPath, yamlData, 0644); err != nil {
+		t.Fatalf("failed to write service.yaml: %v", err)
+	}
+
+	entry, err := manager.NewServiceCatalogEntry(serviceName, fullDirPath, filepath.Base(fullPath))
+	if err != nil {
+		t.Fatalf("failed to create catalog entry: %v", err)
+	}
+	if err = mgr.AddServiceCatalogEntry(t.Context(), entry); err != nil {
+		t.Fatalf("failed to register service: %v", err)
+	}
+
+	pgid, err := mgr.StartService(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+
+	for range 200 {
+		if !hm.isProcessAlive(pgid) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hm.isProcessAlive(pgid) {
+		t.Fatalf("process %d did not exit on its own", pgid)
+	}
+
+	processEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil || processEntry == nil {
+		t.Fatalf("failed to get process history: %v", err)
+	}
+
+	// GetServiceExitCode is consume-once, so give the reaper goroutine a
+	// generous window to land before checking exactly once, rather than
+	// retrying checkUnknownProcess itself (see the clean-exit tests above
+	// for why a retry would pollute the log this test doesn't even inspect,
+	// but would still mask a real ordering bug behind a passing retry).
+	time.Sleep(200 * time.Millisecond)
+	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+
+	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
+	if err != nil || updated == nil {
+		t.Fatal("failed to get updated process history")
+		return
+	}
+	if updated.State != types.ProcessStateStopped {
+		t.Errorf("expected Stopped for a clean exit observed from unknown state, got %v", updated.State)
+	}
+}
+
 // TestCheckService_DispatchesUnknownState exercises checkService end-to-end for
 // a service in ProcessStateUnknown, hitting hmDispatchByState's Unknown case
 // (TestCheckUnknownProcess_alive/_dead call checkUnknownProcess directly and so
@@ -3735,6 +4072,20 @@ func (m *logFailManager) LogToServiceStderr(serviceName string, message string) 
 	return m.monitorManager.LogToServiceStderr(serviceName, message)
 }
 
+// exitCodeManager wraps a monitorManager and forces GetServiceExitCode to
+// return a configured (code, ok) pair, to exercise
+// markProcessStoppedIfCleanExit's downstream branches directly instead of
+// racing captureIdentity's real reaper goroutine for a specific outcome.
+type exitCodeManager struct {
+	monitorManager
+	code int
+	ok   bool
+}
+
+func (m *exitCodeManager) GetServiceExitCode(int) (int, bool) {
+	return m.code, m.ok
+}
+
 func readDaemonLog(t *testing.T, daemonConfig config.DaemonConfig) string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join(daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName))
@@ -3912,6 +4263,91 @@ func TestHealthMonitor_UpdateProcessEntry_DBFailureLogged(t *testing.T) {
 
 	rss := int64(1234)
 	hm.updateProcessEntry(t.Context(), unregisteredPGID, &rss, &rss, nil, serviceName)
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessStoppedIfCleanExit_LogWriteFailureLogged covers
+// the branch where a clean exit is confirmed but the "completed" breadcrumb
+// write to the service's own log fails - the Stopped state must still be
+// persisted, with the log-write failure itself logged separately.
+func TestHealthMonitor_MarkProcessStoppedIfCleanExit_LogWriteFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+
+	const serviceName = "clean-exit-log-fail-svc"
+	const unregisteredPGID = 888882
+
+	// DB update must succeed here to isolate the log-write failure: give it a
+	// real process_history row rather than reusing the unregistered-PGID trick
+	// the DB-failure test below relies on.
+	if _, err = db.RegisterProcessHistoryEntry(t.Context(), unregisteredPGID, 0, serviceName, types.ProcessStateRunning); err != nil {
+		t.Fatalf("failed to seed process history: %v", err)
+	}
+
+	mgr := &exitCodeManager{
+		monitorManager: &logFailManager{monitorManager: realMgr, stdoutErr: errors.New("disk full")},
+		code:           0,
+		ok:             true,
+	}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	if !hm.markProcessStoppedIfCleanExit(t.Context(), serviceName, unregisteredPGID) {
+		t.Fatal("expected markProcessStoppedIfCleanExit to return true for a clean exit")
+	}
+
+	logContent := readDaemonLog(t, daemonConfig)
+	if !strings.Contains(logContent, logFailedLogServiceOutput) {
+		t.Errorf("expected daemon log to contain %q, got: %s", logFailedLogServiceOutput, logContent)
+	}
+}
+
+// TestHealthMonitor_MarkProcessStoppedIfCleanExit_DBFailureLogged covers the
+// branch where a clean exit is confirmed and the breadcrumb log write
+// succeeds, but persisting the Stopped state fails because the PGID was never
+// registered in process_history.
+func TestHealthMonitor_MarkProcessStoppedIfCleanExit_DBFailureLogged(t *testing.T) {
+	tempDir := t.TempDir()
+	daemonConfig := testutil.NewTestStandaloneDaemonConfig(t, tempDir, testutil.WithLogFilename("daemon.log"))
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	realMgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(realMgr.WaitPipes)
+	logger, err := manager.NewDaemonLogger(tempDir, false, false, daemonConfig.Standalone.Log.LogDir, daemonConfig.Standalone.Log.LogFileName, daemonConfig.Standalone.Log.LogMaxFiles, daemonConfig.Standalone.Log.LogFileSizeLimit)
+	if err != nil {
+		t.Fatalf("unable to set up daemon logger: %v", err)
+	}
+
+	const serviceName = "clean-exit-db-fail-svc"
+	const unregisteredPGID = 888883
+
+	// Log files exist so the breadcrumb write itself succeeds - only the DB
+	// update is made to fail.
+	if _, _, err = realMgr.NewServiceLogFiles(t.Context(), serviceName); err != nil {
+		t.Fatalf("failed to create service log files: %v", err)
+	}
+
+	mgr := &exitCodeManager{monitorManager: realMgr, code: 0, ok: true}
+	hm := NewHealthMonitor(mgr, db, logger, healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	if !hm.markProcessStoppedIfCleanExit(t.Context(), serviceName, unregisteredPGID) {
+		t.Fatal("expected markProcessStoppedIfCleanExit to return true for a clean exit")
+	}
 
 	logContent := readDaemonLog(t, daemonConfig)
 	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {

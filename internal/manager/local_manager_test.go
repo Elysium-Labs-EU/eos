@@ -249,6 +249,124 @@ func TestStartService(t *testing.T) {
 	}
 }
 
+// TestLocalManager_GetServiceExitCode_CleanExit verifies captureIdentity's
+// reaper goroutine records a clean exit-0 for a one-shot command (no server,
+// nothing left running) so a caller with only the PGID can tell it apart from
+// a crash, and that the record is consumed (returned once, then gone).
+func TestLocalManager_GetServiceExitCode_CleanExit(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{Name: "one-shot", Command: "exit 0"}
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "one-shot-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("one-shot", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	pgid, err := manager.StartService(t.Context(), "one-shot")
+	if err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+
+	var code int
+	var ok bool
+	for range 200 {
+		if code, ok = manager.GetServiceExitCode(pgid); ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("expected an exit code to be captured for the one-shot command")
+	}
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+
+	if _, ok = manager.GetServiceExitCode(pgid); ok {
+		t.Error("expected the exit code record to be consumed by the first read")
+	}
+}
+
+// TestLocalManager_GetServiceExitCode_NonZeroExit mirrors the clean-exit case
+// for a command that fails, so a caller reading the code back can tell the
+// two apart.
+func TestLocalManager_GetServiceExitCode_NonZeroExit(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{Name: "one-shot-fail", Command: "exit 3"}
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "one-shot-fail-files")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(fullDirPath, "service.yaml"), yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("one-shot-fail", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	pgid, err := manager.StartService(t.Context(), "one-shot-fail")
+	if err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+
+	var code int
+	var ok bool
+	for range 200 {
+		if code, ok = manager.GetServiceExitCode(pgid); ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("expected an exit code to be captured for the failing command")
+	}
+	if code != 3 {
+		t.Errorf("expected exit code 3, got %d", code)
+	}
+}
+
+// TestLocalManager_GetServiceExitCode_NoEntry verifies a pgid nothing was ever
+// captured for (the common case for any pgid not yet reaped) reports ok=false
+// rather than a zero-value code that could be mistaken for a real exit 0.
+func TestLocalManager_GetServiceExitCode_NoEntry(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+
+	const neverLaunchedPGID = 999996
+	if _, ok := manager.GetServiceExitCode(neverLaunchedPGID); ok {
+		t.Error("expected ok=false for a pgid with no recorded exit")
+	}
+}
+
 func TestStartServiceStaleStartingEntryIsIgnored(t *testing.T) {
 	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
