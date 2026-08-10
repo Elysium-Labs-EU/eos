@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -473,9 +475,12 @@ func TestSinkAwaitReady_discardsExtraStdoutAfterReady(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	ready, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	ready, version, err := sp.sinkAwaitReady(ctx, cmd, stdout)
 	if !ready || err != nil {
 		t.Fatalf("expected ready=true err=nil, got ready=%v err=%v", ready, err)
+	}
+	if version != 1 {
+		t.Errorf("expected negotiated version 1 for bare READY, got %d", version)
 	}
 	_ = cmd.Wait()
 }
@@ -496,9 +501,150 @@ func TestSinkAwaitReady_timesOut(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	ready, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	ready, _, err := sp.sinkAwaitReady(ctx, cmd, stdout)
 	if ready || err == nil || !strings.Contains(err.Error(), "timed out waiting for READY") {
 		t.Fatalf("expected timeout error, got ready=%v err=%v", ready, err)
+	}
+}
+
+// TestSinkAwaitReady_explicitEqualVersion covers a plugin that declares the exact
+// version eos speaks — the negotiation branch introduced for the mechanism, even
+// though today there is only one version to select between.
+func TestSinkAwaitReady_explicitEqualVersion(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test", Mode: "push", Address: "http://localhost"}, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "echo 'READY 1'; sleep 0.2")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ready, version, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	if !ready || err != nil {
+		t.Fatalf("expected ready=true err=nil, got ready=%v err=%v", ready, err)
+	}
+	if version != 1 {
+		t.Errorf("expected negotiated version 1, got %d", version)
+	}
+	_ = cmd.Wait()
+}
+
+// TestSinkAwaitReady_higherVersionRefused covers a plugin declaring a protocol
+// version newer than eos speaks: eos must refuse, kill the plugin, and name both
+// versions plus tell the reader to upgrade eos.
+func TestSinkAwaitReady_higherVersionRefused(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test", Mode: "push", Address: "http://localhost"}, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "echo 'READY 99'; sleep 30")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ready, _, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	if ready || err == nil {
+		t.Fatalf("expected refusal, got ready=%v err=%v", ready, err)
+	}
+	for _, want := range []string{"99", strconv.Itoa(sinkProtocolVersion), "upgrade eos"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestSinkAwaitReady_garbageVersionRefused covers a plugin sending a non-numeric
+// version token: eos must refuse, kill the plugin, and quote what it actually sent.
+func TestSinkAwaitReady_garbageVersionRefused(t *testing.T) {
+	sp := newSinkProcess(&types.LogSink{Type: "test", Mode: "push", Address: "http://localhost"}, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "echo 'READY banana'; sleep 30")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ready, _, err := sp.sinkAwaitReady(ctx, cmd, stdout)
+	if ready || err == nil || !strings.Contains(err.Error(), `"banana"`) {
+		t.Fatalf("expected refusal quoting the sent token, got ready=%v err=%v", ready, err)
+	}
+}
+
+func TestSinkParseReadyVersion(t *testing.T) {
+	cases := []struct {
+		token   string
+		wantVer int
+		wantOK  bool
+	}{
+		{"", 1, true},
+		{"1", 1, true},
+		{"7", 7, true},
+		{"0", 0, false},
+		{"-1", 0, false},
+		{"banana", 0, false},
+	}
+	for _, tc := range cases {
+		version, ok := sinkParseReadyVersion(tc.token)
+		if version != tc.wantVer || ok != tc.wantOK {
+			t.Errorf("sinkParseReadyVersion(%q) = (%d, %v), want (%d, %v)", tc.token, version, ok, tc.wantVer, tc.wantOK)
+		}
+	}
+}
+
+func TestSinkNegotiateVersion(t *testing.T) {
+	if v, err := sinkNegotiateVersion("test", 1); err != nil || v != 1 {
+		t.Errorf("expected (1, nil) for equal version, got (%d, %v)", v, err)
+	}
+	v, err := sinkNegotiateVersion("test", 99)
+	if err == nil {
+		t.Fatal("expected error for a version above what eos speaks")
+	}
+	if v != 0 {
+		t.Errorf("expected version 0 on refusal, got %d", v)
+	}
+	for _, want := range []string{"99", strconv.Itoa(sinkProtocolVersion), "upgrade eos", "test"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestSinkStartPlugin_setsProtocolVersionEnv covers the EOS_SINK_PROTOCOL_VERSION
+// entry added to sinkStartPlugin's env list, so a plugin can adapt or refuse before
+// it even sends READY.
+func TestSinkStartPlugin_setsProtocolVersionEnv(t *testing.T) {
+	sink := &types.LogSink{Type: "test", Exec: "sh", Args: []string{"-c", "sleep 30"}}
+	sp := newSinkProcess(sink, "svc", newTestLogger(t), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, _, _, err := sp.sinkStartPlugin(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	want := "EOS_SINK_PROTOCOL_VERSION=" + strconv.Itoa(sinkProtocolVersion)
+	if !slices.Contains(cmd.Env, want) {
+		t.Errorf("expected cmd.Env to contain %q, got: %v", want, cmd.Env)
 	}
 }
 

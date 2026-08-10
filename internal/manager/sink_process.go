@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,11 @@ const (
 	sinkDefaultRestartDelayMs = 5000
 	sinkReadyTimeout          = 10 * time.Second
 	sinkShutdownTimeout       = 3 * time.Second
+
+	// sinkProtocolVersion is the highest wire-protocol version eos speaks to sink
+	// plugins. A plugin declares its own version on the READY line; eos accepts
+	// anything at or below this and refuses anything above it.
+	sinkProtocolVersion = 1
 )
 
 // sinkProcess manages a single log sink plugin subprocess.
@@ -154,12 +160,12 @@ func (s *sinkProcess) runOnce(ctx context.Context) error {
 
 	go s.sinkDrainStderr(stderrPipe)
 
-	ready, err := s.sinkAwaitReady(ctx, cmd, stdoutPipe)
+	ready, version, err := s.sinkAwaitReady(ctx, cmd, stdoutPipe)
 	if !ready {
 		return err
 	}
 
-	s.logger.Info("sink:"+s.sink.Type+" ready", "address", s.sink.Address, "service", s.service)
+	s.logger.Info("sink:"+s.sink.Type+" ready", "address", s.sink.Address, "service", s.service, "protocol_version", version)
 
 	// Pump records from the ring buffer into plugin stdin.
 	// On stop/ctx cancel we flush remaining buffered records first, then close stdin.
@@ -192,6 +198,7 @@ func (s *sinkProcess) sinkStartPlugin(ctx context.Context) (cmd *exec.Cmd, stdin
 		"EOS_SINK_SERVICE="+s.service,
 		"EOS_SINK_TYPE="+s.sink.Type,
 		"EOS_SINK_ADDRESS="+s.sink.Address,
+		"EOS_SINK_PROTOCOL_VERSION="+strconv.Itoa(sinkProtocolVersion),
 	)
 
 	stdin, err = cmd.StdinPipe()
@@ -227,22 +234,43 @@ func (s *sinkProcess) sinkDrainStderr(stderr io.Reader) {
 	}
 }
 
-// sinkAwaitReady waits for the plugin to send "READY" on stdout, or for it to exit,
-// time out, or stop/ctx to fire first. ready is true only when READY was received in
-// time; on every other branch the process has already been killed and waited on, and
-// err (possibly nil) is the runOnce result the caller should return immediately.
-func (s *sinkProcess) sinkAwaitReady(ctx context.Context, cmd *exec.Cmd, stdout io.Reader) (ready bool, err error) {
+// sinkAwaitReady waits for the plugin to send "READY" or "READY <n>" on stdout, or
+// for it to exit, time out, or stop/ctx to fire first. ready is true only when a
+// version eos accepts was received in time; on every other branch the process has
+// already been killed and waited on, and err (possibly nil) is the runOnce result
+// the caller should return immediately. versionCh is buffered so the scanning
+// goroutine never blocks on it; it carries exactly one value whenever readyCh
+// carries a nil error, and is otherwise never sent to.
+func (s *sinkProcess) sinkAwaitReady(ctx context.Context, cmd *exec.Cmd, stdout io.Reader) (ready bool, version int, err error) {
 	readyCh := make(chan error, 1)
+	versionCh := make(chan int, 1)
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
-			if strings.TrimSpace(sc.Text()) == "READY" {
-				readyCh <- nil
-				// Keep reading stdout (ACK lines etc.) but discard — not used yet.
-				for sc.Scan() {
-				}
+			fields := strings.Fields(sc.Text())
+			if len(fields) == 0 || fields[0] != "READY" {
+				continue
+			}
+			token := ""
+			if len(fields) > 1 {
+				token = fields[1]
+			}
+			declared, ok := sinkParseReadyVersion(token)
+			if !ok {
+				readyCh <- fmt.Errorf("plugin %q sent invalid protocol version %q on READY line; refusing to start", s.sink.Type, token)
 				return
 			}
+			negotiated, err := sinkNegotiateVersion(s.sink.Type, declared)
+			if err != nil {
+				readyCh <- err
+				return
+			}
+			versionCh <- negotiated
+			readyCh <- nil
+			// Keep reading stdout (ACK lines etc.) but discard — not used yet.
+			for sc.Scan() {
+			}
+			return
 		}
 		readyCh <- fmt.Errorf("plugin exited without sending READY")
 	}()
@@ -254,22 +282,50 @@ func (s *sinkProcess) sinkAwaitReady(ctx context.Context, cmd *exec.Cmd, stdout 
 		if err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return false, err
+			return false, 0, err
 		}
-		return true, nil
+		return true, <-versionCh, nil
 	case <-readyTimer.C:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return false, fmt.Errorf("timed out waiting for READY from plugin %q", s.sink.Type)
+		return false, 0, fmt.Errorf("timed out waiting for READY from plugin %q", s.sink.Type)
 	case <-s.stopCh:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return false, nil
+		return false, 0, nil
 	case <-ctx.Done():
 		// exec.CommandContext kills the subprocess automatically on ctx cancel.
 		_ = cmd.Wait()
-		return false, nil
+		return false, 0, nil
 	}
+}
+
+// sinkParseReadyVersion parses the optional version token following "READY" on the
+// handshake line. An empty token (bare "READY") means version 1, the format every
+// plugin speaks today. ok is false when a token is present but is not a positive
+// integer.
+func sinkParseReadyVersion(token string) (version int, ok bool) {
+	if token == "" {
+		return 1, true
+	}
+	n, err := strconv.Atoi(token)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// sinkNegotiateVersion decides whether eos can talk to a plugin that declared
+// version declared on its READY line. eos can always serve an older plugin and can
+// never serve a newer one: anything above sinkProtocolVersion is refused with a
+// message naming both versions; anything at or below is accepted and spoken at
+// exactly declared, which — having just cleared that bound — is already the lower
+// of the two.
+func sinkNegotiateVersion(sinkType string, declared int) (int, error) {
+	if declared > sinkProtocolVersion {
+		return 0, fmt.Errorf("plugin %q declared protocol version %d, but eos only speaks up to version %d; upgrade eos to use this plugin", sinkType, declared, sinkProtocolVersion)
+	}
+	return declared, nil
 }
 
 // sinkAwaitExit waits for the plugin to exit after stdin has been closed, killing it
