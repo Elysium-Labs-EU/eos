@@ -10,5 +10,6 @@
 | [0006](0006-sustained-failure-loop-status.md) | Sustained failure loop: keep retrying, make the state legible | Accepted |
 | [0008](0008-daemon-and-service-environment-in-diagnose.md) | Collect the daemon's own environment in diagnose, allowlist-redacted | Accepted |
 | [0009](0009-local-mode-blocks-and-supervises.md) | Local mode blocks and supervises instead of launching and returning | Accepted |
+| [0010](0010-command-preflight-against-launch-environment.md) | Preflight the command's binary against the launch environment | Accepted |
 
 Find the right one for a change: `make adr-find Q="daemon liveness"` (or any keyword). It greps this directory and asks GitNexus for related code, so you don't have to read every file.

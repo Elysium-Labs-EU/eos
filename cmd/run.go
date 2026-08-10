@@ -452,6 +452,7 @@ func runResolveAndStart(cmd *cobra.Command, mgr manager.ServiceManager, cfg *con
 	// only a genuinely down supervisor (e.g. a stopped systemd unit) warns
 	// that the service will start but never leave 'starting'.
 	warnDaemonDownBeforeStart(cmd, &cfg.Daemon)
+	runWarnCommandDivergence(cmd, mgr, &registeredService)
 
 	if depErr := runGateServiceDependencies(cmd, mgr, &registeredService); depErr != nil {
 		return ServiceStartResult{}, serviceName, false, depErr

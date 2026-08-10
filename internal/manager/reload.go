@@ -140,6 +140,9 @@ func (m *LocalManager) reloadLaunchIncoming(name string, target *reloadTarget, l
 	if binaryErr := m.validateRuntimeBinary(target.config); binaryErr != nil {
 		return 0, 0, binaryErr
 	}
+	if cmdErr := validateCommandBinary(target.config, target.service.DirectoryPath); cmdErr != nil {
+		return 0, 0, cmdErr
+	}
 
 	m.logger.Debug("reload: launching new instance alongside old", "service", name, "old_pgid", target.oldPGID)
 	return m.launchAndCapture(&target.service, target.config, lio, target.resolvedSinks, launchSuccess, "reload command")

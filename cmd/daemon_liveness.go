@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"time"
 
 	"github.com/Elysium-Labs-EU/eos/cmd/helpers"
 	"github.com/Elysium-Labs-EU/eos/internal/cmdnames"
 	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -256,4 +259,46 @@ func printDaemonDownBanner(cmd *cobra.Command, daemon *config.DaemonConfig) {
 		ui.TextMuted.Render("start it with:"),
 		ui.TextCommand.Render(cmdnames.HintDaemonStart),
 	)
+}
+
+// warnCommandMightDivergeUnderDaemon tells the operator, before a local-mode
+// start, that this shell's PATH resolving the command proves nothing about
+// how the eos daemon would spawn it: PATH is the one thing local mode and a
+// systemd-spawned daemon are guaranteed to differ on. It only fires for the
+// in-process LocalManager — a live daemon reached over IPC already
+// supervises the service with its own environment, so there is nothing to
+// compare here. And it stays silent on anything validateCommandBinary itself
+// would bail on (FirstCommandBinary returning ok=false), for the same
+// conservative reason: naming the wrong binary is worse than naming none.
+//
+// A local start never has a live daemon to compare against: refuseLocalWrite
+// already refuses any local write while one is reachable, so by the time
+// this runs the daemon (if configured at all) is confirmed unreachable.
+func warnCommandMightDivergeUnderDaemon(cmd *cobra.Command, mgr manager.ServiceManager, command string) {
+	if _, ok := mgr.(*manager.LocalManager); !ok {
+		return
+	}
+	binary, ok := manager.FirstCommandBinary(command)
+	if !ok {
+		return
+	}
+	if _, err := helpers.ResolveExecutable(binary); err != nil {
+		return
+	}
+	cmd.PrintErrf(fmtLabelMsgLn,
+		ui.LabelWarning.Render("warning:"),
+		fmt.Sprintf("%q resolved using this shell's PATH; no eos daemon is reachable to confirm it would resolve the same way under one", binary),
+	)
+}
+
+// runWarnCommandDivergence loads entry's service config just far enough to
+// name its command's binary for warnCommandMightDivergeUnderDaemon. A load
+// failure here is not reported: StartService reads the same file moments
+// later and surfaces any real problem with it through the normal error path.
+func runWarnCommandDivergence(cmd *cobra.Command, mgr manager.ServiceManager, entry *types.ServiceCatalogEntry) {
+	cfg, err := manager.LoadServiceConfig(filepath.Join(entry.DirectoryPath, entry.ConfigFileName))
+	if err != nil {
+		return
+	}
+	warnCommandMightDivergeUnderDaemon(cmd, mgr, cfg.Command)
 }

@@ -1069,6 +1069,9 @@ func (m *LocalManager) StartService(ctx context.Context, name string) (pgid int,
 	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
 	}
+	if cmdErr := validateCommandBinary(config, service.DirectoryPath); cmdErr != nil {
+		return 0, cmdErr
+	}
 
 	m.logger.Debug("launching service", "service", name, "cmd", config.Command)
 	pgid, startedAtTicks, err := m.launchAndCapture(&service, config, lio, resolvedSinks, &launchSuccess, "start command")
@@ -1149,6 +1152,9 @@ func (m *LocalManager) RestartService(ctx context.Context, name string, gracePer
 
 	if binaryErr := m.validateRuntimeBinary(config); binaryErr != nil {
 		return 0, binaryErr
+	}
+	if cmdErr := validateCommandBinary(config, service.DirectoryPath); cmdErr != nil {
+		return 0, cmdErr
 	}
 
 	if stopErr := m.lmStopForRestart(name, gracePeriod, tickerPeriod); stopErr != nil {
@@ -1543,6 +1549,166 @@ func (m *LocalManager) validateRuntimeBinary(config *types.ServiceConfig) error 
 		return fmt.Errorf("%s not found in system PATH: %w", binary, lookPathErr)
 	}
 	return nil
+}
+
+// shellSpecialBuiltins are POSIX "special built-in utilities" — words a
+// shell must implement itself, with no external binary form to look up on
+// PATH ("exit", ":", "export", ...). Service commands genuinely use these
+// directly (health-check fixtures commonly use "exit 0"/"exit 1" as the
+// whole command), so a PATH check against one of these would be a certain
+// false failure, not merely an uncertain one — FirstCommandBinary bails
+// whenever the first word is one of these rather than mistaking it for a
+// missing binary.
+var shellSpecialBuiltins = map[string]bool{
+	":": true, ".": true, "break": true, "continue": true, "eval": true,
+	"exec": true, "exit": true, "export": true, "readonly": true,
+	"return": true, "set": true, "shift": true, "trap": true, "unset": true,
+	"cd": true,
+}
+
+// FirstCommandBinary returns the binary a service's command would need on
+// PATH, when command is certainly a single simple invocation: optional
+// leading VAR=value assignments followed by one bare command name and its
+// arguments. It reports ok=false on anything that isn't provably that shape
+// — pipelines, chains, subshells, quoting, redirections, variable expansion,
+// a path-qualified command, or a shell builtin with no PATH-resolvable form
+// — because misparsing any of those would either name the wrong binary or
+// block a service that actually works. A missed detection costs what the
+// check is trying to fix; a false one costs more.
+func FirstCommandBinary(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return "", false
+	}
+	if strings.ContainsAny(trimmed, "|&;<>(){}$`\n\\\"'") {
+		return "", false
+	}
+
+	fields := strings.Fields(trimmed)
+	i := 0
+	for i < len(fields) && isEnvAssignment(fields[i]) {
+		i++
+	}
+	if i >= len(fields) {
+		return "", false
+	}
+
+	binary := fields[i]
+	if strings.ContainsRune(binary, '/') || shellSpecialBuiltins[binary] {
+		return "", false
+	}
+	return binary, true
+}
+
+// isEnvAssignment reports whether tok is a shell-style VAR=value prefix
+// (e.g. "PORT=3000"), the one construct FirstCommandBinary must skip past
+// rather than mistake for the command itself.
+func isEnvAssignment(tok string) bool {
+	name, _, found := strings.Cut(tok, "=")
+	if !found || name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		isLetterOrUnderscore := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+		isDigit := c >= '0' && c <= '9'
+		if isLetterOrUnderscore || (i > 0 && isDigit) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// binaryInPathValue reports whether binary exists as a regular, executable
+// file directly under any directory named in pathValue (a colon-separated
+// PATH string).
+func binaryInPathValue(binary, pathValue string) bool {
+	for _, dir := range filepath.SplitList(pathValue) {
+		if dir == "" {
+			continue
+		}
+		if lmCheckRuntimeBinary(dir, binary) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// hostToolDirGlobs are conventional per-user install locations for the
+// version managers this class of failure actually comes from (nvm, volta,
+// asdf for node; each runtime's own installer otherwise): directories a
+// login shell's profile puts on PATH but a systemd-spawned daemon never
+// sees, because it sources no profile at all.
+func hostToolDirGlobs(runtimeType string) []string {
+	switch runtimeType {
+	case "node", "nodejs":
+		return []string{".nvm/versions/node/*/bin", ".volta/bin", ".asdf/installs/nodejs/*/bin", ".asdf/shims"}
+	case "bun":
+		return []string{".bun/bin"}
+	case "deno":
+		return []string{".deno/bin"}
+	default:
+		return nil
+	}
+}
+
+// findBinaryElsewhereOnHost looks for binary in the conventional install
+// directories for runtimeType, so a missing-binary error can suggest the
+// exact runtime.path value that fixes it instead of just naming the
+// failure. Returns "" when it can't say anything more specific.
+func findBinaryElsewhereOnHost(runtimeType, binary string) string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	for _, glob := range hostToolDirGlobs(runtimeType) {
+		matches, _ := filepath.Glob(filepath.Join(homeDir, glob))
+		for _, dir := range matches {
+			if lmCheckRuntimeBinary(dir, binary) == nil {
+				return dir
+			}
+		}
+	}
+	return ""
+}
+
+// commandNotFoundError reports which binary the command needs, that it is
+// absent from the environment this service is about to launch in, and —
+// when findable — the runtime.path value that would fix it. It never says
+// "shell" or "daemon": the same check runs both inside the real daemon
+// process and inside a CLI-hosted local manager, and only the caller (which
+// prints the result) knows which one this invocation actually is.
+func commandNotFoundError(binary string, config *types.ServiceConfig) error {
+	message := fmt.Sprintf("%s: command not found in the environment this service will launch in", binary)
+	if dir := findBinaryElsewhereOnHost(config.Runtime.Type, binary); dir != "" {
+		message += fmt.Sprintf("; found it at %s - add to service.yaml:\n  runtime:\n    path: %s", filepath.Join(dir, binary), dir)
+	}
+	return errors.New(message)
+}
+
+// validateCommandBinary preflights config.Command's binary against the exact
+// environment buildEnvironment will launch it in, so a shell-only PATH
+// addition (nvm, asdf, volta, ...) fails loud here instead of as a spawn
+// that dies on a restart loop with no named cause. It only fires when
+// FirstCommandBinary is certain command is a single simple invocation;
+// anything else is left to fail, if it does, at actual launch time instead.
+func validateCommandBinary(config *types.ServiceConfig, serviceDirectoryPath string) error {
+	binary, ok := FirstCommandBinary(config.Command)
+	if !ok {
+		return nil
+	}
+
+	env, err := buildEnvironment(config, serviceDirectoryPath)
+	if err != nil {
+		return nil //nolint:nilerr // buildEnvironment's own error surfaces moments later at actual launch
+	}
+
+	_, pathValue := doesEnvVarAlreadyExist("PATH=", env)
+	if binaryInPathValue(binary, pathValue) {
+		return nil
+	}
+	return commandNotFoundError(binary, config)
 }
 
 // lmResolveRuntimeDir expands a relative runtime path against the user's

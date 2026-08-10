@@ -10,7 +10,12 @@ import (
 	"testing"
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/database"
+	"github.com/Elysium-Labs-EU/eos/internal/manager"
+	"github.com/Elysium-Labs-EU/eos/internal/testutil"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // stubSystemctl points PATH at a fake systemctl script that unconditionally
@@ -280,5 +285,101 @@ func TestDaemonIsDown_LaunchdAndOpenRCSocket(t *testing.T) {
 				t.Error("expected daemonIsDown=false once the socket accepts connections")
 			}
 		})
+	}
+}
+
+func newTestLocalManager(t *testing.T) manager.ServiceManager {
+	t.Helper()
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	return manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+}
+
+func TestWarnCommandMightDivergeUnderDaemon_LocalManagerResolvableCommand_Warns(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	warnCommandMightDivergeUnderDaemon(cmd, newTestLocalManager(t), "sh -c true")
+
+	out := errBuf.String()
+	if !strings.Contains(out, "warning:") {
+		t.Errorf("expected a warning label, got: %q", out)
+	}
+	if !strings.Contains(out, "sh") {
+		t.Errorf("expected the warning to name the resolved binary, got: %q", out)
+	}
+}
+
+func TestWarnCommandMightDivergeUnderDaemon_NotLocalManager_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	dm := manager.NewSupervisedDaemonManager(filepath.Join(shortTempSocketDir(t), "eos.sock"))
+	warnCommandMightDivergeUnderDaemon(cmd, dm, "sh -c true")
+
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no warning for a daemon-routed manager, got: %q", errBuf.String())
+	}
+}
+
+func TestWarnCommandMightDivergeUnderDaemon_UnparsableCommand_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	warnCommandMightDivergeUnderDaemon(cmd, newTestLocalManager(t), "cd www && sh")
+
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no warning for a command the preflight would bail on too, got: %q", errBuf.String())
+	}
+}
+
+func TestWarnCommandMightDivergeUnderDaemon_UnresolvableBinary_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	warnCommandMightDivergeUnderDaemon(cmd, newTestLocalManager(t), "nonexistent-binary-xyz-262")
+
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no warning when the binary doesn't even resolve here, got: %q", errBuf.String())
+	}
+}
+
+func TestRunWarnCommandDivergence_LoadsConfigAndWarns(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &types.ServiceConfig{Name: "divergence-svc", Command: "sh -c true"}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if writeErr := os.WriteFile(filepath.Join(tempDir, "service.yaml"), data, 0644); writeErr != nil {
+		t.Fatalf("write service.yaml: %v", writeErr)
+	}
+	entry := &types.ServiceCatalogEntry{Name: cfg.Name, DirectoryPath: tempDir, ConfigFileName: "service.yaml"}
+
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	runWarnCommandDivergence(cmd, newTestLocalManager(t), entry)
+
+	if !strings.Contains(errBuf.String(), "warning:") {
+		t.Errorf("expected a warning once the config loaded, got: %q", errBuf.String())
+	}
+}
+
+func TestRunWarnCommandDivergence_LoadFailureQuiet(t *testing.T) {
+	entry := &types.ServiceCatalogEntry{Name: "missing-svc", DirectoryPath: t.TempDir(), ConfigFileName: "missing.yaml"}
+
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+
+	runWarnCommandDivergence(cmd, newTestLocalManager(t), entry)
+
+	if errBuf.Len() != 0 {
+		t.Errorf("expected a config load failure to stay silent here, got: %q", errBuf.String())
 	}
 }
