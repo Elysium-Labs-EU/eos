@@ -10,6 +10,14 @@ brief_note: "Coverage: new code you add or modify must average >=90% per-functio
 
 review:
   gate_verify_command: "make ci && make test-supervision-orb"
+  # Raised from argus's 400 default, which fired on every change in a five-change
+  # wave (591, 857, 548, 628 lines) and so had stopped discriminating. The count
+  # is insertions+deletions across the whole diff with no way to exclude paths,
+  # and this repo requires an ADR plus >=90% per-function coverage on new code,
+  # so tests and the ADR routinely outweigh the code they document. 800 clears a
+  # normal change of that shape while still catching the outlier that spanned the
+  # monitor, the database and a migration at once.
+  max_diff_lines: 800
   proof_required_paths:
     - "internal/manager"
     - "internal/monitor"
@@ -38,7 +46,15 @@ phases:
       - "Bash(git rm *)"
       - "Bash(git add *)"
       - "Bash(orb *)"
+      # brief_note requires both of these before reporting, so they have to be
+      # reachable or the instruction is one a worker can only fail. Scoped to
+      # origin/main and to --no-commit: a bare `git merge` would create the
+      # commit argus makes itself at ship time.
+      - "Bash(git fetch origin main*)"
+      - "Bash(git merge origin/main --no-commit*)"
   self_test:
     allow:
       - "Bash(make *)"
       - "Bash(orb *)"
+      - "Bash(git fetch origin main*)"
+      - "Bash(git merge origin/main --no-commit*)"
