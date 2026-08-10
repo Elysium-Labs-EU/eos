@@ -392,6 +392,43 @@ func TestUpdateServiceInstance_NextRestartAt(t *testing.T) {
 	}
 }
 
+func TestUpdateServiceInstance_FailureLoopFields(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+
+	err := db.RegisterServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("RegisterServiceInstance failed: %v", err)
+	}
+
+	instance, err := db.GetServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	if instance.FailureLoopCount != 0 || instance.FailureSignature != "" {
+		t.Fatalf("expected zero-value failure loop fields before any update, got count=%d signature=%q", instance.FailureLoopCount, instance.FailureSignature)
+	}
+
+	signature := "npm: not found"
+	err = db.UpdateServiceInstance(t.Context(), "cms", database.ServiceInstanceUpdate{
+		FailureLoopCount: new(5),
+		FailureSignature: &signature,
+	})
+	if err != nil {
+		t.Fatalf("UpdateServiceInstance failed: %v", err)
+	}
+
+	instance, err = db.GetServiceInstance(t.Context(), "cms")
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	if instance.FailureLoopCount != 5 {
+		t.Errorf("expected failure loop count 5, got %d", instance.FailureLoopCount)
+	}
+	if instance.FailureSignature != signature {
+		t.Errorf("expected failure signature %q, got %q", signature, instance.FailureSignature)
+	}
+}
+
 func TestUpdateServiceInstance_NotFound(t *testing.T) {
 	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
 

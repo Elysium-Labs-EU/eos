@@ -16,6 +16,7 @@ func TestPrintStatus(t *testing.T) {
 		{types.ServiceStatusRunning, "running"},
 		{types.ServiceStatusStopped, "stopped"},
 		{types.ServiceStatusFailed, "failed"},
+		{types.ServiceStatusCrashLoop, "crashloop"},
 		{types.ServiceStatusUnknown, "unknown"},
 		{types.ServiceStatusStarting, "starting"},
 		{types.ServiceStatusWaitingForDeps, "waiting"},

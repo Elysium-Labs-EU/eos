@@ -212,7 +212,7 @@ func TestHealthMonitor_CheckStartProcess(t *testing.T) {
 	if processHistoryEntry == nil {
 		t.Fatal("Service process history entry not found")
 	}
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	var buf bytes.Buffer
 	var errorBuf bytes.Buffer
@@ -327,7 +327,7 @@ func TestHealthMonitor_CheckStartProcess_ProcessDiedDuringStartup(t *testing.T) 
 		t.Fatal("Process history entry not found")
 	}
 
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updatedEntry == nil {
@@ -445,7 +445,7 @@ func TestHealthMonitor_CheckStartProcess_CleanExitDuringStartup(t *testing.T) {
 	// that lost the race, leaving a stray "died during startup" line in the
 	// log this test inspects even though the final state ends up correct.
 	time.Sleep(200 * time.Millisecond)
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updatedEntry == nil {
@@ -586,7 +586,7 @@ func TestHealthMonitor_CheckStartProcess_ExactTimeout(t *testing.T) {
 		t.Fatal("Failed to get updated process history")
 	}
 
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updatedEntry == nil {
@@ -779,7 +779,7 @@ func TestHealthMonitor_CheckStartProcess_PortGating(t *testing.T) {
 				t.Fatalf("failed to get process history entry: %v", err)
 			}
 
-			hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+			hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 			updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 			if err != nil || updatedEntry == nil {
@@ -911,7 +911,7 @@ func TestHealthMonitor_CheckRunningProcess(t *testing.T) {
 		t.Fatal("Service process history entry not found")
 		return
 	}
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	serviceInstance, err := hm.mgr.GetServiceInstance(t.Context(), serviceName)
 	if err != nil || serviceInstance == nil {
@@ -1029,7 +1029,7 @@ func TestHealthMonitor_CheckRunningProcess_ThrottledMemSample(t *testing.T) {
 		t.Fatalf("get recent process history entry failed: %v", err)
 		return
 	}
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	// Seed a known RSS value so we can detect if it gets zeroed.
 	const knownRssKb = int64(12345)
@@ -1129,7 +1129,7 @@ func TestHealthMonitor_CheckRunningProcess_HeartbeatAdvancesUpdatedAt(t *testing
 		t.Fatalf("get recent process history entry failed: %v", err)
 		return
 	}
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	// Seed a known RSS value; the throttled heartbeat must preserve it, not zero it.
 	const knownRssKb = int64(54321)
@@ -1747,7 +1747,7 @@ func TestHealthMonitor_CheckFailedProcess_RetriesIndefinitely(t *testing.T) {
 			return
 		}
 
-		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
 
 		updatedInstance, _ := hm.mgr.GetServiceInstance(t.Context(), serviceName)
 		if updatedInstance == nil {
@@ -2266,7 +2266,7 @@ func TestHealthMonitor_CheckFailedProcess_ProcessStillAlive_Recovery(t *testing.
 	restartCountBefore := instance.RestartCount
 
 	// Call checkFailedProcess - the process is alive, so it should recover
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
 
 	// Verify: state should be back to Running
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
@@ -2705,7 +2705,7 @@ func TestCheckUnknownProcess_alive(t *testing.T) {
 		t.Fatalf("failed to get process history: %v", err)
 	}
 
-	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+	hm.checkUnknownProcess(t.Context(), entry, processEntry, &types.ServiceInstance{})
 
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updated == nil {
@@ -2774,7 +2774,7 @@ func TestCheckUnknownProcess_dead(t *testing.T) {
 		t.Fatalf("failed to get process history: %v", err)
 	}
 
-	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+	hm.checkUnknownProcess(t.Context(), entry, processEntry, &types.ServiceInstance{})
 
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updated == nil {
@@ -2862,7 +2862,7 @@ func TestCheckUnknownProcess_CleanExit(t *testing.T) {
 	// for why a retry would pollute the log this test doesn't even inspect,
 	// but would still mask a real ordering bug behind a passing retry).
 	time.Sleep(200 * time.Millisecond)
-	hm.checkUnknownProcess(t.Context(), entry, processEntry)
+	hm.checkUnknownProcess(t.Context(), entry, processEntry, &types.ServiceInstance{})
 
 	updated, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updated == nil {
@@ -3037,7 +3037,7 @@ func TestHmAttemptFailedRestart_Deferred(t *testing.T) {
 	// restartCount=1 against a 1000ms base backoff means the just-now StoppedAt
 	// is well within the backoff window, so canRestart is false and the
 	// function must return early without touching hm.mgr (nil here).
-	hm.hmAttemptFailedRestart(t.Context(), service, process, 1, 0)
+	hm.hmAttemptFailedRestart(t.Context(), service, process, &types.ServiceInstance{RestartCount: 1}, 0)
 }
 
 func TestNewHealthMonitor_CheckIntervalDefault(t *testing.T) {
@@ -3745,7 +3745,7 @@ func TestHealthMonitor_CheckFailedProcess_UnwritableLogHaltsLoop(t *testing.T) {
 		return
 	}
 
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
 
 	// The generic "died during startup" is replaced by the real permission cause.
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
@@ -3875,7 +3875,7 @@ func TestHealthMonitor_CheckFailedProcess_SurfacesChildStderr(t *testing.T) {
 		t.Fatalf("Failed to get service instance: %v", err)
 	}
 
-	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+	hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
 
 	updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 	if err != nil || updatedEntry == nil {
@@ -4008,7 +4008,7 @@ func TestHealthMonitor_CheckFailedProcess_RestartFailureDoesNotNestAcrossCycles(
 			t.Fatalf("cycle %d: failed to get service instance: %v", i, err)
 		}
 
-		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance.RestartCount)
+		hm.checkFailedProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, instance)
 
 		updatedEntry, err := hm.mgr.GetMostRecentProcessHistoryEntry(t.Context(), serviceName)
 		if err != nil || updatedEntry == nil || updatedEntry.Error == nil {
@@ -4159,7 +4159,7 @@ func TestHealthMonitor_CheckStartProcess_LogWriteFailureLogged(t *testing.T) {
 		t.Fatalf("failed to get process history entry: %v", err)
 	}
 
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, processHistoryEntry, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	logContent := readDaemonLog(t, daemonConfig)
 	if !strings.Contains(logContent, logFailedLogServiceOutput) {
@@ -4232,7 +4232,7 @@ func TestHealthMonitor_CheckStartProcess_UpdateHistoryFailureLogged(t *testing.T
 	startedAt := time.Now()
 	process := &types.ProcessHistory{PGID: ownPgid, ServiceName: serviceName, State: types.ProcessStateStarting, StartedAt: &startedAt}
 
-	hm.checkStartProcess(t.Context(), serviceCatalogEntry, process, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
+	hm.checkStartProcess(t.Context(), serviceCatalogEntry, process, &types.ServiceInstance{}, healthConfig.Timeout.Limit, healthConfig.Timeout.Enable)
 
 	logContent := readDaemonLog(t, daemonConfig)
 	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
@@ -4722,7 +4722,8 @@ func TestHealthMonitor_MarkProcessFailed_LogWriteFailureLogged(t *testing.T) {
 		t.Fatalf("failed to register process history: %v", err)
 	}
 
-	hm.markProcessFailed(t.Context(), pgid, serviceName, slog.LevelError, "["+serviceName+"] is not running")
+	msg := "[" + serviceName + "] is not running"
+	hm.markProcessFailed(t.Context(), pgid, serviceName, &types.ServiceInstance{}, slog.LevelError, msg, msg)
 
 	logContent := readDaemonLog(t, daemonConfig)
 	if !strings.Contains(logContent, logFailedLogServiceErrOutput) {
@@ -4754,10 +4755,297 @@ func TestHealthMonitor_MarkProcessFailed_DBFailureLogged(t *testing.T) {
 		t.Fatalf("failed to create service log files: %v", err)
 	}
 
-	hm.markProcessFailed(t.Context(), unregisteredPGID, serviceName, slog.LevelError, "["+serviceName+"] is not running")
+	msg := "[" + serviceName + "] is not running"
+	hm.markProcessFailed(t.Context(), unregisteredPGID, serviceName, &types.ServiceInstance{}, slog.LevelError, msg, msg)
 
 	logContent := readDaemonLog(t, daemonConfig)
 	if !strings.Contains(logContent, logFailedUpdateProcessHistory) {
 		t.Errorf("expected daemon log to contain %q, got: %s", logFailedUpdateProcessHistory, logContent)
 	}
+}
+
+// TestEffectiveBackoff covers the ceiling-selection logic in isolation: below
+// HealthCrashLoopThreshold it must return hm.backoff unchanged, at or above it
+// the widened HealthCrashLoopMaxMs.
+func TestEffectiveBackoff(t *testing.T) {
+	hm := &HealthMonitor{backoff: config.BackoffConfig{BaseMs: 300, MaxMs: 60000}}
+
+	below := hm.effectiveBackoff(&types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold - 1})
+	if below.MaxMs != 60000 || below.BaseMs != 300 {
+		t.Errorf("expected unwidened backoff below threshold, got %+v", below)
+	}
+
+	atThreshold := hm.effectiveBackoff(&types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold})
+	if atThreshold.MaxMs != config.HealthCrashLoopMaxMs {
+		t.Errorf("expected widened ceiling at threshold, got maxMs=%d", atThreshold.MaxMs)
+	}
+	if atThreshold.BaseMs != 300 {
+		t.Errorf("expected base unchanged when widened, got baseMs=%d", atThreshold.BaseMs)
+	}
+
+	above := hm.effectiveBackoff(&types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold + 100})
+	if above.MaxMs != config.HealthCrashLoopMaxMs {
+		t.Errorf("expected widened ceiling above threshold, got maxMs=%d", above.MaxMs)
+	}
+}
+
+// TestUpdateFailureLoopState covers every branch of the consecutive-failure
+// signature comparison: a fresh count on the first captured cause, an
+// increment on a repeat of the identical cause, a reset on a differing
+// cause, a reset to zero on an uncaptured cause, and the DB-error path
+// (which must still return the count it computed rather than swallowing it).
+func TestUpdateFailureLoopState(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	healthConfig := newTestHealthConfig(t)
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(mgr, db, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "failure-loop-svc"
+	if err := db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("RegisterServiceInstance failed: %v", err)
+	}
+
+	fetch := func() *types.ServiceInstance {
+		instance, err := db.GetServiceInstance(t.Context(), serviceName)
+		if err != nil {
+			t.Fatalf("GetServiceInstance failed: %v", err)
+		}
+		return &instance
+	}
+
+	// First captured failure starts the count at 1, well below threshold.
+	if inLoop := hm.updateFailureLoopState(t.Context(), serviceName, fetch(), "npm: not found"); inLoop {
+		t.Error("expected inLoop=false after a single failure")
+	}
+	if got := fetch(); got.FailureLoopCount != 1 || got.FailureSignature != "npm: not found" {
+		t.Fatalf("expected count=1 signature=%q, got count=%d signature=%q", "npm: not found", got.FailureLoopCount, got.FailureSignature)
+	}
+
+	// Repeating the identical signature increments until the threshold.
+	for want := 2; want < config.HealthCrashLoopThreshold; want++ {
+		inLoop := hm.updateFailureLoopState(t.Context(), serviceName, fetch(), "npm: not found")
+		if inLoop {
+			t.Errorf("expected inLoop=false at count %d (below threshold %d)", want, config.HealthCrashLoopThreshold)
+		}
+		if got := fetch(); got.FailureLoopCount != want {
+			t.Fatalf("expected count=%d, got %d", want, got.FailureLoopCount)
+		}
+	}
+
+	// Crossing the threshold flips inLoop to true.
+	if inLoop := hm.updateFailureLoopState(t.Context(), serviceName, fetch(), "npm: not found"); !inLoop {
+		t.Error("expected inLoop=true once the threshold is crossed")
+	}
+	if got := fetch(); got.FailureLoopCount != config.HealthCrashLoopThreshold {
+		t.Fatalf("expected count=%d at threshold, got %d", config.HealthCrashLoopThreshold, got.FailureLoopCount)
+	}
+
+	// A differing signature resets the count back to 1, dropping out of the loop.
+	if inLoop := hm.updateFailureLoopState(t.Context(), serviceName, fetch(), "a different cause"); inLoop {
+		t.Error("expected inLoop=false immediately after a signature change resets the count")
+	}
+	if got := fetch(); got.FailureLoopCount != 1 || got.FailureSignature != "a different cause" {
+		t.Fatalf("expected reset to count=1 signature=%q, got count=%d signature=%q", "a different cause", got.FailureLoopCount, got.FailureSignature)
+	}
+
+	// An uncaptured cause (empty signature) never counts as a match and resets to 0.
+	if inLoop := hm.updateFailureLoopState(t.Context(), serviceName, fetch(), ""); inLoop {
+		t.Error("expected inLoop=false for an uncaptured cause")
+	}
+	if got := fetch(); got.FailureLoopCount != 0 || got.FailureSignature != "" {
+		t.Fatalf("expected count=0 signature=%q for an uncaptured cause, got count=%d signature=%q", "", got.FailureLoopCount, got.FailureSignature)
+	}
+
+	// A DB write failure (unregistered service) still returns the count it
+	// computed rather than swallowing it, after logging the failure.
+	if inLoop := hm.updateFailureLoopState(t.Context(), "no-such-service", &types.ServiceInstance{}, "cause"); inLoop {
+		t.Error("expected inLoop=false for a single failure even when the DB write fails")
+	}
+}
+
+// TestLogCrashLoopAware covers the collapsed-repeat log summary state
+// machine: direct writes outside a loop, the first in-loop occurrence logged
+// in full, suppression within the summary window, a flushed summary once the
+// window elapses, and the tracked state clearing once the service leaves the
+// loop.
+func TestLogCrashLoopAware(t *testing.T) {
+	mgr := &capturingLogManager{}
+	hm := &HealthMonitor{
+		mgr:          mgr,
+		logger:       testutil.NewTestLogger(t),
+		crashLoopLog: make(map[string]*crashLoopLogState),
+	}
+
+	hm.logCrashLoopAware("svc", "first", false)
+	hm.logCrashLoopAware("svc", "second", false)
+	if len(mgr.stderrLines) != 2 {
+		t.Fatalf("expected 2 direct writes outside a loop, got %v", mgr.stderrLines)
+	}
+	if _, tracked := hm.crashLoopLog["svc"]; tracked {
+		t.Error("expected no collapse state to be tracked outside a loop")
+	}
+
+	mgr.stderrLines = nil
+
+	hm.logCrashLoopAware("svc", "loop-msg-1", true)
+	if len(mgr.stderrLines) != 1 || mgr.stderrLines[0] != "loop-msg-1" {
+		t.Fatalf("expected the first in-loop occurrence logged in full, got %v", mgr.stderrLines)
+	}
+	state, tracked := hm.crashLoopLog["svc"]
+	if !tracked {
+		t.Fatal("expected collapse state to start tracking on entering the loop")
+	}
+
+	hm.logCrashLoopAware("svc", "loop-msg-2", true)
+	hm.logCrashLoopAware("svc", "loop-msg-3", true)
+	if len(mgr.stderrLines) != 1 {
+		t.Fatalf("expected suppressed occurrences to write nothing, got %v", mgr.stderrLines)
+	}
+	if state.suppressed != 2 {
+		t.Errorf("expected 2 suppressed occurrences tracked, got %d", state.suppressed)
+	}
+
+	state.windowStart = time.Now().Add(-config.HealthCrashLoopLogSummaryInterval - time.Second)
+	hm.logCrashLoopAware("svc", "loop-msg-4", true)
+	if len(mgr.stderrLines) != 2 {
+		t.Fatalf("expected a flushed summary line once the window elapsed, got %v", mgr.stderrLines)
+	}
+	if !strings.Contains(mgr.stderrLines[1], "repeated 3 times") {
+		t.Errorf("expected the summary to report 3 suppressed occurrences, got %q", mgr.stderrLines[1])
+	}
+	if state.suppressed != 0 {
+		t.Errorf("expected the suppressed counter reset after a flush, got %d", state.suppressed)
+	}
+
+	hm.logCrashLoopAware("svc", "recovered", false)
+	if _, tracked := hm.crashLoopLog["svc"]; tracked {
+		t.Error("expected collapse state cleared once the service leaves the loop")
+	}
+}
+
+// capturingLogManager wraps a monitorManager and records every message
+// passed to LogToServiceStderr instead of writing it anywhere, so
+// logCrashLoopAware's collapsing behavior can be asserted directly.
+type capturingLogManager struct {
+	monitorManager
+	stderrLines []string
+}
+
+func (m *capturingLogManager) LogToServiceStderr(_ string, message string) error {
+	m.stderrLines = append(m.stderrLines, message)
+	return nil
+}
+
+// TestResetRestartCounterIfStable_ClearsFailureLoopState covers the part of
+// the brief that explicitly asked for a test rather than an assumption:
+// resetRestartCounterIfStable must clear FailureLoopCount, FailureSignature,
+// and the in-memory log-collapse state alongside RestartCount, since that's
+// the same "this service has recovered" signal for all of them.
+func TestResetRestartCounterIfStable_ClearsFailureLoopState(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	mgr := manager.NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t))
+	t.Cleanup(mgr.WaitPipes)
+	healthConfig := newTestHealthConfig(t, WithRestartCounterResetWindow(time.Millisecond))
+	shutdownConfig := newTestShutdownConfig(t)
+	hm := NewHealthMonitor(mgr, db, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+
+	const serviceName = "reset-failure-loop-svc"
+	if err := db.RegisterServiceInstance(t.Context(), serviceName); err != nil {
+		t.Fatalf("RegisterServiceInstance failed: %v", err)
+	}
+	restartCount := 3
+	failureLoopCount := 6
+	signature := "npm: not found"
+	if err := db.UpdateServiceInstance(t.Context(), serviceName, database.ServiceInstanceUpdate{
+		RestartCount:     &restartCount,
+		FailureLoopCount: &failureLoopCount,
+		FailureSignature: &signature,
+	}); err != nil {
+		t.Fatalf("seed update failed: %v", err)
+	}
+	hm.crashLoopLog[serviceName] = &crashLoopLogState{windowStart: time.Now()}
+
+	instance, err := db.GetServiceInstance(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	pastTime := time.Now().Add(-1 * time.Hour)
+	process := &types.ProcessHistory{StartedAt: &pastTime}
+
+	hm.resetRestartCounterIfStable(t.Context(), serviceName, process, &instance)
+
+	updated, err := db.GetServiceInstance(t.Context(), serviceName)
+	if err != nil {
+		t.Fatalf("GetServiceInstance failed: %v", err)
+	}
+	if updated.RestartCount != 0 {
+		t.Errorf("expected restart count reset to 0, got %d", updated.RestartCount)
+	}
+	if updated.FailureLoopCount != 0 {
+		t.Errorf("expected failure loop count reset to 0, got %d", updated.FailureLoopCount)
+	}
+	if updated.FailureSignature != "" {
+		t.Errorf("expected failure signature cleared, got %q", updated.FailureSignature)
+	}
+	if _, tracked := hm.crashLoopLog[serviceName]; tracked {
+		t.Error("expected in-memory crash-loop log state cleared on reset")
+	}
+}
+
+// restartCallCountManager wraps a monitorManager and counts RestartService
+// calls, letting hmAttemptFailedRestart's backoff-gating decision be
+// exercised without spawning a real process.
+type restartCallCountManager struct {
+	monitorManager
+	calls int
+}
+
+func (m *restartCallCountManager) RestartService(context.Context, string, time.Duration, time.Duration) (int, error) {
+	m.calls++
+	return 999, nil
+}
+
+func (m *restartCallCountManager) GetServiceLastErrorLine(string, int) (string, bool) {
+	return "", false
+}
+
+func (m *restartCallCountManager) LogToServiceStderr(string, string) error {
+	return nil
+}
+
+// TestHmAttemptFailedRestart_WidensBackoffOnceInLoop proves the widened
+// ceiling actually gates the restart, not just that effectiveBackoff computes
+// it correctly in isolation: with restartCount high enough that the backoff
+// delay is capped at the ceiling either way, and StoppedAt inside the widened
+// window but past the normal one, the same elapsed time must allow a retry
+// below the threshold and defer it once the threshold is crossed.
+func TestHmAttemptFailedRestart_WidensBackoffOnceInLoop(t *testing.T) {
+	healthConfig := newTestHealthConfig(t, WithBackoff(1000, 2000))
+	shutdownConfig := newTestShutdownConfig(t)
+	stoppedAt := time.Now().Add(-3 * time.Second)
+	service := &types.ServiceCatalogEntry{Name: "widened-svc"}
+
+	t.Run("below threshold retries at the normal ceiling", func(t *testing.T) {
+		mgr := &restartCallCountManager{}
+		hm := NewHealthMonitor(mgr, nil, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+		process := &types.ProcessHistory{PGID: 1, StoppedAt: &stoppedAt}
+		instance := &types.ServiceInstance{RestartCount: 10, FailureLoopCount: 0}
+		hm.hmAttemptFailedRestart(t.Context(), service, process, instance, 0)
+		if mgr.calls != 1 {
+			t.Errorf("expected the normal ceiling to allow a retry, got %d RestartService calls", mgr.calls)
+		}
+	})
+
+	t.Run("at threshold defers under the widened ceiling", func(t *testing.T) {
+		mgr := &restartCallCountManager{}
+		hm := NewHealthMonitor(mgr, nil, testutil.NewTestLogger(t), healthConfig, *shutdownConfig, otelx.NoopHandles())
+		process := &types.ProcessHistory{PGID: 1, StoppedAt: &stoppedAt}
+		instance := &types.ServiceInstance{RestartCount: 10, FailureLoopCount: config.HealthCrashLoopThreshold}
+		hm.hmAttemptFailedRestart(t.Context(), service, process, instance, 0)
+		if mgr.calls != 0 {
+			t.Errorf("expected the widened ceiling to defer the retry, got %d RestartService calls", mgr.calls)
+		}
+	})
 }

@@ -177,6 +177,69 @@ func TestStatusCommandShowsLiveOrphan(t *testing.T) {
 	}
 }
 
+func TestStatusCommandShowsCrashLoop(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return &types.ServiceInstance{FailureLoopCount: 5, FailureSignature: "npm: not found"}, nil
+		},
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return &types.ProcessHistory{State: types.ProcessStateFailed, PGID: 100}, nil
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v\n%s", err, errBuf.String())
+	}
+	output := outBuf.String()
+	if !strings.Contains(output, "crashloop") {
+		t.Errorf("expected 'crashloop' status in output, got: %s", output)
+	}
+}
+
+func TestStatusCommandBelowCrashLoopThresholdStaysFailed(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestService(t, dir)
+
+	mgr := &mockMgr{
+		getAllCatalogEntries: func() ([]types.ServiceCatalogEntry, error) {
+			return []types.ServiceCatalogEntry{{Name: "svc", DirectoryPath: dir, ConfigFileName: "service.yaml"}}, nil
+		},
+		getServiceInstance: func(string) (*types.ServiceInstance, error) {
+			return &types.ServiceInstance{FailureLoopCount: 4, FailureSignature: "npm: not found"}, nil
+		},
+		getMostRecentProcess: func(string) (*types.ProcessHistory, error) {
+			return &types.ProcessHistory{State: types.ProcessStateFailed, PGID: 100}, nil
+		},
+	}
+	cmd := newTestRootCmd(mgr)
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("status command should not return an error, got: %v\n%s", err, errBuf.String())
+	}
+	output := outBuf.String()
+	if strings.Contains(output, "crashloop") {
+		t.Errorf("expected status to stay 'failed' below threshold, got: %s", output)
+	}
+	if !strings.Contains(output, "failed") {
+		t.Errorf("expected 'failed' status in output, got: %s", output)
+	}
+}
+
 func TestBuildStatusRowsIncludesOrphanedColumn(t *testing.T) {
 	rows, _ := buildStatusRows(nil)
 	if len(rows) != 1 || len(rows[0]) != 11 {

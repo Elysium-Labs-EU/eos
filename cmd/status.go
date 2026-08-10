@@ -191,6 +191,12 @@ func buildStatusServiceEntry(cmd *cobra.Command, mgr manager.ServiceManager, reg
 		entry.Started = humanize.Time(*serviceInstance.StartedAt)
 		entry.RestartCount = serviceInstance.RestartCount
 	}
+	// Overlays a Failed status the same way ServiceStatusWaitingForDeps does
+	// below: FailureLoopCount lives on ServiceInstance, not ProcessHistory, so
+	// helpers.DetermineServiceStatus above can't see it.
+	if entry.Status == types.ServiceStatusFailed && helpers.InFailureLoop(serviceInstance) {
+		entry.Status = types.ServiceStatusCrashLoop
+	}
 	switch {
 	case config.CronRestart == "":
 		entry.NextRestart = "-"

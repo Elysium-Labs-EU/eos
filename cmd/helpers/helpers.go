@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
@@ -57,13 +58,23 @@ func DetermineServiceStatus(mostRecentProcess *types.ProcessHistory, hasLiveOrph
 		return status
 	}
 	switch status {
-	case types.ServiceStatusStopped, types.ServiceStatusFailed, types.ServiceStatusUnknown:
+	case types.ServiceStatusStopped, types.ServiceStatusFailed, types.ServiceStatusCrashLoop, types.ServiceStatusUnknown:
 		return types.ServiceStatusOrphaned
 	case types.ServiceStatusRunning, types.ServiceStatusStarting, types.ServiceStatusWaitingForDeps, types.ServiceStatusOrphaned:
 		return status
 	default:
 		return status
 	}
+}
+
+// InFailureLoop reports whether instance has crossed the same
+// consecutive-identical-failure threshold the health monitor uses to widen
+// its own backoff ceiling and collapse its own log output — the single
+// derivation site both status display and the monitor's retry behavior read,
+// so they can never silently disagree on what counts as a sustained failure
+// loop.
+func InFailureLoop(instance *types.ServiceInstance) bool {
+	return instance != nil && instance.FailureLoopCount >= config.HealthCrashLoopThreshold
 }
 
 func determineStatusFromProcessState(mostRecentProcess *types.ProcessHistory) types.ServiceStatus {

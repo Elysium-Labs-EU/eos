@@ -157,6 +157,12 @@ func apiStatusApplyServiceInstance(entry *apiStatusService, serviceInstance *typ
 	}
 	entry.StartedAt = serviceInstance.StartedAt
 	entry.RestartCount = serviceInstance.RestartCount
+	// Overlays a Failed status the same way apiStatusApplyDependencyWait does
+	// below: FailureLoopCount lives on ServiceInstance, not ProcessHistory, so
+	// apiStatusApplyProcessMetrics's DetermineServiceStatus call can't see it.
+	if entry.Status == types.ServiceStatusFailed && helpers.InFailureLoop(serviceInstance) {
+		entry.Status = types.ServiceStatusCrashLoop
+	}
 }
 
 func apiStatusApplyDependencyWait(ctx context.Context, mgr manager.ServiceManager, name string, entry *apiStatusService) {
