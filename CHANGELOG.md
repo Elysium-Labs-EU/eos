@@ -2,6 +2,159 @@
 
 All notable changes to eos are documented here.
 
+## [0.0.13-rc.9] - 2026-08-10
+
+### Bug Fixes
+- Warn on stale binary for standalone daemon info (#253) ([`e36d20c`](https://github.com/Elysium-Labs-EU/eos/commit/e36d20cf82976e86d3375e206e60226ea80c3332))
+- Bound crash-reason line to pgid, prefer error lines (#254) ([`002f930`](https://github.com/Elysium-Labs-EU/eos/commit/002f9303d638f028b3126e8d9fd32863333a8ade))
+- Do not treat a clean exit-0 as a startup crash (#259) ([`dbb5a41`](https://github.com/Elysium-Labs-EU/eos/commit/dbb5a4168530b2fd5c36fe88ab1de955cb258367))
+- Local mode blocks and supervises instead of returning (#268) ([`ea16772`](https://github.com/Elysium-Labs-EU/eos/commit/ea16772cfb52f748e8c7ee3fa0539816ea9e0770))
+
+
+### Documentation
+- Adopt ADRs as the permanent design record (#249) ([`8427ae7`](https://github.com/Elysium-Labs-EU/eos/commit/8427ae7e815931aa9b76642b3aa5d14cce58a4c3))
+
+
+### Features
+- Negotiate sink plugin protocol version on READY (#258) ([`9f91e32`](https://github.com/Elysium-Labs-EU/eos/commit/9f91e326dabcf6897fa67cfaf94b3bd1c144fd97))
+- Detect sustained restart-failure loops (#265) ([`d4aac5e`](https://github.com/Elysium-Labs-EU/eos/commit/d4aac5e5203492c2b9c0c8deaf5fce51d971a188))
+- Collect the daemon and service environment (#266) ([`14b63d5`](https://github.com/Elysium-Labs-EU/eos/commit/14b63d52078ed4c95cd2a0adcd24f03d63757a7f))
+
+
+### Maintenance
+- Stop telling workers to do something they are denied (#252) ([`2f40064`](https://github.com/Elysium-Labs-EU/eos/commit/2f4006429771949f26ef4e011c068a8d6693c9d4))
+- Tell the reviewer to check the merge base before calling a revert (#256) ([`d33c361`](https://github.com/Elysium-Labs-EU/eos/commit/d33c361f661d26d72bf94582ae720e79f118cdf5))
+- Allow the merge check and raise the diff ceiling (#267) ([`d0a4c64`](https://github.com/Elysium-Labs-EU/eos/commit/d0a4c64623076d2b4ad20f3ca3d4ab26e9ee0330))
+- Nest workers in one workspace, warn on the two shared-state traps (#269) ([`6b07c1e`](https://github.com/Elysium-Labs-EU/eos/commit/6b07c1e30e885ce9a0aa07efa24687c21ae340fe))
+
+
+### Miscellaneous
+- Make adr-find usable from a git worktree (#250) ([`a09725d`](https://github.com/Elysium-Labs-EU/eos/commit/a09725de0c06d9b4ab1a43f9cb1109cadf2db7bf))
+- Ignore the local code-intelligence index repo-wide (#251) ([`42802be`](https://github.com/Elysium-Labs-EU/eos/commit/42802be680e52ba4dd67d1b4307d037f4c418f22))
+
+## [0.0.13-rc.8] - 2026-08-09
+
+### Bug Fixes
+- Install openssl when missing instead of refusing (#245) ([`55e8148`](https://github.com/Elysium-Labs-EU/eos/commit/55e8148eb6c18fb6d3749f8ebf3b5be84d8b9b48))
+- Resolve systemd daemon version, warn on stale binary (#244) ([`ae7331c`](https://github.com/Elysium-Labs-EU/eos/commit/ae7331caa233b4c2dfae3bcadef3950e1629b33a))
+- Surface leaked process groups from older history rows (#246) ([`22ea4bc`](https://github.com/Elysium-Labs-EU/eos/commit/22ea4bc3c88843fb616af9f0372a24968f1e3d67))
+
+
+### Maintenance
+- Encode this repo's real testing gates in the worker brief (#247) ([`2c73f0e`](https://github.com/Elysium-Labs-EU/eos/commit/2c73f0e97ecbc400c55e8e91c238750411661a2e))
+
+## [0.0.13-rc.7] - 2026-08-09
+
+### Bug Fixes
+- Route CLI through daemon socket for supervised installs (#236) ([`fe36ce2`](https://github.com/Elysium-Labs-EU/eos/commit/fe36ce25bf924606299649c458d0bac3d0629153))
+- Treat Unknown process-history rows as live, not terminal (#239) ([`7088c0f`](https://github.com/Elysium-Labs-EU/eos/commit/7088c0f64342ea8a1c4d53a1c441358039fd3ef0))
+- Escalate to SIGKILL when a restart grace period expires (#240) ([`87e9d5d`](https://github.com/Elysium-Labs-EU/eos/commit/87e9d5dc78dd75861f47561fe8e1b9de04f7a141))
+- Defer disable persist until stop succeeds, name --force (#238) ([`4668d41`](https://github.com/Elysium-Labs-EU/eos/commit/4668d41dfca28abc2ae743bb52ca2b0c028ab60c))
+
+
+### Features
+- Add test-supervision-orb target, fold typos into ci (#241) ([`f620a80`](https://github.com/Elysium-Labs-EU/eos/commit/f620a808d0400752670f011cf182421691799713))
+
+## [0.0.13-rc.6] - 2026-08-08
+
+### Bug Fixes
+- Harden curl/npm install flags in test-fixtures-orb.sh (#229) ([`60eef10`](https://github.com/Elysium-Labs-EU/eos/commit/60eef10e7657fb3da5f1b94dfc5bdf0b573a58f4))
+
+
+### Features
+- Add JSON schema for config.yaml (#228) ([`30baf47`](https://github.com/Elysium-Labs-EU/eos/commit/30baf47ad3473619ff0cab2262f09654a54c2758))
+
+
+### Maintenance
+- Suppress SonarCloud go:S2077 for database.go dynamic SQL (#227) ([`3d0495c`](https://github.com/Elysium-Labs-EU/eos/commit/3d0495c43cc7d5f897093bbc0081540aee45587f))
+
+## [0.0.13-rc.5] - 2026-08-08
+
+### Bug Fixes
+- Journalctl fallback for daemon log in diagnose bundle (#218) ([`15e53a1`](https://github.com/Elysium-Labs-EU/eos/commit/15e53a14f1b9f4426607783d8cc3ad78b85a134f))
+
+
+### Documentation
+- Add SECURITY.md for private vulnerability reporting (#221) ([`6596abb`](https://github.com/Elysium-Labs-EU/eos/commit/6596abb79fe26907fa101be2a6bb743dd547168b))
+
+
+### Features
+- Print next-step instructions after writing bundle (#223) ([`f16c474`](https://github.com/Elysium-Labs-EU/eos/commit/f16c474ab893dd91b925d00c0540aaae505954e9))
+
+## [0.0.13-rc.4] - 2026-08-08
+
+### Bug Fixes
+- Dont miss live child when leader is already reaped (#219) ([`f2cd91a`](https://github.com/Elysium-Labs-EU/eos/commit/f2cd91a7f5865e31ee4ccc5c974360b107a0c361))
+
+## [0.0.13-rc.3] - 2026-08-08
+
+### Bug Fixes
+- Gitleaks allowlist missing lowercase MIIBogIBAAJ fixture regex (#209) ([`b1c3416`](https://github.com/Elysium-Labs-EU/eos/commit/b1c34168f511b9ffb28aa7905245e25735de6fcb))
+- Delegate HealthMonitor.isProcessAlive to procutil.IsAlive (#212) ([`389238e`](https://github.com/Elysium-Labs-EU/eos/commit/389238efe73f06cc4991983fbce29d219a15adab))
+- Gate startup Running transition on port reachability (#214) ([`6c74f43`](https://github.com/Elysium-Labs-EU/eos/commit/6c74f43b8a0cfb70ad008fa5a5974dbde7a5d765))
+
+
+### Features
+- Add eos diagnose privacy-safe diagnostic bundle command (#205) ([`da43f81`](https://github.com/Elysium-Labs-EU/eos/commit/da43f81b94d69ad0713f0e28a08bdf87539a8707))
+- Add eos config show/init/validate for config.yaml discoverability (#213) ([`20d71f3`](https://github.com/Elysium-Labs-EU/eos/commit/20d71f38a1fdff87b832891346948b49b820e3eb))
+
+
+### Miscellaneous
+- Commit CI dev-tools cache-skip fix, fixture-test automation, argus config (#210) ([`efb6aa4`](https://github.com/Elysium-Labs-EU/eos/commit/efb6aa463a065ef5cae6c31a7cd132731b35eaed))
+
+
+### Refactoring
+- Centralize eos command name strings in internal/cmdnames (#208) ([`8bc687f`](https://github.com/Elysium-Labs-EU/eos/commit/8bc687feecd527c73c239293ad4abe27bb3e87fa))
+
+
+### Testing
+- Commit real-app fixture corpus for test-fixtures-orb.sh (#211) ([`7756fd4`](https://github.com/Elysium-Labs-EU/eos/commit/7756fd4fad800615309e8e1dddafebb86863b2e3))
+
+## [0.0.13-rc.2] - 2026-08-07
+
+### Bug Fixes
+- Heal systemd user bus on daemon Start, tolerate slow restarts (#206) ([`34e2b02`](https://github.com/Elysium-Labs-EU/eos/commit/34e2b02c1459f1bf0efa5a76a93c365da56072bb))
+
+
+### Maintenance
+- Bump crate-ci/typos from 1.48.0 to 1.49.0 (#187) ([`a57aba4`](https://github.com/Elysium-Labs-EU/eos/commit/a57aba400048cc4ee062c100afb1351dfef55734))
+- Bump the go-dependencies group across 1 directory with 9 updates (#188) ([`7152e83`](https://github.com/Elysium-Labs-EU/eos/commit/7152e83642401c46c5b79df68f8ca6db24920b5b))
+
+
+### Miscellaneous
+- Removes arrow from TUI (#178)
+
+Co-authored-by: sgnilreutr <sgnilreutr@noreply.codeberg.org> ([`6c0447c`](https://github.com/Elysium-Labs-EU/eos/commit/6c0447c28dadfa8837fc204df4dc7784bf5f430e))
+
+## [0.0.13-rc.1] - 2026-08-07
+
+### Bug Fixes
+- Persist per-service stop/run state across daemon restarts (#177) ([`e568f98`](https://github.com/Elysium-Labs-EU/eos/commit/e568f98f2404d48bb957e986c94110c2646024eb))
+- Correct daemon.wait line number in go-crap-gate OS_INTEGRATION_EXEMPT (#201) ([`a453b33`](https://github.com/Elysium-Labs-EU/eos/commit/a453b3380b8e2eb6f03ba31cb2dec65c23d1a974))
+
+
+### CI/CD
+- Cache dev tool binaries, stop serializing Verify Build after CI (#202) ([`5f42852`](https://github.com/Elysium-Labs-EU/eos/commit/5f428527ff08da957bb8a4b589c0d13e9e3982f2))
+
+
+### Features
+- Explain and prompt to enable linger on user-unit startup (#174) ([`621ce37`](https://github.com/Elysium-Labs-EU/eos/commit/621ce3750b5969d9ff8e53c5b7dc01c4daaa2f94))
+
+
+### Miscellaneous
+- Triage 17 bare TODO comments flagged as debt (#164) ([`dc05495`](https://github.com/Elysium-Labs-EU/eos/commit/dc0549502a2ce881cf488c718136d6f914715d27))
+- Extract duplicated string literals into constants (58 findings) (#168) ([`bc0e0d1`](https://github.com/Elysium-Labs-EU/eos/commit/bc0e0d1a45b89c802d660e55665adb1f5dbc1cee))
+
+
+### Refactoring
+- Go idiom cleanup (ctx threading, param grouping) (#170) ([`492cf95`](https://github.com/Elysium-Labs-EU/eos/commit/492cf95fbc525d9252069343c306a913a0b3b71a))
+- Extract helpers to reduce cognitive complexity (#171) ([`bc2ebfe`](https://github.com/Elysium-Labs-EU/eos/commit/bc2ebfedfd9e4ff4ab5b206fd9a39fc31ded5510))
+
+
+### Testing
+- Exercise stop force-quit decline path reliably (#176) ([`2ef7ae5`](https://github.com/Elysium-Labs-EU/eos/commit/2ef7ae5495cf0e69e7b5bdbcd9f6537020bc0a12))
+- Cover manager error paths for remove/status/update via mockMgr (#175) ([`84fda40`](https://github.com/Elysium-Labs-EU/eos/commit/84fda40bf32ef6798245c06c1bc6be429a515175))
+
 ## [0.0.12] - 2026-08-06
 
 ### Bug Fixes
