@@ -18,15 +18,24 @@ import (
 // var installDir string
 
 const (
-	DaemonLogFileName                 = "daemon.log"
-	DaemonLogFileSizeLimit            = int64(10 * 1024 * 1024)
-	DaemonLogMaxFiles                 = 5
-	DaemonPIDFile                     = "eos.pid"
-	DaemonSocketPath                  = "eos.sock"
-	DaemonSocketTimeout               = "5s"
-	EosConfigFileName                 = "config.yaml"
-	HealthBackoffBaseMs               = 300
-	HealthBackoffMaxMs                = 60000
+	DaemonLogFileName      = "daemon.log"
+	DaemonLogFileSizeLimit = int64(10 * 1024 * 1024)
+	DaemonLogMaxFiles      = 5
+	DaemonPIDFile          = "eos.pid"
+	DaemonSocketPath       = "eos.sock"
+	DaemonSocketTimeout    = "5s"
+	EosConfigFileName      = "config.yaml"
+	HealthBackoffBaseMs    = 300
+	HealthBackoffMaxMs     = 60000
+	// HealthCrashLoopThreshold is how many consecutive restart failures
+	// capturing the identical cause mark a service as stuck in a sustained
+	// failure loop (see docs/adr/0006-sustained-failure-loop-status.md).
+	HealthCrashLoopThreshold = 5
+	// HealthCrashLoopMaxMs widens the restart backoff ceiling once a service
+	// crosses HealthCrashLoopThreshold: once a minute against a cause that
+	// keeps recurring identically buys nothing, and five minutes is still
+	// well inside HealthRestartCounterResetWindow.
+	HealthCrashLoopMaxMs              = 300000
 	HealthCheckIntervalMs             = 2000
 	HealthMemSampleIntervalMs         = 30000
 	HealthMemoryForceRestartThreshold = 0.95
@@ -46,6 +55,12 @@ const (
 	SystemdTargetDir                  = "/etc/systemd/system/"
 	SystemdTargetFileName             = "eos.service"
 )
+
+// HealthCrashLoopLogSummaryInterval bounds how often a collapsed-repeat
+// summary line is written to a service's error log once it has crossed
+// HealthCrashLoopThreshold, instead of the full breadcrumb set on every
+// single attempt.
+const HealthCrashLoopLogSummaryInterval = 5 * time.Minute
 
 type DaemonConfig struct {
 	Standalone *StandaloneDaemonConfig `json:"standalone" yaml:"standalone"`

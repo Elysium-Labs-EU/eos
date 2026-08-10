@@ -31,6 +31,14 @@ const (
 	// helpers.DetermineServiceStatus and manager.ServiceManager's
 	// GetLiveOrphanProcessGroups.
 	ServiceStatusOrphaned ServiceStatus = "orphaned"
+	// ServiceStatusCrashLoop is a display-only status, like
+	// ServiceStatusWaitingForDeps: never derived by determineStatusFromProcessState
+	// itself, only overlaid at render time once a service has failed with the
+	// same captured cause for HealthCrashLoopThreshold consecutive attempts
+	// (see ServiceInstance.FailureLoopCount, helpers.InFailureLoop). eos keeps
+	// retrying either way; this status only says the retries are not making
+	// progress, so it isn't hidden behind a wall of identical log lines.
+	ServiceStatusCrashLoop ServiceStatus = "crashloop"
 )
 
 type Runtime struct {
@@ -137,13 +145,15 @@ type DependencyWaitStatus struct {
 }
 
 type ServiceInstance struct {
-	CreatedAt       time.Time  `json:"created_at" yaml:"created_at"`
-	LastHealthCheck *time.Time `json:"last_health_check,omitempty" yaml:"last_health_check,omitempty"`
-	StartedAt       *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
-	UpdatedAt       *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
-	NextRestartAt   *time.Time `json:"next_restart_at,omitempty" yaml:"next_restart_at,omitempty"`
-	Name            string     `json:"name" yaml:"name"`
-	RestartCount    int        `json:"restart_count,omitempty" yaml:"restart_count,omitempty"`
+	CreatedAt        time.Time  `json:"created_at" yaml:"created_at"`
+	LastHealthCheck  *time.Time `json:"last_health_check,omitempty" yaml:"last_health_check,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	NextRestartAt    *time.Time `json:"next_restart_at,omitempty" yaml:"next_restart_at,omitempty"`
+	Name             string     `json:"name" yaml:"name"`
+	FailureSignature string     `json:"failure_signature,omitempty" yaml:"failure_signature,omitempty"`
+	RestartCount     int        `json:"restart_count,omitempty" yaml:"restart_count,omitempty"`
+	FailureLoopCount int        `json:"failure_loop_count,omitempty" yaml:"failure_loop_count,omitempty"`
 }
 
 type ProcessState string

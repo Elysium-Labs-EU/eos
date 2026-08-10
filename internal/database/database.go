@@ -276,7 +276,7 @@ func (db *DB) GetServiceCatalogEntry(ctx context.Context, name string) (types.Se
 
 func (db *DB) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstance, error) {
 	query := `
-	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at, next_restart_at
+	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at, next_restart_at, failure_loop_count, failure_signature
 	FROM service_instances
 	ORDER BY name
 	`
@@ -290,7 +290,7 @@ func (db *DB) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstan
 	var serviceInstances []types.ServiceInstance
 	for rows.Next() {
 		var serviceInstance types.ServiceInstance
-		err := rows.Scan(&serviceInstance.Name, &serviceInstance.RestartCount, &serviceInstance.LastHealthCheck, &serviceInstance.CreatedAt, &serviceInstance.StartedAt, &serviceInstance.UpdatedAt, &serviceInstance.NextRestartAt)
+		err := rows.Scan(&serviceInstance.Name, &serviceInstance.RestartCount, &serviceInstance.LastHealthCheck, &serviceInstance.CreatedAt, &serviceInstance.StartedAt, &serviceInstance.UpdatedAt, &serviceInstance.NextRestartAt, &serviceInstance.FailureLoopCount, &serviceInstance.FailureSignature)
 		if err != nil {
 			return nil, fmt.Errorf("could not scan service row: %w", err)
 		}
@@ -306,7 +306,7 @@ func (db *DB) GetAllServiceInstances(ctx context.Context) ([]types.ServiceInstan
 
 func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.ServiceInstance, error) {
 	query := `
-	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at, next_restart_at
+	SELECT name, restart_count, last_health_check, created_at, started_at, updated_at, next_restart_at, failure_loop_count, failure_signature
 	FROM service_instances
 	WHERE name = ?
 	`
@@ -314,7 +314,7 @@ func (db *DB) GetServiceInstance(ctx context.Context, name string) (types.Servic
 	row := db.conn.QueryRowContext(ctx, query, name)
 	var svc types.ServiceInstance
 
-	err := row.Scan(&svc.Name, &svc.RestartCount, &svc.LastHealthCheck, &svc.CreatedAt, &svc.StartedAt, &svc.UpdatedAt, &svc.NextRestartAt)
+	err := row.Scan(&svc.Name, &svc.RestartCount, &svc.LastHealthCheck, &svc.CreatedAt, &svc.StartedAt, &svc.UpdatedAt, &svc.NextRestartAt, &svc.FailureLoopCount, &svc.FailureSignature)
 	if err == sql.ErrNoRows {
 		return types.ServiceInstance{}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
 	}
@@ -734,21 +734,24 @@ func (db *DB) UpdateServiceCatalogEntry(ctx context.Context, name string, newDir
 }
 
 type ServiceInstanceUpdate struct {
-	RestartCount    *int
-	LastHealthCheck *time.Time
-	StartedAt       *time.Time
-	NextRestartAt   *time.Time
+	RestartCount     *int
+	LastHealthCheck  *time.Time
+	StartedAt        *time.Time
+	NextRestartAt    *time.Time
+	FailureLoopCount *int
+	FailureSignature *string
 }
 
 var serviceInstanceValidColumns = map[string]bool{
 	"restart_count": true, "last_health_check": true,
 	"started_at": true, "updated_at": true, "next_restart_at": true,
+	"failure_loop_count": true, "failure_signature": true,
 }
 
 func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates ServiceInstanceUpdate) error {
-	setParts := make([]string, 0, 6)
-	args := make([]any, 0, 6)
-	requestedColumns := make([]string, 0, 6)
+	setParts := make([]string, 0, 7)
+	args := make([]any, 0, 7)
+	requestedColumns := make([]string, 0, 7)
 
 	if updates.RestartCount != nil {
 		requestedColumns = append(requestedColumns, "restart_count")
@@ -772,6 +775,18 @@ func (db *DB) UpdateServiceInstance(ctx context.Context, name string, updates Se
 		requestedColumns = append(requestedColumns, "next_restart_at")
 		setParts = append(setParts, "next_restart_at = ?")
 		args = append(args, *updates.NextRestartAt)
+	}
+
+	if updates.FailureLoopCount != nil {
+		requestedColumns = append(requestedColumns, "failure_loop_count")
+		setParts = append(setParts, "failure_loop_count = ?")
+		args = append(args, *updates.FailureLoopCount)
+	}
+
+	if updates.FailureSignature != nil {
+		requestedColumns = append(requestedColumns, "failure_signature")
+		setParts = append(setParts, "failure_signature = ?")
+		args = append(args, *updates.FailureSignature)
 	}
 
 	if len(setParts) == 0 {

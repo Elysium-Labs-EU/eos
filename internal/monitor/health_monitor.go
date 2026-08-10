@@ -94,10 +94,17 @@ type monitorManager interface {
 var _ monitorManager = (*manager.LocalManager)(nil)
 
 type HealthMonitor struct {
-	mgr                       monitorManager
-	telemetry                 *otelx.Handles
-	lastMemSample             map[string]time.Time
-	lastCPUSample             map[string]cpuSample
+	mgr           monitorManager
+	telemetry     *otelx.Handles
+	lastMemSample map[string]time.Time
+	lastCPUSample map[string]cpuSample
+	// crashLoopLog tracks, per service, the collapsed-repeat log summary
+	// state used once a service has crossed the sustained-failure-loop
+	// threshold. Absent from the map means "not currently collapsing" —
+	// deleted whenever a service leaves the loop (a differing signature, or
+	// resetRestartCounterIfStable), so the next entry into a loop always
+	// starts by logging its first occurrence in full again.
+	crashLoopLog              map[string]*crashLoopLogState
 	db                        *database.DB
 	logger                    *slog.Logger
 	memory                    config.MemoryThresholdConfig
@@ -127,6 +134,7 @@ func NewHealthMonitor(
 		memSampleInterval:         hmResolvedMemSampleInterval(healthConfig.MemSampleInterval),
 		lastMemSample:             make(map[string]time.Time),
 		lastCPUSample:             make(map[string]cpuSample),
+		crashLoopLog:              make(map[string]*crashLoopLogState),
 		timeoutEnable:             healthConfig.Timeout.Enable,
 		timeoutLimit:              healthConfig.Timeout.Limit,
 		restartCounterResetWindow: healthConfig.RestartCounterResetWindow,
@@ -258,13 +266,13 @@ func (hm *HealthMonitor) hmFetchServiceState(ctx context.Context, serviceName st
 func (hm *HealthMonitor) hmDispatchByState(ctx context.Context, service *types.ServiceCatalogEntry, processHistoryEntry *types.ProcessHistory, instance *types.ServiceInstance) {
 	switch processHistoryEntry.State {
 	case types.ProcessStateStarting:
-		hm.checkStartProcess(ctx, service, processHistoryEntry, hm.timeoutLimit, hm.timeoutEnable)
+		hm.checkStartProcess(ctx, service, processHistoryEntry, instance, hm.timeoutLimit, hm.timeoutEnable)
 	case types.ProcessStateRunning:
 		hm.checkRunningProcess(ctx, service, processHistoryEntry, instance)
 	case types.ProcessStateFailed:
-		hm.checkFailedProcess(ctx, service, processHistoryEntry, instance.RestartCount)
+		hm.checkFailedProcess(ctx, service, processHistoryEntry, instance)
 	case types.ProcessStateUnknown:
-		hm.checkUnknownProcess(ctx, service, processHistoryEntry)
+		hm.checkUnknownProcess(ctx, service, processHistoryEntry, instance)
 	case types.ProcessStateStopped:
 	}
 }
@@ -273,6 +281,7 @@ func (hm *HealthMonitor) checkStartProcess(
 	ctx context.Context,
 	service *types.ServiceCatalogEntry,
 	process *types.ProcessHistory,
+	instance *types.ServiceInstance,
 	timeoutLimit time.Duration,
 	timeoutEnabled bool,
 ) {
@@ -281,16 +290,22 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	if !hm.isProcessAlive(pgid) {
 		hm.logger.Debug("startup check: process dead", "service", serviceName, "pgid", pgid)
-		hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelError, func() string {
+		hm.handleDeadProcessGroup(ctx, pgid, serviceName, instance, slog.LevelError, func() (string, string) {
 			lastLine, hadLastLine := hm.mgr.GetServiceLastErrorLine(serviceName, pgid)
-			return hmStartupDeathMessage(serviceName, pgid, lastLine, hadLastLine)
+			msg := hmStartupDeathMessage(serviceName, pgid, lastLine, hadLastLine)
+			signature := ""
+			if hadLastLine {
+				signature = lastLine
+			}
+			return msg, signature
 		})
 		return
 	}
 
 	if timeoutEnabled && hmStartupTimedOut(process.StartedAt, timeoutLimit) {
 		hm.logger.Debug("startup check: timeout exceeded", "service", serviceName, "elapsed", time.Since(*process.StartedAt))
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelWarn, fmt.Sprintf("[%s] taking too long to start", serviceName))
+		msg := fmt.Sprintf("[%s] taking too long to start", serviceName)
+		hm.markProcessFailed(ctx, pgid, serviceName, instance, slog.LevelWarn, msg, msg)
 		return
 	}
 
@@ -375,7 +390,7 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	pgid := process.PGID
 
 	if !hm.isProcessAlive(pgid) {
-		hm.handleLivenessFailure(ctx, pgid, serviceName)
+		hm.handleLivenessFailure(ctx, pgid, serviceName, instance)
 		return
 	}
 
@@ -387,7 +402,8 @@ func (hm *HealthMonitor) checkRunningProcess(ctx context.Context, service *types
 	}
 
 	if config.Port != 0 && !hm.isPortReachable(ctx, config.Port) {
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] is not reachable on port %d", serviceName, config.Port))
+		msg := fmt.Sprintf("[%s] is not reachable on port %d", serviceName, config.Port)
+		hm.markProcessFailed(ctx, pgid, serviceName, instance, slog.LevelError, msg, msg)
 		return
 	}
 
@@ -504,14 +520,18 @@ func ProbeReady(ctx context.Context, pgid int, startedAtTicks int64, port int) b
 // handleLivenessFailure marks a running-state process as failed because it is
 // no longer alive — unless it exited cleanly, in which case
 // handleDeadProcessGroup records it as Stopped instead.
-func (hm *HealthMonitor) handleLivenessFailure(ctx context.Context, pgid int, serviceName string) {
-	hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelError, func() string {
-		return fmt.Sprintf("[%s] is not running", serviceName)
+func (hm *HealthMonitor) handleLivenessFailure(ctx context.Context, pgid int, serviceName string, instance *types.ServiceInstance) {
+	hm.handleDeadProcessGroup(ctx, pgid, serviceName, instance, slog.LevelError, func() (string, string) {
+		msg := fmt.Sprintf("[%s] is not running", serviceName)
+		return msg, msg
 	})
 }
 
 // resetRestartCounterIfStable zeroes the restart counter once a service has stayed
 // up past the reset window, so a single flaky restart doesn't count against future backoff.
+// A service that stayed up this long has, by definition, stopped failing — so this is also
+// the signal that clears the sustained-failure-loop state (FailureLoopCount/FailureSignature
+// and the in-memory log-collapse state), not just RestartCount.
 func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, serviceName string, process *types.ProcessHistory, instance *types.ServiceInstance) {
 	if instance.RestartCount == 0 || hm.restartCounterResetWindow <= 0 || process.StartedAt == nil {
 		return
@@ -521,10 +541,16 @@ func (hm *HealthMonitor) resetRestartCounterIfStable(ctx context.Context, servic
 	}
 
 	zero := 0
-	if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{RestartCount: &zero}); err != nil {
+	emptySignature := ""
+	if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{
+		RestartCount:     &zero,
+		FailureLoopCount: &zero,
+		FailureSignature: &emptySignature,
+	}); err != nil {
 		hm.logger.Error("failed to reset restart counter", "service", serviceName, "error", err)
 		return
 	}
+	delete(hm.crashLoopLog, serviceName)
 	hm.logger.Info(fmt.Sprintf("[%s] restart counter reset after stable uptime", serviceName))
 	hm.logger.Debug("restart counter reset", "service", serviceName, "uptime", time.Since(*process.StartedAt))
 }
@@ -631,7 +657,7 @@ func cpuPctPtr(cpuPct float64, sampled bool) *float64 {
 	return &cpuPct
 }
 
-func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int) {
+func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance) {
 	serviceName := service.Name
 	pgid := process.PGID
 	configPath := filepath.Join(service.DirectoryPath, service.ConfigFileName)
@@ -643,7 +669,7 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 	}
 
 	if !hm.isProcessAlive(pgid) {
-		hm.hmAttemptFailedRestart(ctx, service, process, restartCount, config.Port)
+		hm.hmAttemptFailedRestart(ctx, service, process, instance, config.Port)
 		return
 	}
 
@@ -652,12 +678,15 @@ func (hm *HealthMonitor) checkFailedProcess(ctx context.Context, service *types.
 
 // hmAttemptFailedRestart restarts a dead, Failed-state process once backoff
 // allows it, surfacing any restart error through handleRestartFailure.
-func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, restartCount int, configPort int) {
+func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance, configPort int) {
 	serviceName := service.Name
 	pgid := process.PGID
+	restartCount := instance.RestartCount
+	backoffConfig := hm.effectiveBackoff(instance)
+	inLoop := instance.FailureLoopCount >= config.HealthCrashLoopThreshold
 
 	// TODO: Do we want to incorporate instance.last_health_check instead process?
-	if !canRestart(restartCount, process.StoppedAt, hm.backoff) {
+	if !canRestart(restartCount, process.StoppedAt, backoffConfig) {
 		hm.logger.Debug("restart deferred", "service", serviceName, "count", restartCount)
 		return
 	}
@@ -670,17 +699,29 @@ func (hm *HealthMonitor) hmAttemptFailedRestart(ctx context.Context, service *ty
 
 	errorString := hmRestartingMessage(serviceName, configPort)
 
-	backoff := calculateBackoffDelay(restartCount, hm.backoff.BaseMs, hm.backoff.MaxMs)
+	backoff := calculateBackoffDelay(restartCount, backoffConfig.BaseMs, backoffConfig.MaxMs)
 	hm.logger.Debug("scheduling restart", "service", serviceName, "attempt", restartCount+1, "backoff", backoff)
 	hm.logger.Info(errorString)
-	if err := hm.mgr.LogToServiceStderr(serviceName, errorString); err != nil {
-		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)
-	}
+	hm.logCrashLoopAware(serviceName, errorString, inLoop)
 	_, err := hm.mgr.RestartService(ctx, serviceName, hm.shutdownGracePeriod, 200*time.Millisecond)
 
 	if err != nil {
 		hm.handleRestartFailure(ctx, serviceName, pgid, restartCount, err, lastErrLine, hadLastErrLine)
 	}
+}
+
+// effectiveBackoff widens the restart backoff ceiling once a service has
+// crossed HealthCrashLoopThreshold: retrying every minute against a cause
+// that keeps recurring identically buys nothing, so the ceiling opens to
+// HealthCrashLoopMaxMs instead of hm.backoff.MaxMs. Below the threshold this
+// returns hm.backoff unchanged.
+func (hm *HealthMonitor) effectiveBackoff(instance *types.ServiceInstance) config.BackoffConfig {
+	if instance.FailureLoopCount < config.HealthCrashLoopThreshold {
+		return hm.backoff
+	}
+	widened := hm.backoff
+	widened.MaxMs = config.HealthCrashLoopMaxMs
+	return widened
 }
 
 func hmRestartingMessage(serviceName string, configPort int) string {
@@ -748,13 +789,14 @@ func hmRestartFailedMessage(serviceName string, restartErr error, lastErrLine st
 	return fmt.Sprintf("[%s] restart failed: %v", serviceName, restartErr)
 }
 
-func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory) {
+func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types.ServiceCatalogEntry, process *types.ProcessHistory, instance *types.ServiceInstance) {
 	serviceName := service.Name
 	pgid := process.PGID
 
 	if !hm.isProcessAlive(pgid) {
-		hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelWarn, func() string {
-			return fmt.Sprintf("[%s] is not running", serviceName)
+		hm.handleDeadProcessGroup(ctx, pgid, serviceName, instance, slog.LevelWarn, func() (string, string) {
+			msg := fmt.Sprintf("[%s] is not running", serviceName)
+			return msg, msg
 		})
 		return
 	}
@@ -799,11 +841,12 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 // build (e.g. checkStartProcess's stderr scan for a crash reason) only runs
 // when the process didn't just exit clean — the common case for the exact
 // service shape this exists for.
-func (hm *HealthMonitor) handleDeadProcessGroup(ctx context.Context, pgid int, serviceName string, level slog.Level, failMsg func() string) {
+func (hm *HealthMonitor) handleDeadProcessGroup(ctx context.Context, pgid int, serviceName string, instance *types.ServiceInstance, level slog.Level, failMsg func() (message, signature string)) {
 	if hm.markProcessStoppedIfCleanExit(ctx, serviceName, pgid) {
 		return
 	}
-	hm.markProcessFailed(ctx, pgid, serviceName, level, failMsg())
+	message, signature := failMsg()
+	hm.markProcessFailed(ctx, pgid, serviceName, instance, level, message, signature)
 }
 
 // markProcessStoppedIfCleanExit checks whether pgid's reaped exit code is a
@@ -842,15 +885,20 @@ func (hm *HealthMonitor) markProcessStoppedIfCleanExit(ctx context.Context, serv
 	return true
 }
 
-func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, level slog.Level, errorString string) {
+// markProcessFailed records a process-history transition into Failed and
+// updates the service's sustained-failure-loop tracking: signature compares
+// this failure's cause against the previous one to bump or reset
+// FailureLoopCount, and the resulting in-loop state decides whether
+// errorString is logged in full or folded into a collapsed-repeat summary
+// (see updateFailureLoopState, logCrashLoopAware).
+func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, instance *types.ServiceInstance, level slog.Level, errorString, signature string) {
 	hm.logger.Log(ctx, level, errorString)
 	hm.logger.Debug("state to Failed", "service", serviceName, "pgid", pgid)
-	err := hm.mgr.LogToServiceStderr(serviceName, errorString)
-	if err != nil {
-		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)
-	}
 
-	err = hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+	inLoop := hm.updateFailureLoopState(ctx, serviceName, instance, signature)
+	hm.logCrashLoopAware(serviceName, errorString, inLoop)
+
+	err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
 		State:       new(types.ProcessStateFailed),
 		StoppedAt:   new(time.Now()),
 		RssMemoryKb: new(int64(0)),
@@ -858,6 +906,75 @@ func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, servic
 	})
 	if err != nil {
 		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
+	}
+}
+
+// updateFailureLoopState compares this failure's signature against the
+// service's last one, bumping FailureLoopCount on a match and resetting it to
+// 1 (or 0 for an uncaptured cause) on anything else, then reports whether the
+// service has now crossed HealthCrashLoopThreshold. An empty signature never
+// matches — without a captured cause there's no basis to call two failures
+// "the same", so an uncaptured failure can never itself start or extend a loop.
+func (hm *HealthMonitor) updateFailureLoopState(ctx context.Context, serviceName string, instance *types.ServiceInstance, signature string) bool {
+	next := 0
+	if signature != "" {
+		next = 1
+		if signature == instance.FailureSignature {
+			next = instance.FailureLoopCount + 1
+		}
+	}
+	if err := hm.db.UpdateServiceInstance(ctx, serviceName, database.ServiceInstanceUpdate{
+		FailureLoopCount: &next,
+		FailureSignature: &signature,
+	}); err != nil {
+		hm.logger.Error("failed to update failure loop state", "service", serviceName, "error", err)
+	}
+	return next >= config.HealthCrashLoopThreshold
+}
+
+// crashLoopLogState tracks the collapsed-repeat log summary window for one
+// service currently in a sustained failure loop: how many breadcrumbs have
+// been suppressed since windowStart, the point at which the next summary
+// line flushes.
+type crashLoopLogState struct {
+	windowStart time.Time
+	suppressed  int
+}
+
+// logCrashLoopAware writes message to the service's error log directly when
+// the service isn't (or is no longer) in a sustained failure loop. Once in a
+// loop, it logs only the first occurrence in full, then collapses every
+// further breadcrumb into a periodic "repeated N times" summary instead of
+// repeating the same lines forever — the second half of what turned 933
+// identical restarts into a log that carried no information at all.
+func (hm *HealthMonitor) logCrashLoopAware(serviceName, message string, inLoop bool) {
+	if !inLoop {
+		delete(hm.crashLoopLog, serviceName)
+		hm.writeServiceStderr(serviceName, message)
+		return
+	}
+
+	state, collapsing := hm.crashLoopLog[serviceName]
+	if !collapsing {
+		hm.crashLoopLog[serviceName] = &crashLoopLogState{windowStart: time.Now()}
+		hm.writeServiceStderr(serviceName, message)
+		return
+	}
+
+	state.suppressed++
+	if time.Since(state.windowStart) < config.HealthCrashLoopLogSummaryInterval {
+		return
+	}
+
+	summary := fmt.Sprintf("[%s] repeated %d times in the last %s: %s", serviceName, state.suppressed, time.Since(state.windowStart).Round(time.Second), message)
+	hm.writeServiceStderr(serviceName, summary)
+	state.windowStart = time.Now()
+	state.suppressed = 0
+}
+
+func (hm *HealthMonitor) writeServiceStderr(serviceName, message string) {
+	if err := hm.mgr.LogToServiceStderr(serviceName, message); err != nil {
+		hm.logger.Error(logFailedLogServiceErrOutput, "service", serviceName, "error", err)
 	}
 }
 
