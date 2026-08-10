@@ -79,6 +79,11 @@ type monitorManager interface {
 	// GetServiceLastErrorLine returns the crash-reason line captured from
 	// pgid's own stderr, or ok=false if none is available.
 	GetServiceLastErrorLine(serviceName string, pgid int) (line string, ok bool)
+	// GetServiceExitCode returns the exit code the reaper captured for a pgid
+	// that has finished, or ok=false if none has been recorded yet (the
+	// reaper hasn't run, or the process crashed in a way no exit status could
+	// be read).
+	GetServiceExitCode(pgid int) (code int, ok bool)
 	// IsReloadInProgress reports whether a zero-downtime reload currently owns
 	// the named service's lifecycle. The monitor suspends its own action for a
 	// service while this is true, so a reload's crash-on-start incoming instance
@@ -276,8 +281,10 @@ func (hm *HealthMonitor) checkStartProcess(
 
 	if !hm.isProcessAlive(pgid) {
 		hm.logger.Debug("startup check: process dead", "service", serviceName, "pgid", pgid)
-		lastLine, hadLastLine := hm.mgr.GetServiceLastErrorLine(serviceName, pgid)
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, hmStartupDeathMessage(serviceName, pgid, lastLine, hadLastLine))
+		hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelError, func() string {
+			lastLine, hadLastLine := hm.mgr.GetServiceLastErrorLine(serviceName, pgid)
+			return hmStartupDeathMessage(serviceName, pgid, lastLine, hadLastLine)
+		})
 		return
 	}
 
@@ -494,9 +501,13 @@ func ProbeReady(ctx context.Context, pgid int, startedAtTicks int64, port int) b
 	return portReachable(ctx, port)
 }
 
-// handleLivenessFailure marks a running-state process as failed because it is no longer alive.
+// handleLivenessFailure marks a running-state process as failed because it is
+// no longer alive — unless it exited cleanly, in which case
+// handleDeadProcessGroup records it as Stopped instead.
 func (hm *HealthMonitor) handleLivenessFailure(ctx context.Context, pgid int, serviceName string) {
-	hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelError, fmt.Sprintf("[%s] is not running", serviceName))
+	hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelError, func() string {
+		return fmt.Sprintf("[%s] is not running", serviceName)
+	})
 }
 
 // resetRestartCounterIfStable zeroes the restart counter once a service has stayed
@@ -742,7 +753,9 @@ func (hm *HealthMonitor) checkUnknownProcess(ctx context.Context, service *types
 	pgid := process.PGID
 
 	if !hm.isProcessAlive(pgid) {
-		hm.markProcessFailed(ctx, pgid, serviceName, slog.LevelWarn, fmt.Sprintf("[%s] is not running", serviceName))
+		hm.handleDeadProcessGroup(ctx, pgid, serviceName, slog.LevelWarn, func() string {
+			return fmt.Sprintf("[%s] is not running", serviceName)
+		})
 		return
 	}
 	hm.markProcessRunning(ctx, pgid, serviceName, process.PeakRssMemoryKb)
@@ -775,6 +788,58 @@ func (hm *HealthMonitor) markProcessRunning(ctx context.Context, pgid int, servi
 	if err != nil {
 		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
 	}
+}
+
+// handleDeadProcessGroup is the single entry point for every place that
+// observes isProcessAlive(pgid) == false: it decides Stopped vs Failed and
+// performs whichever write applies, so a dead-process-group branch can never
+// be added (or, as happened once already, a third one found already
+// existing) that forgets to consult the exit code before declaring a crash.
+// failMsg is a thunk rather than a plain string so the Failed path's message
+// build (e.g. checkStartProcess's stderr scan for a crash reason) only runs
+// when the process didn't just exit clean — the common case for the exact
+// service shape this exists for.
+func (hm *HealthMonitor) handleDeadProcessGroup(ctx context.Context, pgid int, serviceName string, level slog.Level, failMsg func() string) {
+	if hm.markProcessStoppedIfCleanExit(ctx, serviceName, pgid) {
+		return
+	}
+	hm.markProcessFailed(ctx, pgid, serviceName, level, failMsg())
+}
+
+// markProcessStoppedIfCleanExit checks whether pgid's reaped exit code is a
+// clean zero and, if so, records it as Stopped instead of the caller falling
+// through to markProcessFailed. This is what keeps a one-shot command with no
+// server to keep running (a build step with no `port:` in its service.yaml,
+// say) from being logged as "died" and endlessly restarted for having
+// finished successfully: eos has no separate service type for "runs once and
+// exits", so the only signal available to tell that apart from an actual
+// crash is the exit code itself. ok=false (no exit code known yet) is treated
+// the same as a nonzero one — the caller's existing Failed path — rather than
+// guessing, since that is the behavior already in place today. Not called
+// directly by health-check dispatch code; go through handleDeadProcessGroup
+// instead, which is the one place callers should reach for.
+func (hm *HealthMonitor) markProcessStoppedIfCleanExit(ctx context.Context, serviceName string, pgid int) bool {
+	code, ok := hm.mgr.GetServiceExitCode(pgid)
+	if !ok || code != 0 {
+		return false
+	}
+
+	msg := fmt.Sprintf("[%s] completed (PGID %d)", serviceName, pgid)
+	hm.logger.Info(msg)
+	if logErr := hm.mgr.LogToServiceStdout(serviceName, msg); logErr != nil {
+		hm.logger.Error(logFailedLogServiceOutput, "service", serviceName, "error", logErr)
+	}
+
+	err := hm.db.UpdateProcessHistoryEntry(ctx, pgid, database.ProcessHistoryUpdate{
+		State:       new(types.ProcessStateStopped),
+		StoppedAt:   new(time.Now()),
+		RssMemoryKb: new(int64(0)),
+		Error:       new(""),
+	})
+	if err != nil {
+		hm.logger.Error(logFailedUpdateProcessHistory, "service", serviceName, "error", err)
+	}
+	return true
 }
 
 func (hm *HealthMonitor) markProcessFailed(ctx context.Context, pgid int, serviceName string, level slog.Level, errorString string) {

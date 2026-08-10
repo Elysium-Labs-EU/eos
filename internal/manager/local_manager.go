@@ -56,7 +56,15 @@ type LocalManager struct {
 	logWriters   map[string]*sharedLogWriter
 	logger       *slog.Logger
 	sinkRegistry map[string]types.LogSink
-	baseDir      string
+	// exitCodes holds the exit code captureIdentity's reaper goroutine
+	// observed for a pgid that has already been reaped, keyed by pgid so a
+	// caller who only has the PGID (the health monitor, which never sees the
+	// exec.Cmd) can still learn how a process it just found dead actually
+	// exited. GetServiceExitCode consumes (deletes) the entry it returns, so
+	// this stays bounded by in-flight deaths rather than growing with total
+	// restarts over the daemon's lifetime. exitCodesMu guards the map.
+	exitCodes map[int]int
+	baseDir   string
 	// serviceWg tracks the async cmd.Wait() reaper goroutine launched for
 	// every started service (see captureIdentity). WaitServices blocks until
 	// every launched service has actually exited: without this, a caller that
@@ -78,6 +86,8 @@ type LocalManager struct {
 	logWritersMu        sync.Mutex
 	// reloadMu guards reloadInProgress.
 	reloadMu sync.Mutex
+	// exitCodesMu guards exitCodes.
+	exitCodesMu sync.Mutex
 }
 
 // sharedLogWriter is a reference-counted RotatingFileWriter: refs tracks how
@@ -311,7 +321,7 @@ func WithShutdownGracePeriod(d time.Duration) LocalManagerOption {
 }
 
 func NewLocalManager(db *database.DB, baseDir string, ctx context.Context, logger *slog.Logger, opts ...LocalManagerOption) *LocalManager {
-	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex), logWriters: make(map[string]*sharedLogWriter), reloadInProgress: make(map[string]bool)}
+	m := &LocalManager{db: db, baseDir: baseDir, ctx: ctx, logger: logger, executor: osExecutor{}, telemetry: otelx.NoopHandles(), serviceLocks: make(map[string]*sync.Mutex), logWriters: make(map[string]*sharedLogWriter), reloadInProgress: make(map[string]bool), exitCodes: make(map[int]int)}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -807,8 +817,37 @@ func (m *LocalManager) captureIdentity(cmd *exec.Cmd) (pgid int, startedAtTicks 
 	}
 	m.serviceWg.Go(func() {
 		_ = cmd.Wait()
+		// ProcessState is nil only when the daemon's own SIGCHLD-driven Wait4(-1,
+		// WNOHANG) loop (internal/process/daemon.go) won the reap race for this
+		// child instead of this Wait() call — cmd.Wait() then returns ECHILD with
+		// no state to read. That race is lost by this path almost never in
+		// practice (this Wait() is woken directly by the kernel's own child-exit
+		// notification, ahead of the daemon's signal-delivery round trip), so
+		// skipping the capture here just falls back to the pre-existing
+		// liveness-only behavior for that rare case rather than risking a panic.
+		if cmd.ProcessState == nil {
+			return
+		}
+		m.exitCodesMu.Lock()
+		m.exitCodes[pgid] = cmd.ProcessState.ExitCode()
+		m.exitCodesMu.Unlock()
 	})
 	return pgid, startedAtTicks, nil
+}
+
+// GetServiceExitCode returns the exit code captureIdentity's reaper goroutine
+// observed for pgid, consuming (deleting) the entry so a later, unrelated
+// death of a recycled pgid can't read a stale value. ok=false means no exit
+// has been recorded for this pgid yet — the reaper hasn't run, or nothing
+// was ever captured for it (see captureIdentity).
+func (m *LocalManager) GetServiceExitCode(pgid int) (code int, ok bool) {
+	m.exitCodesMu.Lock()
+	defer m.exitCodesMu.Unlock()
+	code, ok = m.exitCodes[pgid]
+	if ok {
+		delete(m.exitCodes, pgid)
+	}
+	return code, ok
 }
 
 // reconcileStartHistory scans prior process history before a start. It errors
