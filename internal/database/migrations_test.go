@@ -208,12 +208,14 @@ func verifyTableStructure(t *testing.T, db *sql.DB) {
 	// Verify service_instances columns
 	t.Run("service_instances_structure", func(t *testing.T) {
 		expectedColumns := map[string]bool{
-			"name":              false,
-			"restart_count":     false,
-			"last_health_check": false,
-			"created_at":        false,
-			"started_at":        false,
-			"updated_at":        false,
+			"name":               false,
+			"restart_count":      false,
+			"last_health_check":  false,
+			"created_at":         false,
+			"started_at":         false,
+			"updated_at":         false,
+			"failure_loop_count": false,
+			"failure_signature":  false,
 		}
 
 		rows, err := db.Query(`PRAGMA table_info(service_instances)`)

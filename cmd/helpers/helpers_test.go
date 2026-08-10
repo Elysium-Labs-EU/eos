@@ -6,8 +6,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+func TestInFailureLoop(t *testing.T) {
+	tests := []struct {
+		instance *types.ServiceInstance
+		name     string
+		want     bool
+	}{
+		{name: "nil instance", instance: nil, want: false},
+		{name: "below threshold", instance: &types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold - 1}, want: false},
+		{name: "at threshold", instance: &types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold}, want: true},
+		{name: "above threshold", instance: &types.ServiceInstance{FailureLoopCount: config.HealthCrashLoopThreshold + 1}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := InFailureLoop(tt.instance); got != tt.want {
+				t.Errorf("InFailureLoop(%+v) = %v, want %v", tt.instance, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestDetermineServiceStatus(t *testing.T) {
 	tests := []struct {

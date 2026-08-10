@@ -98,6 +98,36 @@ func TestAPIStatusBuildServiceEntrySurfacesLiveOrphan(t *testing.T) {
 	}
 }
 
+func TestAPIStatusBuildServiceEntrySurfacesCrashLoop(t *testing.T) {
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	mgr := &apiStatusFakeManager{
+		processEntry: &types.ProcessHistory{State: types.ProcessStateFailed, PGID: 100},
+		instance:     &types.ServiceInstance{FailureLoopCount: 5, FailureSignature: "npm: not found"},
+	}
+	entry, err := apiStatusBuildServiceEntry(t.Context(), mgr, &reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Status != types.ServiceStatusCrashLoop {
+		t.Errorf("expected status crashloop, got %q", entry.Status)
+	}
+}
+
+func TestAPIStatusBuildServiceEntryBelowThresholdStaysFailed(t *testing.T) {
+	reg := types.ServiceCatalogEntry{Name: "svc"}
+	mgr := &apiStatusFakeManager{
+		processEntry: &types.ProcessHistory{State: types.ProcessStateFailed, PGID: 100},
+		instance:     &types.ServiceInstance{FailureLoopCount: 4, FailureSignature: "npm: not found"},
+	}
+	entry, err := apiStatusBuildServiceEntry(t.Context(), mgr, &reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Status != types.ServiceStatusFailed {
+		t.Errorf("expected status failed below threshold, got %q", entry.Status)
+	}
+}
+
 func TestAPIStatusCollectServicesPropagatesEntryError(t *testing.T) {
 	wantErr := errors.New("boom")
 	catalog := []types.ServiceCatalogEntry{{Name: "svc"}}

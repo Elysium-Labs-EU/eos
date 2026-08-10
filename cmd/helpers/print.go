@@ -16,6 +16,8 @@ func PrintStatus(status types.ServiceStatus) string {
 		return ui.TextMuted.Render("stopped")
 	case types.ServiceStatusFailed:
 		return ui.LabelError.Render("failed")
+	case types.ServiceStatusCrashLoop:
+		return ui.LabelError.Render("crashloop")
 	case types.ServiceStatusStarting:
 		return ui.LabelInfo.Render("starting")
 	case types.ServiceStatusWaitingForDeps:
