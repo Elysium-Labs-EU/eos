@@ -29,3 +29,9 @@ func platformStartTime(pid int) (int64, error) {
 func platformCPUTime(pgid int) (time.Duration, error) {
 	return 0, fmt.Errorf("process cpu time not supported on %s", runtime.GOOS)
 }
+
+// platformReadEnviron has no implementation outside Linux, the only platform
+// with a /proc/<pid>/environ to read.
+func platformReadEnviron(pid int) ([]string, error) {
+	return nil, fmt.Errorf("process environment not supported on %s", runtime.GOOS)
+}
