@@ -4,6 +4,7 @@ package procutil
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -43,6 +44,16 @@ func platformStartTime(pid int) (int64, error) {
 	}
 	starttime := kp.Proc.P_starttime
 	return int64(starttime.Sec)*1_000_000 + int64(starttime.Usec), nil
+}
+
+// platformReadEnviron has no implementation on macOS: unlike start time and
+// CPU usage, a process's environment isn't exposed through a plain sysctl —
+// reading it needs the KERN_PROCARGS2 call plus argv/envp-boundary parsing,
+// and only works for a process owned by the caller's own UID (or root). eos
+// only supervises services as a systemd-managed Linux daemon in production;
+// macOS is the local-dev/test target, where this is out of scope.
+func platformReadEnviron(_ int) ([]string, error) {
+	return nil, fmt.Errorf("reading process environment not supported on %s", runtime.GOOS)
 }
 
 // procInfoCallPIDRUsage and rusageInfoV0 are the __proc_info call number and

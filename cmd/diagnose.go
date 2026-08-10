@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,10 +22,18 @@ import (
 	"github.com/Elysium-Labs-EU/eos/internal/config"
 	"github.com/Elysium-Labs-EU/eos/internal/manager"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
+	"github.com/Elysium-Labs-EU/eos/internal/procutil"
 	"github.com/Elysium-Labs-EU/eos/internal/types"
 	"github.com/Elysium-Labs-EU/eos/internal/ui"
 	"github.com/spf13/cobra"
 )
+
+// diagnoseReadEnviron is a seam over procutil.ReadEnviron so tests can
+// simulate a process's environment deterministically — procutil.ReadEnviron
+// only has a working implementation on Linux (see procutil_linux.go), so a
+// direct call would leave the collectors below untested on any other
+// platform this is developed and CI'd on.
+var diagnoseReadEnviron = procutil.ReadEnviron
 
 // diagnoseOptions carries the resolved --since/--lines/--output/--include-env/
 // --no-service-logs flag values through to runDiagnose.
@@ -94,6 +103,34 @@ type diagnoseDaemonInfo struct {
 	Running bool   `json:"running"`
 }
 
+// diagnoseEnvVar is one entry in an allowlist-redacted environment snapshot.
+// Only names in diagnoseEnvAllowlist ever carry a Value; every other key is
+// reported present, with its value withheld, so the bundle still shows the
+// shape of the environment without risking a leaked secret.
+type diagnoseEnvVar struct {
+	Name     string `json:"name"`
+	Value    string `json:"value,omitempty"`
+	Withheld bool   `json:"withheld,omitempty"`
+}
+
+// diagnoseDaemonEnvInfo is daemon-env.json: the daemon process's own
+// environment -- the layer buildEnvironment (internal/manager) starts from
+// before layering runtime.path and each service's env_file on top. It is not
+// a per-service fact, so it is collected once, independent of any service.
+type diagnoseDaemonEnvInfo struct {
+	Vars []diagnoseEnvVar `json:"vars"`
+}
+
+// diagnoseServiceEnvInfo is one entry in service-env.json: the resolved PATH
+// a running service actually received, read from its own live process
+// rather than inferred from service.yaml -- the two differ whenever
+// runtime.path is set, since buildEnvironment prepends it onto the daemon's
+// own PATH before launch.
+type diagnoseServiceEnvInfo struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
 func newDiagnoseCmd() *cobra.Command {
 	var opts diagnoseOptions
 
@@ -121,6 +158,15 @@ The manager used to read this state is acquired the same way --no-daemon
 does — the state DB is opened directly off disk, never through the daemon
 socket — so running this command never starts the very daemon whose failure
 it might be diagnosing.
+
+daemon-env.json and service-env.json are always collected: the daemon
+process's own environment and each running service's resolved PATH, read
+from the live processes themselves rather than inferred from config. Both
+are allowlist-redacted (PATH, HOME, USER, SHELL, LANG, PWD, and the
+variables systemd sets) -- a name outside that allowlist is listed with its
+value withheld, never dropped, so the bundle still shows the shape of the
+environment without risking a leaked secret. This is different from
+--include-env, which dumps each service's configured env_file unredacted.
 
 --include-env writes a raw, unredacted dump of each service's resolved
 env_file. It is never included by default: do not attach that output to a
@@ -225,9 +271,17 @@ func diagnoseCollect(ctx context.Context, mgr manager.ServiceManager, baseDir st
 	manifest.Steps = append(manifest.Steps, daemonStep)
 	files = append(files, diagnoseJSONFile("daemon.json", daemonInfo))
 
+	daemonEnvInfo, daemonEnvStep := diagnoseCollectDaemonEnv(daemonInfo.Pid)
+	manifest.Steps = append(manifest.Steps, daemonEnvStep)
+	files = append(files, diagnoseJSONFile("daemon-env.json", daemonEnvInfo))
+
 	registeredServices, services, serviceSteps := diagnoseCollectServices(ctx, mgr)
 	manifest.Steps = append(manifest.Steps, serviceSteps...)
 	files = append(files, diagnoseJSONFile("services.json", services))
+
+	serviceEnvFiles, serviceEnvSteps := diagnoseCollectServiceEnv(ctx, mgr, registeredServices)
+	manifest.Steps = append(manifest.Steps, serviceEnvSteps...)
+	files = append(files, serviceEnvFiles...)
 
 	daemonLogFile, daemonLogStep := diagnoseCollectDaemonLog(ctx, baseDir, daemon, opts)
 	manifest.Steps = append(manifest.Steps, daemonLogStep)
@@ -531,6 +585,120 @@ func diagnoseCollectEnv(registeredServices []types.ServiceCatalogEntry) ([]diagn
 	}
 
 	return files, steps
+}
+
+// diagnoseEnvAllowlist is the fixed set of environment variable names safe
+// to write unredacted into a diagnose bundle: standard shell/session
+// variables plus every variable systemd sets on a unit's own process (see
+// systemd.exec(5), "Environment Variables in Spawned Processes"). An
+// allowlist is preferable to a pattern-based scrub here: unlike log content,
+// which is arbitrary and unknowable in advance, environment variable names
+// are a fixed, known vocabulary, so a positive list is possible. PATH alone
+// answers "is this a PATH problem"; anything not on this list is reported
+// present but withheld, never dropped, so the bundle still shows the shape
+// of the environment.
+var diagnoseEnvAllowlist = map[string]bool{
+	"PATH":  true,
+	"HOME":  true,
+	"USER":  true,
+	"SHELL": true,
+	"LANG":  true,
+	"PWD":   true,
+	// systemd.exec(5): variables systemd sets on every spawned process.
+	"INVOCATION_ID":   true,
+	"JOURNAL_STREAM":  true,
+	"MANAGERPID":      true,
+	"LISTEN_PID":      true,
+	"LISTEN_FDS":      true,
+	"LISTEN_FDNAMES":  true,
+	"NOTIFY_SOCKET":   true,
+	"XDG_RUNTIME_DIR": true,
+}
+
+// diagnoseRedactEnviron converts a raw "KEY=VALUE" environment (as read from
+// /proc/<pid>/environ) into an allowlist-redacted, name-sorted snapshot.
+func diagnoseRedactEnviron(env []string) []diagnoseEnvVar {
+	vars := make([]diagnoseEnvVar, 0, len(env))
+	for _, kv := range env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if diagnoseEnvAllowlist[name] {
+			vars = append(vars, diagnoseEnvVar{Name: name, Value: value})
+		} else {
+			vars = append(vars, diagnoseEnvVar{Name: name, Withheld: true})
+		}
+	}
+	sort.Slice(vars, func(i, j int) bool { return vars[i].Name < vars[j].Name })
+	return vars
+}
+
+// diagnoseCollectDaemonEnv reads the daemon process's own environment via
+// diagnoseReadEnviron, using the pid diagnoseCollectDaemonInfo already
+// resolved. Unlike --include-env, this runs unconditionally: a
+// withheld-value environment carries no secret, and the whole point is that
+// the person reading a bundle should never have to ask for a second one
+// with the right flag just to see the daemon's PATH.
+func diagnoseCollectDaemonEnv(daemonPid *int) (diagnoseDaemonEnvInfo, diagnoseStepResult) {
+	if daemonPid == nil {
+		return diagnoseDaemonEnvInfo{}, diagnoseStepResult{Name: "daemon-env", Captured: false, Error: "daemon pid unavailable"}
+	}
+	raw, err := diagnoseReadEnviron(*daemonPid)
+	if err != nil {
+		return diagnoseDaemonEnvInfo{}, diagnoseStepResult{Name: "daemon-env", Captured: false, Error: err.Error()}
+	}
+	return diagnoseDaemonEnvInfo{Vars: diagnoseRedactEnviron(raw)}, diagnoseStepResult{Name: "daemon-env", Captured: true}
+}
+
+// diagnoseCollectServiceEnv reads each running service's own resolved PATH
+// straight from its live process, so a "command not found" failure can be
+// diffed against daemon-env.json's PATH instead of re-derived by hand from
+// service.yaml plus runtime config. eos launches every service as its own
+// process group leader (Setpgid: true), so the PGID stored in process
+// history doubles as that leader's own pid -- the same convention
+// procutil.IsAliveMatching already relies on elsewhere. A service with no
+// live, matching process (stopped, never started, or its PGID has since been
+// recycled by an unrelated process) is skipped, not reported as a failure:
+// that's the expected state of a stopped service, not a collection error.
+func diagnoseCollectServiceEnv(ctx context.Context, mgr manager.ServiceManager, registeredServices []types.ServiceCatalogEntry) ([]diagnoseFile, []diagnoseStepResult) {
+	var entries []diagnoseServiceEnvInfo
+	var steps []diagnoseStepResult
+
+	for i := range registeredServices {
+		name := registeredServices[i].Name
+		stepName := "service-env:" + name
+
+		proc, err := mgr.GetMostRecentProcessHistoryEntry(ctx, name)
+		if err != nil {
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: err.Error()})
+			continue
+		}
+		if !procutil.IsAliveMatching(proc.PGID, proc.StartedAtTicks) {
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: "service not running"})
+			continue
+		}
+		raw, err := diagnoseReadEnviron(proc.PGID)
+		if err != nil {
+			steps = append(steps, diagnoseStepResult{Name: stepName, Captured: false, Error: err.Error()})
+			continue
+		}
+		entries = append(entries, diagnoseServiceEnvInfo{Name: name, Path: diagnoseExtractPathVar(raw)})
+		steps = append(steps, diagnoseStepResult{Name: stepName, Captured: true})
+	}
+
+	return []diagnoseFile{diagnoseJSONFile("service-env.json", entries)}, steps
+}
+
+// diagnoseExtractPathVar returns the PATH value from a raw "KEY=VALUE"
+// environment, or "" if unset.
+func diagnoseExtractPathVar(env []string) string {
+	for _, kv := range env {
+		if name, value, ok := strings.Cut(kv, "="); ok && name == "PATH" {
+			return value
+		}
+	}
+	return ""
 }
 
 func diagnoseErrString(err error, fallback string) string {

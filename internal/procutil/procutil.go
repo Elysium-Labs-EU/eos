@@ -56,6 +56,14 @@ func CPUTime(pgid int) (time.Duration, error) {
 	return platformCPUTime(pgid)
 }
 
+// ReadEnviron returns pid's own environment, one "KEY=VALUE" entry per
+// element, exactly as the kernel recorded it at process start — not
+// anything reconstructed from a config file or launch-time computation a
+// caller might otherwise infer it from.
+func ReadEnviron(pid int) ([]string, error) {
+	return platformReadEnviron(pid)
+}
+
 // IsAliveMatching reports whether pgid is alive and is plausibly the same
 // process group that was started at startedAtTicks (as previously returned
 // by StartTime for the same pgid) — ruling out a kernel PGID recycle into an
