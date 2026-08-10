@@ -9,6 +9,7 @@ All notable changes to eos are documented here.
 - Bound crash-reason line to pgid, prefer error lines (#254) ([`002f930`](https://github.com/Elysium-Labs-EU/eos/commit/002f9303d638f028b3126e8d9fd32863333a8ade))
 - Do not treat a clean exit-0 as a startup crash (#259) ([`dbb5a41`](https://github.com/Elysium-Labs-EU/eos/commit/dbb5a4168530b2fd5c36fe88ab1de955cb258367))
 - Local mode blocks and supervises instead of returning (#268) ([`ea16772`](https://github.com/Elysium-Labs-EU/eos/commit/ea16772cfb52f748e8c7ee3fa0539816ea9e0770))
+- Preflight the command in the launch environment (#271) ([`ccda73e`](https://github.com/Elysium-Labs-EU/eos/commit/ccda73edd651502d0a0ec4622b8d2707e45595c3))
 
 
 ### Documentation
