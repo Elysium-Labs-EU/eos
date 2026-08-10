@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -140,6 +141,38 @@ func TestReloadLaunchIncoming(t *testing.T) {
 	pgid, ticks, err := mgr.reloadLaunchIncoming(name, &target, launchIO{}, &launchSuccess)
 	if err == nil {
 		t.Fatal("expected a runtime validation error for a nonexistent runtime path")
+	}
+	if pgid != 0 || ticks != 0 {
+		t.Errorf("expected zero pgid/ticks on validation failure, got pgid=%d ticks=%d", pgid, ticks)
+	}
+	if launchSuccess {
+		t.Error("expected launchSuccess to stay false when validation fails before launching")
+	}
+}
+
+// TestReloadLaunchIncoming_CommandBinaryMissing exercises the same
+// validate-then-launch step for the command preflight (not the runtime
+// preflight TestReloadLaunchIncoming covers): a command whose binary is
+// absent from PATH must bail before launchAndCapture too.
+func TestReloadLaunchIncoming_CommandBinaryMissing(t *testing.T) {
+	mgr, name := registerLongRunningService(t, "reload-launch-incoming-badcommand")
+
+	target := reloadTarget{
+		service: types.ServiceCatalogEntry{Name: name},
+		config: &types.ServiceConfig{
+			Name:    name,
+			Command: "nonexistent-binary-xyz-262",
+		},
+		oldPGID: 1,
+	}
+
+	launchSuccess := false
+	pgid, ticks, err := mgr.reloadLaunchIncoming(name, &target, launchIO{}, &launchSuccess)
+	if err == nil {
+		t.Fatal("expected a command validation error for a binary absent from PATH")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-binary-xyz-262") {
+		t.Errorf("expected error to name the missing binary, got: %v", err)
 	}
 	if pgid != 0 || ticks != 0 {
 		t.Errorf("expected zero pgid/ticks on validation failure, got pgid=%d ticks=%d", pgid, ticks)

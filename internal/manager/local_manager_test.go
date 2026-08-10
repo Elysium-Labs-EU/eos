@@ -249,6 +249,55 @@ func TestStartService(t *testing.T) {
 	}
 }
 
+// TestStartService_CommandBinaryMissing proves the command preflight rejects
+// a start before ever spawning anything, when the command's binary can't be
+// found on PATH — the same fakeExecutor used above only stubs the runtime
+// binary lookup (validateRuntimeBinary), not this check.
+func TestStartService_CommandBinaryMissing(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	testFile := &types.ServiceConfig{
+		Name:    "cms",
+		Command: "nonexistent-binary-xyz-262",
+	}
+
+	yamlData, err := yaml.Marshal(testFile)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+
+	fullDirPath := filepath.Join(tempDir, "test-files-badcommand")
+	if err = os.MkdirAll(fullDirPath, 0755); err != nil {
+		t.Fatalf("could not create test-files directory: %v", err)
+	}
+
+	fullPathYaml := filepath.Join(fullDirPath, "service.yaml")
+	if err = os.WriteFile(fullPathYaml, yamlData, 0644); err != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", err)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("test-service-badcommand", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+
+	if err = manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); err != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", err)
+	}
+
+	pgid, err := manager.StartService(t.Context(), "test-service-badcommand")
+	if err == nil {
+		t.Fatal("expected StartService to reject a command whose binary is absent from PATH")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-binary-xyz-262") {
+		t.Errorf("expected error to name the missing binary, got: %v", err)
+	}
+	if pgid != 0 {
+		t.Errorf("expected zero pgid on validation failure, got %d", pgid)
+	}
+}
+
 // TestLocalManager_GetServiceExitCode_CleanExit verifies captureIdentity's
 // reaper goroutine records a clean exit-0 for a one-shot command (no server,
 // nothing left running) so a caller with only the PGID can tell it apart from
@@ -2139,6 +2188,67 @@ func TestRestartService(t *testing.T) {
 		t.Errorf("expected restarted process group %d to be alive", newPGID)
 	}
 	_ = syscall.Kill(-newPGID, syscall.SIGKILL)
+}
+
+// TestRestartService_CommandBinaryMissing rewrites a running service's
+// config to a command whose binary can't be found on PATH, then restarts
+// it: the command preflight must reject the restart before the still-live
+// original instance is ever stopped.
+func TestRestartService_CommandBinaryMissing(t *testing.T) {
+	db, _, tempDir := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	manager := NewLocalManager(db, tempDir, t.Context(), testutil.NewTestLogger(t), WithExecutor(fakeExecutor{}))
+
+	fullDirPath := filepath.Join(tempDir, "test-files")
+	if mkdirErr := os.MkdirAll(fullDirPath, 0755); mkdirErr != nil {
+		t.Fatalf("could not create test-files directory: %v", mkdirErr)
+	}
+	yamlPath := filepath.Join(fullDirPath, "service.yaml")
+
+	goodConfig := &types.ServiceConfig{Name: "cms", Command: "sleep 30"}
+	yamlData, err := yaml.Marshal(goodConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	if writeErr := os.WriteFile(yamlPath, yamlData, 0644); writeErr != nil {
+		t.Fatalf("error occurred during writing the yaml file, got: %v", writeErr)
+	}
+
+	serviceCatalogEntry, err := NewServiceCatalogEntry("restart-service-badcommand", fullDirPath, "service.yaml")
+	if err != nil {
+		t.Fatalf("Create service catalog entry should not error: %v", err)
+	}
+	if addErr := manager.AddServiceCatalogEntry(t.Context(), serviceCatalogEntry); addErr != nil {
+		t.Fatalf("Add service catalog entry should not error: %v", addErr)
+	}
+
+	originalPGID, err := manager.StartService(t.Context(), "restart-service-badcommand")
+	if err != nil {
+		t.Fatalf("Starting service should not error: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-originalPGID, syscall.SIGKILL) })
+
+	badConfig := &types.ServiceConfig{Name: "cms", Command: "nonexistent-binary-xyz-262"}
+	badYamlData, err := yaml.Marshal(badConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal bad test config: %v", err)
+	}
+	if writeErr := os.WriteFile(yamlPath, badYamlData, 0644); writeErr != nil {
+		t.Fatalf("error occurred during rewriting the yaml file, got: %v", writeErr)
+	}
+
+	newPGID, err := manager.RestartService(t.Context(), "restart-service-badcommand", time.Second, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected RestartService to reject a command whose binary is absent from PATH")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-binary-xyz-262") {
+		t.Errorf("expected error to name the missing binary, got: %v", err)
+	}
+	if newPGID != 0 {
+		t.Errorf("expected zero pgid on validation failure, got %d", newPGID)
+	}
+	if !isProcessAlive(originalPGID) {
+		t.Error("expected the original instance to still be running: a rejected restart must not have stopped it")
+	}
 }
 
 func TestRestartService_notRegistered(t *testing.T) {
