@@ -285,7 +285,15 @@ sg-rules: ## List all ast-grep rules
 adr-find: ## Find ADRs and related code for a concept: make adr-find Q="daemon liveness"
 	@test -n "$(Q)" || { echo "Usage: make adr-find Q=\"concept\""; exit 1; }
 	@echo "--- docs/adr matching \"$(Q)\" ---"
-	@grep -ril -- "$(Q)" docs/adr/*.md 2>/dev/null || echo "  (no filename/content match, try a narrower term)"
+	@hits="$$(grep -ril -- "$(Q)" docs/adr/*.md 2>/dev/null)"; \
+	if [ -z "$$hits" ]; then \
+		echo "  (no filename/content match, try a narrower term)"; \
+	else \
+		for f in $$hits; do \
+			status="$$(grep -m1 '^Status:' "$$f" | sed 's/^Status: *//')"; \
+			echo "  $$f  [$${status:-unknown}]"; \
+		done; \
+	fi
 	@echo "--- code comments citing an ADR (ast-grep) ---"
 # Both enrichment sections degrade to a notice rather than failing the target:
 # ast-grep is an optional host tool, and .gitnexus/ is gitignored so it is absent
