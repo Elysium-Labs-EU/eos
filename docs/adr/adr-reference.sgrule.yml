@@ -1,7 +1,7 @@
 id: adr-reference
 language: go
 severity: info
-message: "Code comment references an ADR. Cross-check docs/adr/index.md."
+message: "Code comment references an ADR. Cross-check docs/adr/ (make adr-find)."
 rule:
   kind: comment
   regex: 'ADR-\d{4}'
