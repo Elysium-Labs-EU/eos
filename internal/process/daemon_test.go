@@ -1641,15 +1641,59 @@ func TestStartStandaloneDaemon_UnderSystemd(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 
 	daemonCfg := testutil.NewTestStandaloneDaemonConfig(t, tempDir)
+	logPath := filepath.Join(tempDir, "logs", config.DaemonLogFileName)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	opts := StandaloneDaemonStartOptions{
 		BaseDir:      tempDir,
 		UnderSystemd: true,
 	}
-	if err := StartStandaloneDaemon(ctx, opts, daemonCfg.Standalone, &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{}); err != nil {
-		t.Errorf("expected StartStandaloneDaemon to return nil once the context is done, got: %v", err)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- StartStandaloneDaemon(ctx, opts, daemonCfg.Standalone, &config.HealthConfig{}, config.ShutdownConfig{}, config.TelemetryConfig{})
+	}()
+
+	// Wait for the "daemon started successfully" line recover() logs right
+	// before StartStandaloneDaemon blocks in wait(), instead of racing a
+	// fixed wall-clock budget against it: the previous version canceled the
+	// context on a flat 500ms timer, which under a loaded CI runner could
+	// fire while the recovery query was still in flight, turning the query's
+	// own deadline-exceeded error into what looked like a test failure. The
+	// 10s bound below is a liveness check against a genuine hang, not a
+	// guess about how long recovery takes.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(10 * time.Second)
+	started := false
+waitForStartup:
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("StartStandaloneDaemon returned before logging startup completion: %v", err)
+		case <-ticker.C:
+			if data, readErr := os.ReadFile(logPath); readErr == nil && strings.Contains(string(data), "daemon started successfully") {
+				started = true
+				break waitForStartup
+			}
+		case <-deadline:
+			break waitForStartup
+		}
+	}
+	if !started {
+		t.Fatal("daemon did not finish startup/recovery within the liveness bound")
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("expected StartStandaloneDaemon to return nil once the context is canceled, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartStandaloneDaemon did not return after its context was canceled")
 	}
 }
