@@ -5,6 +5,15 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BENCHMARKS_DIR := __benchmarks__
+# golangci-lint's cache defaults to one shared directory per user, and it keys
+# entries on file content. Two worktrees of this repo hold identical sources,
+# so their keys collide and one tree is served the other's stored findings -
+# complete with the absolute paths recorded when they were first analysed. A
+# clean tree then reports issues citing ../<sibling-worktree>/, and once that
+# sibling is deleted the citation points at nothing. Keeping the cache inside
+# the worktree makes collision impossible and needs no reaping: the cache is
+# removed with the tree that owns it. Must be absolute; $(CURDIR) is.
+export GOLANGCI_LINT_CACHE := $(CURDIR)/.cache/golangci-lint
 ORB_MACHINE ?= debian
 ORB_IP = $(shell orb ip -m $(ORB_MACHINE) 2>/dev/null)
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
@@ -392,6 +401,6 @@ pre-release: ## Tag and push a pre-release (requires TAG=v1.2.0-rc.1, no changel
 
 clean: ## Remove build artifacts
 	@echo "Cleaning..."
-	rm -rf $(GOBIN) dist/
+	rm -rf $(GOBIN) dist/ $(GOLANGCI_LINT_CACHE)
 	go clean
 	@echo "Cleaned"
