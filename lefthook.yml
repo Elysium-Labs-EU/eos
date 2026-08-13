@@ -12,14 +12,21 @@ pre-push:
 
 pre-commit:
   commands:
+    # GOLANGCI_LINT_CACHE is set inline rather than inherited from the Makefile:
+    # these run golangci-lint directly, so the Makefile's export never reaches
+    # them. Without it they fall back to the one shared per-user cache, which is
+    # keyed on file content - identical sources in two worktrees collide and one
+    # tree is served the other's stored findings. That matters most here, since
+    # this hook decides whether a commit is allowed. show-toplevel resolves to
+    # the linked worktree's own root, so each tree isolates itself.
     format:
       glob: "*.go"
-      run: golangci-lint fmt && git add {staged_files}
+      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" golangci-lint fmt && git add {staged_files}
       priority: 1
 
     lint:
       glob: "*.go"
-      run: golangci-lint run --timeout=5m
+      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" golangci-lint run --timeout=5m
       priority: 2
 
     fieldalignment:
