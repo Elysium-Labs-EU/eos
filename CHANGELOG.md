@@ -2,6 +2,22 @@
 
 All notable changes to eos are documented here.
 
+## [0.0.13] - 2026-08-13
+
+### Bug Fixes
+- Stop racing daemon recovery test against a fixed timeout (#273) ([`ba51c1c`](https://github.com/Elysium-Labs-EU/eos/commit/ba51c1cd81c35cba9cc0599b415bd607b9f49216))
+- Scope manifest since flag, note empty systemd journal (#275) ([`b465577`](https://github.com/Elysium-Labs-EU/eos/commit/b465577dfbb73a78d39df92c3239518c2a06f581))
+- Isolate the pre-commit lint cache too (#278) ([`7274ebb`](https://github.com/Elysium-Labs-EU/eos/commit/7274ebba04119a4c02e655ac4fdc46b1d1af1dc1))
+
+
+### Documentation
+- Drop the shared ADR index, surface status via adr-find (#276) ([`ffa1e41`](https://github.com/Elysium-Labs-EU/eos/commit/ffa1e4105d051279c3d1a7b12e9444709f1f251d))
+
+
+### Maintenance
+- Drop the ADR index row instruction from worker guidance (#274) ([`6807767`](https://github.com/Elysium-Labs-EU/eos/commit/68077673767046d9695571a66082c604d069a0bc))
+- Give each worktree its own golangci-lint cache (#277) ([`f33836f`](https://github.com/Elysium-Labs-EU/eos/commit/f33836f0988a41e0e9647bed204343733bd8f85e))
+
 ## [0.0.13-rc.9] - 2026-08-10
 
 ### Bug Fixes
@@ -27,6 +43,7 @@ All notable changes to eos are documented here.
 - Tell the reviewer to check the merge base before calling a revert (#256) ([`d33c361`](https://github.com/Elysium-Labs-EU/eos/commit/d33c361f661d26d72bf94582ae720e79f118cdf5))
 - Allow the merge check and raise the diff ceiling (#267) ([`d0a4c64`](https://github.com/Elysium-Labs-EU/eos/commit/d0a4c64623076d2b4ad20f3ca3d4ab26e9ee0330))
 - Nest workers in one workspace, warn on the two shared-state traps (#269) ([`6b07c1e`](https://github.com/Elysium-Labs-EU/eos/commit/6b07c1e30e885ce9a0aa07efa24687c21ae340fe))
+- Add the launch-environment preflight to the v0.0.13-rc.9 changelog (#272) ([`a1a4b16`](https://github.com/Elysium-Labs-EU/eos/commit/a1a4b166a8d17083c0eaba8c8c0ab3ca57104f68))
 
 
 ### Miscellaneous
