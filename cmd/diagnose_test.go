@@ -304,6 +304,42 @@ func TestDiagnoseCmd_LogsScrubbedAndTimeWindowed(t *testing.T) {
 	}
 }
 
+// TestDiagnoseCmd_ManifestFlagsSinceIsDaemonLogScoped is the regression test
+// for the manifest.json "since" field reading as a bundle-wide window when it
+// only ever scopes the daemon-log step: service logs (diagnoseCollectServiceLogs)
+// honor only --lines and routinely span far more than --since. The field
+// must be named/scoped so a reader can't mistake it for bundle-wide coverage.
+func TestDiagnoseCmd_ManifestFlagsSinceIsDaemonLogScoped(t *testing.T) {
+	cmd, _, errBuf, _ := setupDiagnoseCmd(t)
+
+	outputPath := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	cmd.SetArgs([]string{"diagnose", "--since", "10m", "--output", outputPath})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("diagnose should not return an error, got: %v\nerr output: %s", err, errBuf.String())
+	}
+
+	files := readDiagnoseBundle(t, outputPath)
+	manifest := unmarshalOrFatal[diagnoseManifest](t, files["manifest.json"])
+	if manifest.Flags.DaemonLogSince != "10m0s" {
+		t.Errorf("expected Flags.DaemonLogSince to carry the --since value, got: %q", manifest.Flags.DaemonLogSince)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(files["manifest.json"], &raw); err != nil {
+		t.Fatalf("unmarshaling raw manifest: %v", err)
+	}
+	flags, ok := raw["flags"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a flags object in manifest.json, got: %v", raw["flags"])
+	}
+	if _, hasBareSince := flags["since"]; hasBareSince {
+		t.Error("expected no bundle-wide 'since' key in manifest.json flags — it must be scoped to daemon_log_since")
+	}
+	if _, hasScopedSince := flags["daemon_log_since"]; !hasScopedSince {
+		t.Errorf("expected a 'daemon_log_since' key in manifest.json flags, got: %v", flags)
+	}
+}
+
 func TestDiagnoseCmd_LinesCapKeepsMostRecent(t *testing.T) {
 	cmd, _, errBuf, tempDir := setupDiagnoseCmd(t)
 
@@ -410,6 +446,59 @@ echo "line three"`)
 		}
 		if strings.Contains(string(file.Data), "AKIAABCDEFGHIJKLMNOP") {
 			t.Errorf("expected the AWS-key-shaped line to be scrubbed or capped out, got: %s", file.Data)
+		}
+	})
+
+	// TestDiagnoseCollectDaemonLog_Systemd/empty journal is expected and noted
+	// covers the manifest-misdescription half of issue #264: an empty journal
+	// is the ordinary case under systemd (health output lands in per-service
+	// error logs, not the journal), so the step must still report Captured
+	// true but explain the emptiness rather than let it read as reassurance.
+	t.Run("empty journal is expected and noted", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "-- No entries --"`)
+
+		file, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step for an empty-but-successful journal read, got: %+v", step)
+		}
+		if !strings.Contains(step.Note, "expected") || !strings.Contains(step.Note, "error log") {
+			t.Errorf("expected a note explaining the empty journal and pointing at per-service error logs, got: %+v", step)
+		}
+		if file == nil {
+			t.Fatal("expected a daemon log file even for a placeholder-only journal")
+		}
+	})
+
+	t.Run("genuinely empty stdout is also noted", func(t *testing.T) {
+		installFakeJournalctlScript(t, ``)
+
+		_, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step for empty stdout, got: %+v", step)
+		}
+		if step.Note == "" {
+			t.Error("expected a note for genuinely empty journalctl stdout")
+		}
+	})
+
+	t.Run("non-empty journal carries no note", func(t *testing.T) {
+		installFakeJournalctlScript(t, `echo "line one"`)
+
+		_, step := diagnoseCollectDaemonLog(t.Context(), t.TempDir(), &config.DaemonConfig{
+			Systemd: &config.SystemdConfig{},
+		}, diagnoseOptions{Since: 10 * time.Minute, Lines: 100})
+
+		if !step.Captured {
+			t.Fatalf("expected an ok step, got: %+v", step)
+		}
+		if step.Note != "" {
+			t.Errorf("expected no note for a journal that actually has entries, got: %q", step.Note)
 		}
 	})
 
@@ -956,6 +1045,28 @@ func TestDiagnoseCollectDaemonInfo(t *testing.T) {
 			t.Errorf("expected ok openrc mode, got info=%+v step=%+v", info, step)
 		}
 	})
+}
+
+func TestDiagnoseJournalIsEmpty(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{"nil", nil, true},
+		{"empty slice", []string{}, true},
+		{"placeholder only", []string{"-- No entries --"}, true},
+		{"placeholder with surrounding whitespace", []string{"  -- No entries --  "}, true},
+		{"real entry", []string{"line one"}, false},
+		{"placeholder plus a real entry", []string{"-- No entries --", "line one"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := diagnoseJournalIsEmpty(tt.lines); got != tt.want {
+				t.Errorf("diagnoseJournalIsEmpty(%v) = %v, want %v", tt.lines, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDiagnoseCapLines(t *testing.T) {

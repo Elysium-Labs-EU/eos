@@ -58,11 +58,16 @@ type diagnoseManifest struct {
 	Flags       diagnoseManifestFlags `json:"flags"`
 }
 
+// DaemonLogSince is named for exactly what it scopes: the daemon-log
+// collection step. It must never read as a bundle-wide window — service logs
+// (diagnoseCollectServiceLogs) honor only Lines and routinely span far more
+// than this, since true time-filtering isn't possible without a fixed log
+// schema.
 type diagnoseManifestFlags struct {
-	Since         string `json:"since"`
-	Lines         int    `json:"lines"`
-	IncludeEnv    bool   `json:"include_env"`
-	NoServiceLogs bool   `json:"no_service_logs"`
+	DaemonLogSince string `json:"daemon_log_since"`
+	Lines          int    `json:"lines"`
+	IncludeEnv     bool   `json:"include_env"`
+	NoServiceLogs  bool   `json:"no_service_logs"`
 }
 
 // diagnoseStepResult records one independent collection step's outcome, so a
@@ -71,10 +76,13 @@ type diagnoseManifestFlags struct {
 // "this collection step completed without an internal error" — not a health
 // signal about what it collected: e.g. a service step reports Captured=true
 // even when that service's own status is failed, because the collection
-// itself succeeded.
+// itself succeeded. Note carries context that doesn't change Captured's
+// meaning — e.g. an empty-but-successfully-collected journal — rather than
+// redefining what the field means.
 type diagnoseStepResult struct {
 	Name     string `json:"name"`
 	Error    string `json:"error,omitempty"`
+	Note     string `json:"note,omitempty"`
 	Captured bool   `json:"captured"`
 }
 
@@ -254,10 +262,10 @@ func diagnoseCollect(ctx context.Context, mgr manager.ServiceManager, baseDir st
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,
 		Flags: diagnoseManifestFlags{
-			Since:         opts.Since.String(),
-			Lines:         opts.Lines,
-			IncludeEnv:    opts.IncludeEnv,
-			NoServiceLogs: opts.NoServiceLogs,
+			DaemonLogSince: opts.Since.String(),
+			Lines:          opts.Lines,
+			IncludeEnv:     opts.IncludeEnv,
+			NoServiceLogs:  opts.NoServiceLogs,
 		},
 	}
 
@@ -483,6 +491,11 @@ func diagnoseCollectSystemdDaemonLog(ctx context.Context, systemd *config.System
 	}
 
 	lines := diagnoseSplitLines(string(out))
+	step = diagnoseStepResult{Name: "daemon-log", Captured: true}
+	if diagnoseJournalIsEmpty(lines) {
+		step.Note = "the systemd journal has no entries for the eos unit; this is expected -- the daemon writes its own log elsewhere, and health output lands in each service's own error log (logs/<service>-error.log), not in the journal"
+	}
+
 	lines = diagnoseCapLines(lines, opts.Lines)
 	scrubbed := diagnoseScrubLines(lines)
 
@@ -490,7 +503,20 @@ func diagnoseCollectSystemdDaemonLog(ctx context.Context, systemd *config.System
 	if len(scrubbed) > 0 {
 		content = strings.Join(scrubbed, "\n") + "\n"
 	}
-	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, diagnoseStepResult{Name: "daemon-log", Captured: true}, true
+	return &diagnoseFile{Name: "logs/daemon.log", Data: []byte(content)}, step, true
+}
+
+// diagnoseJournalIsEmpty reports whether journalctl's split output represents
+// an empty journal: either genuinely empty stdout, or journalctl's own
+// "-- No entries --" placeholder line for a query that matched nothing. Under
+// systemd, SystemdConfig carries no log file of its own and health output
+// goes to each service's own error log, so an empty journal is the ordinary
+// case, not a sign anything failed.
+func diagnoseJournalIsEmpty(lines []string) bool {
+	if len(lines) == 0 {
+		return true
+	}
+	return len(lines) == 1 && strings.TrimSpace(lines[0]) == "-- No entries --"
 }
 
 // diagnoseJournalctlArgs builds journalctl's args for the "eos" unit. This
