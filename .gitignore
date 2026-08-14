@@ -33,15 +33,17 @@ go.work.sum
 
 dist/**
 test-files*
-eos
+# Anchored: unanchored `eos` also matched any directory of that name at any depth.
+# It also happened to hide the build output in bin/, which now needs its own rule.
+/eos
+/bin/
 logs/*
 
 # misc
 .DS_Store
 NOTES.md
 TODO.MD
-AGENTS.md
-CLAUDE.md
+CLAUDE.local.md
 .claude
 .zed/settings.json
 .ov/
