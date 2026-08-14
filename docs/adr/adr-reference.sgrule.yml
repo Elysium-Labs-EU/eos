@@ -4,5 +4,5 @@ severity: info
 message: "Code comment references an ADR. Cross-check docs/adr/ (make adr-find)."
 rule:
   kind: comment
-  regex: 'ADR-\d{4}'
+  regex: 'ADR-\d{4,}'
 note: "Discovery helper for `make adr-find`, not a lint gate. Not in rules/ so it never runs as part of the default `make sg` scan."
