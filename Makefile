@@ -136,7 +136,7 @@ install: build ## Install to ~/.local/bin
 
 test: ## Run tests
 	@echo "Running tests..."
-	go test ./cmd ./internal/... -race -count=2
+	go test . ./cmd ./internal/... -race -count=2
 
 verify-mod: ## Verify on-disk module cache matches go.sum (defense-in-depth beyond go.sum presence)
 	@echo "Verifying module cache..."
