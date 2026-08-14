@@ -149,6 +149,21 @@ download_file() {
     fi
 }
 
+# make_staging_dir creates the private directory downloads are verified in
+# and registers its cleanup, setting the global tmp_dir on success.
+#
+# tmp_dir is deliberately NOT `local`, and this is deliberately not called in
+# a command substitution: an EXIT trap runs after the function that
+# registered it has already returned, in the top-level script scope. A
+# `local` binding is torn down by then, so the trap expands an empty variable
+# and silently no-ops instead of cleaning up, and a `$(...)` call would fire
+# the trap the moment the subshell exits and delete the dir out from under
+# the caller. Callers read $tmp_dir after calling this plainly.
+make_staging_dir() {
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || return 1
+    trap 'rm -rf "${tmp_dir:-}"' EXIT
+}
+
 # extract_tag_name prints the first "tag_name" value found in a JSON blob
 # passed on stdin (a single release's JSON).
 extract_tag_name() {
@@ -721,9 +736,7 @@ main() {
 
         local download_url
         download_url=$(build_download_url "$REPO" "$version" "eos-${os}-${arch}")
-        local tmp_dir
-        tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eos-install.XXXXXXXX")" || { error "Failed to create secure temp dir"; exit 1; }
-        trap 'rm -rf "${tmp_dir:-}"' EXIT
+        make_staging_dir || { error "Failed to create secure temp dir"; exit 1; }
         tmp_binary="${tmp_dir}/${BINARY_NAME}"
 
         if ! download_file "$download_url" "$tmp_binary" "$download_tool"; then
