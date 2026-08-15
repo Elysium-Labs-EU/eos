@@ -1,6 +1,6 @@
 module github.com/Elysium-Labs-EU/eos
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0

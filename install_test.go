@@ -40,10 +40,10 @@ func TestExtractTagName(t *testing.T) {
 }
 
 func TestPickLatestTagOutOfOrderList(t *testing.T) {
-	// Reproduces issue #43: the Codeberg (Gitea) /releases list is
-	// documented newest-first but was observed live to return a release
-	// out of order — a release published minutes earlier sorted 3rd, not
-	// 1st. Trusting list position (as the old releases[0] logic did)
+	// The /releases list is documented newest-first but was observed live
+	// to return a release out of order: one published minutes earlier
+	// sorted 3rd, not 1st. Trusting list position (as the old releases[0]
+	// logic did)
 	// would silently pick the stale v0.0.9-rc.1... or here, the stale
 	// v0.0.12-rc.4 instead of the actually-newest v0.0.12-rc.5.
 	out, err := runInstallFunc(t, `printf '%s' "$FIXTURE" | pick_latest_tag`, map[string]string{
@@ -181,6 +181,38 @@ func TestFetchLatestVersionAllPrereleaseFallback(t *testing.T) {
 	}
 	if out != "v0.1.0-rc.2" {
 		t.Errorf("fetch_latest_version = %q, want the highest prerelease %q", out, "v0.1.0-rc.2")
+	}
+}
+
+// TestMakeStagingDirIsRemovedOnExit is the regression test for the staging
+// dir surviving every install: the EXIT trap that removes it runs after the
+// function that registered it has returned, so a `local tmp_dir` binding is
+// already gone and the trap cleans up nothing. The bash process is what
+// exits here, so the assertion has to happen after it does — checking from
+// inside the script would pass either way.
+func TestMakeStagingDirIsRemovedOnExit(t *testing.T) {
+	out, err := runInstallFunc(t, `make_staging_dir; printf '%s' "$tmp_dir"`, nil)
+	if err != nil {
+		t.Fatalf("make_staging_dir failed: %v\n%s", err, out)
+	}
+	if out == "" {
+		t.Fatal("make_staging_dir set no tmp_dir")
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("staging dir %q still exists after the script exited (stat error: %v)", out, statErr)
+	}
+}
+
+// TestMakeStagingDirIsUsable guards the other half of the trap trade-off:
+// the dir has to survive long enough to download into. A trap registered in
+// a command-substitution subshell would fire immediately and delete it.
+func TestMakeStagingDirIsUsable(t *testing.T) {
+	out, err := runInstallFunc(t, `make_staging_dir; touch "${tmp_dir}/probe" && [ -f "${tmp_dir}/probe" ] && printf ok`, nil)
+	if err != nil {
+		t.Fatalf("writing into the staging dir failed: %v\n%s", err, out)
+	}
+	if out != "ok" {
+		t.Errorf("staging dir not writable while the script runs: %q", out)
 	}
 }
 
