@@ -22,10 +22,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+      - name: Read golangci-lint version
+        id: golangci_version
+        run: echo "version=$(cat .golangci-lint-version)" >> "$GITHUB_OUTPUT"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
-          version: v2.12.2
+          version: ${{ steps.golangci_version.outputs.version }}
 
   test:
     runs-on: ubuntu-latest

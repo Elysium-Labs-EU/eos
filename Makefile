@@ -14,6 +14,11 @@ BENCHMARKS_DIR := __benchmarks__
 # the worktree makes collision impossible and needs no reaping: the cache is
 # removed with the tree that owns it. Must be absolute; $(CURDIR) is.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.cache/golangci-lint
+# Single source of truth for the golangci-lint pin: setup, lint, the pre-commit
+# hook (lefthook.yml) and the release workflow all read this file so none of
+# them can drift to whatever `golangci-lint` happens to resolve to on PATH.
+GOLANGCI_LINT_VERSION := $(shell cat .golangci-lint-version)
+GOLANGCI_LINT_VERSION_NUM := $(patsubst v%,%,$(GOLANGCI_LINT_VERSION))
 ORB_MACHINE ?= debian
 ORB_IP = $(shell orb ip -m $(ORB_MACHINE) 2>/dev/null)
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
@@ -65,11 +70,11 @@ profile-orb: ## Capture live heap from daemon on OrbStack (start with: EOS_PPROF
 	go tool pprof -http=":8082" http://$(ORB_IP):6060/debug/pprof/heap
 
 setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
-	@if command -v golangci-lint >/dev/null 2>&1 && [ "$$(golangci-lint version 2>&1 | grep -o '2\.12\.2')" = "2.12.2" ]; then \
-		echo "golangci-lint v2.12.2 already installed, skipping"; \
+	@if command -v golangci-lint >/dev/null 2>&1 && [ "$$(golangci-lint version 2>&1 | grep -o '$(GOLANGCI_LINT_VERSION_NUM)')" = "$(GOLANGCI_LINT_VERSION_NUM)" ]; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) already installed, skipping"; \
 	else \
-		echo "Installing golangci-lint v2.12.2..."; \
-		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2; \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION)..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
 	fi
 	@command -v git-cliff >/dev/null 2>&1 && echo "git-cliff already installed, skipping" || { \
 		echo "Installing git-cliff..."; \
@@ -167,10 +172,9 @@ test-coverage-check: ## Fail if total coverage is below COVERAGE_THRESHOLD (defa
 		'BEGIN { if (total+0 < threshold+0) { print "Coverage " total "% below threshold " threshold "%"; exit 1 } }'
 	@echo "Coverage check passed."
 
-lint: ## Run all linters
+lint: ## Run all linters (always the pinned $(GOLANGCI_LINT_VERSION), regardless of what's on PATH)
 	@echo "Running linters..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install: https://golangci-lint.run/welcome/install/"; exit 1; }
-	golangci-lint run --timeout=5m
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --timeout=5m
 
 nilcheck: ## Static nil-pointer safety analysis (requires: go install go.uber.org/nilaway/cmd/nilaway@latest)
 	@echo "Running nilaway nil pointer analysis..."
