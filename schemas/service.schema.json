@@ -107,7 +107,7 @@
           },
           {
             "type": "object",
-            "required": ["type"],
+            "required": ["type", "mode", "address"],
             "additionalProperties": false,
             "properties": {
               "type": {
@@ -115,6 +115,18 @@
                 "description": "Sink type. eos discovers the plugin binary as eos-sink-{type} on $PATH.",
                 "minLength": 1,
                 "examples": ["logbench", "datadog", "loki", "betterstack"]
+              },
+              "mode": {
+                "type": "string",
+                "description": "'push' (plugin connects outward) or 'serve' (plugin binds a local port). Documentation convention for describing the plugin's connection style; eos only checks it's non-empty, never branches on the value. Required: eos refuses to start a sink missing this.",
+                "minLength": 1,
+                "examples": ["push", "serve"]
+              },
+              "address": {
+                "type": "string",
+                "description": "Remote URL (push) or bind address (serve). Passed to the plugin via EOS_SINK_ADDRESS. Required: eos refuses to start a sink missing this.",
+                "minLength": 1,
+                "examples": ["http://loki:3100", ":9000"]
               },
               "exec": {
                 "type": "string",
