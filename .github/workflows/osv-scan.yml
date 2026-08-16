@@ -42,4 +42,4 @@ jobs:
           ./osv-scanner --version
 
       - name: Run OSV Scanner
-        run: ./osv-scanner scan --lockfile=go.mod --recursive .
+        run: ./osv-scanner scan --lockfile=go.mod

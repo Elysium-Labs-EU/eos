@@ -29,7 +29,27 @@ func TestOSVScanWorkflowUsesPinnedBinaryNotDockerAction(t *testing.T) {
 		t.Error("osv-scan.yml must download the pinned osv-scanner binary release directly")
 	}
 
-	if !strings.Contains(workflow, "./osv-scanner scan --lockfile=go.mod --recursive .") {
+	if !strings.Contains(workflow, "./osv-scanner scan --lockfile=go.mod") {
 		t.Error("osv-scan.yml must run the downloaded osv-scanner binary directly, not a wrapping action")
+	}
+}
+
+// go.mod is eos's only real dependency manifest; every npm/pnpm/bun
+// lockfile in the tree lives under testdata/fixtures, staged there only to
+// give the supervision tests a real Node app to spawn. A --recursive walk
+// has no real manifest left to find beyond go.mod, so it only ever adds
+// fixture lockfiles to the scan; bumping those fixtures to silence findings
+// would mean re-pinning them on every upstream npm advisory forever. Guard
+// against reintroducing the flag so a future fixture can't silently
+// reopen the scan to the whole tree.
+func TestOSVScanWorkflowDoesNotWalkTestdata(t *testing.T) {
+	content, err := os.ReadFile("../../.github/workflows/osv-scan.yml")
+	if err != nil {
+		t.Fatalf("reading osv-scan.yml: %v", err)
+	}
+	workflow := string(content)
+
+	if strings.Contains(workflow, "--recursive") {
+		t.Error("osv-scan.yml must not pass --recursive; it walks testdata/fixtures and flags fixture lockfiles that ship nothing and are not eos's supply chain")
 	}
 }
