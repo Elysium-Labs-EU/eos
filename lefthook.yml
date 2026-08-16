@@ -19,14 +19,20 @@ pre-commit:
     # tree is served the other's stored findings. That matters most here, since
     # this hook decides whether a commit is allowed. show-toplevel resolves to
     # the linked worktree's own root, so each tree isolates itself.
+    #
+    # The version comes from .golangci-lint-version via go run rather than from
+    # a PATH lookup, for the same reason make lint reads it: a lint verdict must
+    # not depend on whose golangci-lint happens to come first on PATH. Three
+    # versions have already disagreed about one unchanged line in a sibling repo,
+    # and this hook is what decides whether a commit is allowed at all.
     format:
       glob: "*.go"
-      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" golangci-lint fmt && git add {staged_files}
+      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(cat "$(git rev-parse --show-toplevel)/.golangci-lint-version") fmt && git add {staged_files}
       priority: 1
 
     lint:
       glob: "*.go"
-      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" golangci-lint run --timeout=5m
+      run: GOLANGCI_LINT_CACHE="$(git rev-parse --show-toplevel)/.cache/golangci-lint" go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(cat "$(git rev-parse --show-toplevel)/.golangci-lint-version") run --timeout=5m
       priority: 2
 
     fieldalignment:
