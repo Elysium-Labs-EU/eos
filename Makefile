@@ -1,4 +1,4 @@
-.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb adr-find
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test check-golangci-pin check-golangci-pin-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb adr-find
 
 .DEFAULT_GOAL := help
 
@@ -271,6 +271,14 @@ check-plugin-api-diff-test: ## Real end-to-end test of scripts/check-plugin-api-
 	@command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }
 	bash scripts/check-plugin-api-diff_test.sh
 
+check-golangci-pin: ## Fail if the golangci-lint version pin drifts from .golangci-lint-version (workflow hardcodes it, Makefile/lefthook fall back to PATH)
+	@echo "Checking golangci-lint version pin..."
+	bash scripts/check-golangci-pin.sh
+
+check-golangci-pin-test: ## Real end-to-end test of scripts/check-golangci-pin.sh (mutates and restores tracked files)
+	@echo "Running check-golangci-pin.sh end-to-end self-test..."
+	bash scripts/check-golangci-pin_test.sh
+
 crap-report: ## Full whole-repo go-crap debt report (informational, no gate)
 	@command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }
 	go-crap scan . --exclude '.*_test\.go'
@@ -280,8 +288,8 @@ leak-test: ## Run tests with goroutine leak detection (-count=1, no -race to kee
 	@echo "Note: add 'defer goleak.VerifyNone(t)' or goleak.VerifyTestMain(m) to catch leaks."
 	go test ./cmd ./internal/... -count=1 -timeout=60s -v 2>&1 | grep -E "(PASS|FAIL|leak|goroutine)" || true
 
-fix: ## Fix go formatting
-	golangci-lint fmt
+fix: ## Fix go formatting (always the pinned $(GOLANGCI_LINT_VERSION), regardless of what's on PATH)
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) fmt
 	go tool fieldalignment -fix ./...
 
 sg: ## Scan codebase with ast-grep rules
@@ -332,7 +340,7 @@ govulncheck: ## Reachability-aware vulnerability scan (complements OSV-Scanner's
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: make setup"; exit 1; }
 	govulncheck ./...
 
-ci: test verify-mod lint sg nilcheck typos test-coverage-check crap check-diff-size check-plugin-api-diff govulncheck secrets ## Run all CI checks locally
+ci: test verify-mod lint sg nilcheck typos test-coverage-check crap check-diff-size check-plugin-api-diff check-golangci-pin govulncheck secrets ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
