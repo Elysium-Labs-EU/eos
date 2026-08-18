@@ -3,9 +3,13 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Elysium-Labs-EU/eos/internal/config"
+	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
 
 // TestConfigSchemaValidJSON guards against a syntax error creeping into
@@ -111,4 +115,89 @@ func TestConfigSchemaDefaultsMatchEosConfig(t *testing.T) {
 	if got, want := int64(logProps.FileSizeLimitBytes.Default), def.Log.FileSizeLimitBytes; got != want {
 		t.Errorf("log.fileSizeLimitBytes default: got %d, want %d", got, want)
 	}
+}
+
+// TestServiceSchemaLogSinkMatchesLogSinkStruct guards schemas/service.schema.json's
+// inline log_sinks object against types.LogSink (issue: mode/address were added to
+// the struct and to sinkConfigValid's runtime check but never back-ported to this
+// schema, so a valid service.yaml failed schema validation while a schema-valid one
+// silently produced a sink that never starts). Field set is derived from the
+// struct's yaml tags; the required set is hardcoded to what sinkConfigValid and
+// resolveBinary actually enforce, since the schema has no other way to express it.
+func TestServiceSchemaLogSinkMatchesLogSinkStruct(t *testing.T) {
+	raw, err := os.ReadFile("schemas/service.schema.json")
+	if err != nil {
+		t.Fatalf("reading schemas/service.schema.json: %v", err)
+	}
+
+	var schema struct {
+		Properties struct {
+			LogSinks struct {
+				Items struct {
+					OneOf []struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+						Type       string                     `json:"type"`
+						Required   []string                   `json:"required"`
+					} `json:"oneOf"`
+				} `json:"items"`
+			} `json:"log_sinks"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("parsing schemas/service.schema.json: %v", err)
+	}
+
+	var inline *struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Type       string                     `json:"type"`
+		Required   []string                   `json:"required"`
+	}
+	for i, variant := range schema.Properties.LogSinks.Items.OneOf {
+		if variant.Type == "object" {
+			inline = &schema.Properties.LogSinks.Items.OneOf[i]
+		}
+	}
+	if inline == nil {
+		t.Fatal("schema log_sinks items: no object variant found in oneOf")
+	}
+
+	schemaFields := make([]string, 0, len(inline.Properties))
+	for k := range inline.Properties {
+		schemaFields = append(schemaFields, k)
+	}
+	sort.Strings(schemaFields)
+
+	structFields := yamlFieldNames(types.LogSink{})
+	sort.Strings(structFields)
+
+	if !reflect.DeepEqual(schemaFields, structFields) {
+		t.Errorf("schema log_sinks object properties %v do not match types.LogSink yaml fields %v", schemaFields, structFields)
+	}
+
+	// mode and address are required at runtime by sinkConfigValid, and type is
+	// required to resolve the plugin binary (or send EOS_SINK_TYPE); the schema
+	// must reject a config missing any of them rather than let it parse and
+	// silently fail to start.
+	wantRequired := []string{"address", "mode", "type"}
+	gotRequired := append([]string(nil), inline.Required...)
+	sort.Strings(gotRequired)
+	if !reflect.DeepEqual(gotRequired, wantRequired) {
+		t.Errorf("schema log_sinks object required %v, want %v", gotRequired, wantRequired)
+	}
+}
+
+// yamlFieldNames returns the yaml tag name (stripped of ",omitempty" etc.) for
+// every field of v's type, skipping fields tagged "-".
+func yamlFieldNames(v any) []string {
+	t := reflect.TypeOf(v)
+	names := make([]string, 0, t.NumField())
+	for field := range t.Fields() {
+		tag := field.Tag.Get("yaml")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
 }
