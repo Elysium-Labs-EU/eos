@@ -53,38 +53,58 @@ func LoadConfig(path string) (Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse matrix config %s: %w", path, err)
 	}
 
-	if len(cfg.Targets) == 0 {
-		return Config{}, fmt.Errorf("matrix config %s: no targets defined", path)
+	names, err := validateTargets(path, cfg.Targets)
+	if err != nil {
+		return Config{}, err
 	}
-	if len(cfg.Suites) == 0 {
-		return Config{}, fmt.Errorf("matrix config %s: no suites defined", path)
-	}
-
-	names := make(map[string]bool, len(cfg.Targets))
-	for _, t := range cfg.Targets {
-		if t.Name == "" || t.Golden == "" {
-			return Config{}, fmt.Errorf("matrix config %s: target missing name or golden", path)
-		}
-		if names[t.Name] {
-			return Config{}, fmt.Errorf("matrix config %s: duplicate target %q", path, t.Name)
-		}
-		names[t.Name] = true
-	}
-
-	for _, s := range cfg.Suites {
-		if s.Name == "" || s.Command == "" {
-			return Config{}, fmt.Errorf("matrix config %s: suite missing name or command", path)
-		}
-		for _, only := range s.Only {
-			if !names[only] {
-				return Config{}, fmt.Errorf("matrix config %s: suite %q references unknown target %q", path, s.Name, only)
-			}
-		}
+	if err := validateSuites(path, cfg.Suites, names); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+// validateTargets checks Targets is non-empty and each entry has a name and
+// golden VM with no duplicate names, returning the name set for suite
+// validation.
+func validateTargets(path string, targets []Target) (map[string]bool, error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("matrix config %s: no targets defined", path)
+	}
+
+	names := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		if t.Name == "" || t.Golden == "" {
+			return nil, fmt.Errorf("matrix config %s: target missing name or golden", path)
+		}
+		if names[t.Name] {
+			return nil, fmt.Errorf("matrix config %s: duplicate target %q", path, t.Name)
+		}
+		names[t.Name] = true
+	}
+	return names, nil
+}
+
+// validateSuites checks Suites is non-empty and each entry has a name and
+// command, and that any Only entries reference a known target name.
+func validateSuites(path string, suites []Suite, targetNames map[string]bool) error {
+	if len(suites) == 0 {
+		return fmt.Errorf("matrix config %s: no suites defined", path)
+	}
+
+	for _, s := range suites {
+		if s.Name == "" || s.Command == "" {
+			return fmt.Errorf("matrix config %s: suite missing name or command", path)
+		}
+		for _, only := range s.Only {
+			if !targetNames[only] {
+				return fmt.Errorf("matrix config %s: suite %q references unknown target %q", path, s.Name, only)
+			}
+		}
+	}
+	return nil
 }

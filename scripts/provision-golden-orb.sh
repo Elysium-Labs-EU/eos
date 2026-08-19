@@ -26,7 +26,7 @@ NAME="${2:?usage: $0 DISTRO:VERSION NAME}"
 # Keep in lockstep with the "go" line in go.mod so golden VMs match the
 # toolchain CI/local dev actually builds with.
 GO_VERSION="$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"
-[ -n "$GO_VERSION" ] || { echo "provision-golden-orb: could not read go version from go.mod" >&2; exit 1; }
+[[ -n "$GO_VERSION" ]] || { echo "provision-golden-orb: could not read go version from go.mod" >&2; exit 1; }
 
 log() { echo "[provision-golden-orb] $*"; }
 
@@ -89,10 +89,10 @@ log "installing go $GO_VERSION ($ARCH) on $NAME"
 orb run -m "$NAME" bash -lc "
 set -euo pipefail
 current=''
-if command -v go >/dev/null 2>&1 || [ -x /usr/local/go/bin/go ]; then
+if command -v go >/dev/null 2>&1 || [[ -x /usr/local/go/bin/go ]]; then
   current=\$(/usr/local/go/bin/go version 2>/dev/null | awk '{print \$3}' | sed 's/^go//')
 fi
-if [ \"\$current\" = \"$GO_VERSION\" ]; then
+if [[ \"\$current\" = \"$GO_VERSION\" ]]; then
   echo 'go $GO_VERSION already installed, skipping'
 else
   curl -fsSL -o /tmp/go.tar.gz \"https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz\"
