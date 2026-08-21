@@ -1,4 +1,4 @@
-.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test check-golangci-pin check-golangci-pin-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb adr-find
+.PHONY: help dev build install test verify-mod test-linux test-linux-single test-openrc-orb test-install-orb test-fixtures-orb test-matrix-orb test-integration test-supervision-orb test-launchd lint nilcheck typos crap crap-gate-test leak-test clean release release-local fix setup sg sg-test sg-rules secrets govulncheck check-diff-size check-diff-size-test check-plugin-api-diff check-plugin-api-diff-test check-golangci-pin check-golangci-pin-test bench-mem bench-cpu bench-pprof-mem bench-pprof-cpu bench-diff bench-db bench-db-orb profile-orb adr-find
 
 .DEFAULT_GOAL := help
 
@@ -112,6 +112,10 @@ setup: ## Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and gi
 		echo "Installing typos (spelling check, mirrors the CI typos job)..."; \
 		cargo install typos-cli 2>/dev/null || echo "cargo not found; install typos manually: https://github.com/crate-ci/typos#install"; \
 	}
+	@command -v shellcheck >/dev/null 2>&1 && echo "shellcheck already installed, skipping" || { \
+		echo "Installing shellcheck..."; \
+		brew install shellcheck 2>/dev/null || echo "brew not found; install shellcheck manually: https://github.com/koalaman/shellcheck#installing"; \
+	}
 	@echo "Installing git hooks..."
 	lefthook install
 	@echo "Setup complete."
@@ -185,6 +189,11 @@ typos: ## Check for misspellings (mirrors the CI typos job, requires: cargo inst
 	@echo "Checking for typos..."
 	@command -v typos >/dev/null 2>&1 || { echo "typos not found. Run: make setup"; exit 1; }
 	typos
+
+shellcheck: ## Lint shell scripts under scripts/ (warning severity and up -- info-level notes don't gate CI; requires: brew install shellcheck, preinstalled on ubuntu-latest CI runners)
+	@echo "Running shellcheck..."
+	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck not found. Run: make setup"; exit 1; }
+	shellcheck -S warning scripts/*.sh
 
 GO_CRAP_GATE_PATHS := scripts/go-crap-gate.sh scripts/go-crap-gate_test.sh
 
@@ -340,7 +349,7 @@ govulncheck: ## Reachability-aware vulnerability scan (complements OSV-Scanner's
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: make setup"; exit 1; }
 	govulncheck ./...
 
-ci: test verify-mod lint sg nilcheck typos test-coverage-check crap check-diff-size check-plugin-api-diff check-golangci-pin govulncheck secrets ## Run all CI checks locally
+ci: test verify-mod lint sg nilcheck typos shellcheck test-coverage-check crap check-diff-size check-plugin-api-diff check-golangci-pin govulncheck secrets ## Run all CI checks locally
 	@echo "All CI checks passed!"
 
 ci-full: ci test-linux ## Run make ci plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
@@ -382,6 +391,12 @@ SKIP_JQ_INSTALL ?= 0
 
 test-fixtures-orb: release-local ## Run eos against real nextjs/vite/express/hono fixtures on OrbStack $(ORB_MACHINE) (installs node/bun/pnpm/jq as needed; slow, meant for nightly/pre-release not per-commit). SKIP_{NODE,BUN,PNPM}_INSTALL=1 simulates that interpreter going missing at service-start time instead of skipping install outright; SKIP_JQ_INSTALL=1 tests the script's own precondition failure.
 	orb run -m $(ORB_MACHINE) bash -lc "cd $(PWD) && SKIP_NODE_INSTALL=$(SKIP_NODE_INSTALL) SKIP_BUN_INSTALL=$(SKIP_BUN_INSTALL) SKIP_PNPM_INSTALL=$(SKIP_PNPM_INSTALL) SKIP_JQ_INSTALL=$(SKIP_JQ_INSTALL) bash scripts/test-fixtures-orb.sh"
+
+MATRIX_SUITE ?=
+MATRIX_NIGHTLY ?= false
+
+test-matrix-orb: release-local ## Run e2e suites across every OrbStack golden VM in parallel, from a clean clone each time (MATRIX_SUITE=name to filter, MATRIX_NIGHTLY=true to include nightly suites)
+	go run ./tools/testmatrix -config test/matrix.yml -suite "$(MATRIX_SUITE)" -nightly=$(MATRIX_NIGHTLY)
 
 release-local: ## Build release binaries locally
 	@echo "Building release binaries..."

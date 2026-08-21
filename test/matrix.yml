@@ -1,0 +1,37 @@
+targets:
+  - name: debian
+    distro: debian-bookworm
+    init: systemd
+    golden: eos-golden-debian
+  - name: ubuntu
+    distro: ubuntu-resolute
+    init: systemd
+    golden: eos-golden-ubuntu
+  - name: fedora
+    distro: fedora-44
+    init: systemd
+    golden: eos-golden-fedora
+  - name: alpine
+    distro: alpine-3.23
+    init: openrc
+    golden: eos-golden-alpine
+
+suites:
+  - name: install
+    command: |
+      arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+      sudo bash ./install.sh -y --local ./dist/eos-linux-$arch
+
+  - name: lifecycle
+    command: go test ./cmd ./internal/... -race -count=2
+
+  - name: supervision
+    command: go test ./cmd/... -race -count=2 -run 'Supervis|Daemon'
+
+  - name: openrc
+    only: [alpine]
+    command: go test ./cmd/... -race -count=2 -run 'Openrc|OpenRC|DetectActiveSystemRuntime' -v
+
+  - name: fixtures
+    nightly: true
+    command: bash scripts/test-fixtures-orb.sh
