@@ -27,6 +27,9 @@ type scriptedRunner struct {
 
 func (r *scriptedRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	r.calls = append(r.calls, append([]string{name}, args...))
+	if len(args) == 0 {
+		panic("unexpected orb subcommand: <none>")
+	}
 	switch args[0] {
 	case "clone":
 		return r.clone.output, r.clone.err
