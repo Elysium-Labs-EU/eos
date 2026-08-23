@@ -1,0 +1,114 @@
+version: '3'
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
+  BUILD_DATE:
+    sh: date -u '+%Y-%m-%d %H:%M:%S UTC'
+  VERSION_PKG:
+    sh: echo "$(go list -m)/internal/buildinfo"
+  LDFLAGS: >-
+    -ldflags "-X '{{.VERSION_PKG}}.Version={{.VERSION}}'
+    -X '{{.VERSION_PKG}}.GitCommit={{.COMMIT}}'
+    -X '{{.VERSION_PKG}}.BuildDate={{.BUILD_DATE}}' -w -s"
+  GOLANGCI_LINT_VERSION:
+    sh: cat .golangci-lint-version
+  GOLANGCI_LINT_VERSION_NUM:
+    sh: sed 's/^v//' .golangci-lint-version
+  ORB_MACHINE: debian
+  BINARY_NAME: eos
+  GOBIN: ./bin
+  INSTALL_PATH: ~/.local/bin
+  BENCHMARKS_DIR: __benchmarks__
+
+env:
+  # golangci-lint's cache defaults to one shared directory per user, and it keys
+  # entries on file content. Two worktrees of this repo hold identical sources,
+  # so their keys collide and one tree is served the other's stored findings -
+  # complete with the absolute paths recorded when they were first analysed. A
+  # clean tree then reports issues citing ../<sibling-worktree>/, and once that
+  # sibling is deleted the citation points at nothing. Keeping the cache inside
+  # the worktree makes collision impossible and needs no reaping: the cache is
+  # removed with the tree that owns it. Must be absolute and must not drift
+  # per included file — {{.ROOT_DIR}} is the root Taskfile's directory
+  # regardless of which included taskfiles/*.yml task is executing;
+  # {{.TASKFILE_DIR}} is NOT (confirmed by spike: it resolved to
+  # taskfiles/.cache/... while running a task included from taskfiles/setup.yml).
+  GOLANGCI_LINT_CACHE: '{{.ROOT_DIR}}/.cache/golangci-lint'
+
+includes:
+  setup:
+    taskfile: ./taskfiles/setup.yml
+    vars:
+      GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION}}'
+      GOLANGCI_LINT_VERSION_NUM: '{{.GOLANGCI_LINT_VERSION_NUM}}'
+  test:
+    taskfile: ./taskfiles/test.yml
+  lint:
+    taskfile: ./taskfiles/lint.yml
+    vars:
+      GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION}}'
+  gates:
+    taskfile: ./taskfiles/gates.yml
+  build:
+    taskfile: ./taskfiles/build.yml
+    vars:
+      VERSION: '{{.VERSION}}'
+      LDFLAGS: '{{.LDFLAGS}}'
+      BINARY_NAME: '{{.BINARY_NAME}}'
+      GOBIN: '{{.GOBIN}}'
+      INSTALL_PATH: '{{.INSTALL_PATH}}'
+      GOLANGCI_LINT_CACHE: '{{.GOLANGCI_LINT_CACHE}}'
+  release:
+    taskfile: ./taskfiles/release.yml
+    vars:
+      LDFLAGS: '{{.LDFLAGS}}'
+  orb:
+    taskfile: ./taskfiles/orb.yml
+    vars:
+      ORB_MACHINE: '{{.ORB_MACHINE}}'
+  bench:
+    taskfile: ./taskfiles/bench.yml
+    vars:
+      ORB_MACHINE: '{{.ORB_MACHINE}}'
+      BENCHMARKS_DIR: '{{.BENCHMARKS_DIR}}'
+      COMMIT: '{{.COMMIT}}'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  ci:
+    desc: Run all CI checks locally
+    # Must be cmds: with explicit sequential task: calls, never deps: — Task
+    # runs a deps: array concurrently, not left-to-right like Make's
+    # prerequisite list. The Makefile equivalent (`ci: test verify-mod lint sg
+    # nilcheck typos test-coverage-check crap check-diff-size
+    # check-plugin-api-diff govulncheck secrets`) runs strictly in order;
+    # porting it as deps: would race unrelated test runs against each other
+    # (e.g. contention on coverage.out) and drop fail-fast-in-order behavior.
+    cmds:
+      - task: test:test
+      - task: test:verify-mod
+      - task: lint:lint
+      - task: lint:sg
+      - task: lint:nilcheck
+      - task: lint:typos
+      - task: test:coverage-check
+      - task: gates:crap
+      - task: gates:check-diff-size
+      - task: gates:check-plugin-api-diff
+      - task: lint:govulncheck
+      - task: lint:secrets
+      - echo "All CI checks passed!"
+
+  ci-full:
+    desc: Run 'task ci' plus Linux-parity tests via OrbStack; use before pushing changes to OS-facing packages (procutil, process, manager)
+    cmds:
+      - task: ci
+      - task: orb:test-linux
+      - echo "All CI checks + Linux parity passed!"

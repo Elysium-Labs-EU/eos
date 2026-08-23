@@ -1,0 +1,61 @@
+version: '3'
+
+# GOLANGCI_LINT_VERSION comes from the parent Taskfile.yml via this include's
+# `vars:` passthrough — do not redeclare it here (see taskfiles/setup.yml for
+# why: a self-referencing redeclaration shadows the passed-in value with empty).
+
+tasks:
+  lint:
+    desc: Run all linters (always the pinned golangci-lint version, regardless of what's on PATH)
+    cmds:
+      - echo "Running linters..."
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run --timeout=5m
+
+  nilcheck:
+    desc: 'Static nil-pointer safety analysis (requires: go install go.uber.org/nilaway/cmd/nilaway@latest)'
+    cmds:
+      - echo "Running nilaway nil pointer analysis..."
+      - 'command -v nilaway >/dev/null 2>&1 || { echo "nilaway not found. Run: task setup:setup"; exit 1; }'
+      - nilaway ./...
+
+  typos:
+    desc: 'Check for misspellings (mirrors the CI typos job, requires: cargo install typos-cli, see https://github.com/crate-ci/typos#install)'
+    cmds:
+      - echo "Checking for typos..."
+      - 'command -v typos >/dev/null 2>&1 || { echo "typos not found. Run: task setup:setup"; exit 1; }'
+      - typos
+
+  fix:
+    desc: Fix go formatting
+    cmds:
+      - golangci-lint fmt
+      - go tool fieldalignment -fix ./...
+
+  sg:
+    desc: Scan codebase with ast-grep rules
+    cmds:
+      - 'command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }'
+      - ast-grep scan
+
+  sg-test:
+    desc: Run ast-grep rule tests
+    cmds:
+      - 'command -v ast-grep >/dev/null 2>&1 || { echo "ast-grep not found. Install: brew install ast-grep"; exit 1; }'
+      - ast-grep test
+
+  sg-rules:
+    desc: List all ast-grep rules
+    cmds:
+      - find rules -name '*.yml' | sort
+
+  secrets:
+    desc: 'Scan working tree and history for leaked secrets (requires: go install github.com/zricethezav/gitleaks/v8@latest)'
+    cmds:
+      - 'command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks not found. Run: task setup:setup"; exit 1; }'
+      - gitleaks detect --source . --no-banner --redact
+
+  govulncheck:
+    desc: Reachability-aware vulnerability scan (complements OSV-Scanner's lockfile-only scan)
+    cmds:
+      - 'command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: task setup:setup"; exit 1; }'
+      - govulncheck ./...

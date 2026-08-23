@@ -1,0 +1,75 @@
+version: '3'
+
+# ORB_MACHINE comes from the parent Taskfile.yml via this include's vars:
+# passthrough — do not redeclare it here (see taskfiles/setup.yml for why).
+
+tasks:
+  test-linux:
+    desc: Run tests on OrbStack ORB_MACHINE Linux (mirrors CI)
+    cmds:
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test ./cmd ./internal/... -race -count=2"'
+
+  test-linux-single:
+    desc: Run single test on OrbStack ORB_MACHINE (TEST=TestName)
+    vars:
+      TEST: '{{.TEST}}'
+    cmds:
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test ./cmd ./internal/... -race -count=1 -v -run {{.TEST}}"'
+
+  test-openrc:
+    desc: 'Run runtime-detection/OpenRC tests on OrbStack (hardcoded to an Alpine/OpenRC machine, unlike the other orb tasks — this one needs OpenRC specifically, not whatever ORB_MACHINE happens to default to)'
+    vars:
+      # Unconditional override, not a `default` fallback: `default` only fills
+      # empty values, and ORB_MACHINE already arrives non-empty ("debian") from
+      # the root Taskfile's includes: passthrough, so `| default "alpine"` here
+      # would silently never fire (confirmed by spike: printed -m debian).
+      ORB_MACHINE: alpine
+    cmds:
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test ./cmd/... -race -count=2 -run ''Openrc|OpenRC|DetectActiveSystemRuntime'' -v"'
+
+  # -run 'Supervised' is deliberate, not a placeholder: the full -tags
+  # integration suite takes ~110s on this VM and currently fails part-way for
+  # environmental reasons unrelated to the code under test ("error starting
+  # daemon: timed out waiting for PID file"), while the same suite passes on
+  # GitHub's ubuntu-latest runner. Scoping to the supervision/daemon-routing
+  # cases gives a ~4.5s signal that's actually trustworthy to run before every
+  # push; running the whole suite here would just be permanently red and get
+  # ignored. Tradeoff: a future supervision test whose name doesn't contain
+  # "Supervised" silently escapes this target; keep the naming convention.
+  test-supervision:
+    desc: Supervision/daemon-routing integration tests on OrbStack ORB_MACHINE (fast, targeted subset — see comment above)
+    cmds:
+      - |
+        orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && \
+          sudo env PATH=\$PATH go test ./cmd/... -tags integration -count=1 -run 'Supervised'"
+
+  test-install:
+    desc: Build and test install.sh on OrbStack ORB_MACHINE with local binary
+    deps: [":release:release-local"]
+    cmds:
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "arch=\$(uname -m | sed ''s/x86_64/amd64/;s/aarch64/arm64/''); sudo bash {{.ROOT_DIR}}/install.sh -y --local {{.ROOT_DIR}}/dist/eos-linux-\$arch"'
+
+  test-install-darwin:
+    desc: Build and test install.sh natively on macOS with local binary (no orb needed — darwin is native here)
+    deps: [":release:release-local"]
+    cmds:
+      - 'arch=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/"); sudo bash {{.ROOT_DIR}}/install.sh -y --local {{.ROOT_DIR}}/dist/eos-darwin-$arch'
+
+  test-fixtures:
+    desc: Run eos against real nextjs/vite/express/hono fixtures on OrbStack ORB_MACHINE (installs node/bun/pnpm/jq as needed; slow, meant for nightly/pre-release not per-commit). SKIP_{NODE,BUN,PNPM}_INSTALL=1 simulates that interpreter going missing at service-start time instead of skipping install outright; SKIP_JQ_INSTALL=1 tests the script's own precondition failure.
+    deps: [":release:release-local"]
+    vars:
+      SKIP_NODE_INSTALL: '{{.SKIP_NODE_INSTALL | default "0"}}'
+      SKIP_BUN_INSTALL: '{{.SKIP_BUN_INSTALL | default "0"}}'
+      SKIP_PNPM_INSTALL: '{{.SKIP_PNPM_INSTALL | default "0"}}'
+      SKIP_JQ_INSTALL: '{{.SKIP_JQ_INSTALL | default "0"}}'
+    cmds:
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "cd {{.ROOT_DIR}} && SKIP_NODE_INSTALL={{.SKIP_NODE_INSTALL}} SKIP_BUN_INSTALL={{.SKIP_BUN_INSTALL}} SKIP_PNPM_INSTALL={{.SKIP_PNPM_INSTALL}} SKIP_JQ_INSTALL={{.SKIP_JQ_INSTALL}} bash scripts/test-fixtures-orb.sh"'
+
+  profile:
+    desc: 'Capture live heap from daemon on OrbStack (start with: EOS_PPROF_ADDR=:6060 eos daemon start)'
+    vars:
+      ORB_IP:
+        sh: 'orb ip -m {{.ORB_MACHINE}} 2>/dev/null'
+    cmds:
+      - go tool pprof -http=":8082" http://{{.ORB_IP}}:6060/debug/pprof/heap

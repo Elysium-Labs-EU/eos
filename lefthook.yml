@@ -2,12 +2,12 @@ pre-push:
   commands:
     coverage:
       glob: "*.go"
-      run: make test-coverage-check
+      run: task test:coverage-check
       priority: 1
 
     crap:
       glob: "*.go"
-      run: make crap
+      run: task gates:crap
       priority: 2
 
 pre-commit:

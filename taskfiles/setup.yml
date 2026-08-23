@@ -1,0 +1,133 @@
+version: '3'
+
+# GOLANGCI_LINT_VERSION / GOLANGCI_LINT_VERSION_NUM come from the parent
+# Taskfile.yml via this include's `vars:` passthrough — do not redeclare them
+# here. Go-task scopes vars per included file; declaring them in this file's
+# own `vars:` block shadows the passed-in value with a self-reference that
+# resolves to empty (confirmed by spike: `task setup:setup --dry` printed
+# golangci-lint@<empty> until this redeclaration was removed).
+
+tasks:
+  setup:
+    desc: Install dev tools (golangci-lint, git-cliff, lefthook, nilaway) and git hooks
+    cmds:
+      - task: install-tool-version-checked
+        vars:
+          NAME: golangci-lint
+          VERSION: '{{.GOLANGCI_LINT_VERSION}}'
+          VERSION_NUM: '{{.GOLANGCI_LINT_VERSION_NUM}}'
+          INSTALL: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+      - task: install-tool-cargo
+        vars:
+          NAME: git-cliff
+          INSTALL: cargo install git-cliff
+          FALLBACK_MSG: "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
+      - task: install-tool-go
+        vars: {NAME: lefthook, INSTALL: "go install github.com/evilmartians/lefthook@latest"}
+      - task: install-tool-go
+        vars: {NAME: nilaway, DESC: "nilaway (nil pointer static analysis)", INSTALL: "go install go.uber.org/nilaway/cmd/nilaway@latest"}
+      - task: install-tool-go
+        vars: {NAME: go-crap, DESC: "go-crap (change-risk analysis)", INSTALL: "go install github.com/padiazg/go-crap@latest"}
+      - task: install-tool-go
+        vars: {NAME: gitleaks, DESC: "gitleaks (secret scanning)", INSTALL: "go install github.com/zricethezav/gitleaks/v8@latest"}
+      - task: install-tool-go
+        vars: {NAME: govulncheck, INSTALL: "go install golang.org/x/vuln/cmd/govulncheck@latest"}
+      - task: install-tool-go
+        vars: {NAME: apidiff, DESC: "apidiff (plugin API breaking-change detection)", INSTALL: "go install golang.org/x/exp/cmd/apidiff@latest"}
+      - task: install-tool-go
+        vars: {NAME: benchstat, DESC: "benchstat (benchmark comparison)", INSTALL: "go install golang.org/x/perf/cmd/benchstat@latest"}
+      - task: install-tool-cargo
+        vars:
+          NAME: typos
+          DESC: "typos (spelling check, mirrors the CI typos job)"
+          INSTALL: cargo install typos-cli
+          FALLBACK_MSG: "cargo not found; install typos manually: https://github.com/crate-ci/typos#install"
+      - echo "Installing git hooks..."
+      - lefthook install
+      - echo "Setup complete."
+
+  # Presence-only check ("command -v $NAME"), installed via "go install".
+  # Covers lefthook, nilaway, go-crap, gitleaks, govulncheck, apidiff, benchstat —
+  # none of these pin a version the way golangci-lint does.
+  install-tool-go:
+    internal: true
+    vars:
+      DESC: '{{.DESC | default .NAME}}'
+    cmds:
+      - |
+        if command -v {{.NAME}} >/dev/null 2>&1; then
+          echo "{{.NAME}} already installed, skipping"
+        else
+          echo "Installing {{.DESC}}..."
+          {{.INSTALL}}
+        fi
+
+  # Presence-only check, installed via "cargo install", with a fallback message
+  # when cargo itself isn't present (git-cliff, typos — both optional-toolchain).
+  install-tool-cargo:
+    internal: true
+    vars:
+      DESC: '{{.DESC | default .NAME}}'
+    cmds:
+      - |
+        if command -v {{.NAME}} >/dev/null 2>&1; then
+          echo "{{.NAME}} already installed, skipping"
+        else
+          echo "Installing {{.DESC}}..."
+          {{.INSTALL}} 2>/dev/null || echo "{{.FALLBACK_MSG}}"
+        fi
+
+  # Version-aware check: only golangci-lint pins a version and re-installs when
+  # the installed version doesn't match .golangci-lint-version.
+  install-tool-version-checked:
+    internal: true
+    cmds:
+      - |
+        if command -v {{.NAME}} >/dev/null 2>&1 && [ "$(golangci-lint version 2>&1 | grep -o '{{.VERSION_NUM}}')" = "{{.VERSION_NUM}}" ]; then
+          echo "{{.NAME}} {{.VERSION}} already installed, skipping"
+        else
+          echo "Installing {{.NAME}} {{.VERSION}}..."
+          {{.INSTALL}}
+        fi
+
+  adr-find:
+    desc: 'Find ADRs and related code for a concept: task adr-find Q="daemon liveness"'
+    vars:
+      Q: '{{.Q}}'
+    cmds:
+      - |
+        if [ -z "{{.Q}}" ]; then echo 'Usage: task adr-find Q="concept"'; exit 1; fi
+      - echo '--- docs/adr matching "{{.Q}}" ---'
+      - |
+        # `|| true` matters: Task's embedded shell (mvdan/sh) treats a failing
+        # command inside $(...) as fatal to the whole script even without
+        # set -e, unlike bash/dash — grep's normal "no match" exit 1 would
+        # otherwise abort this step (confirmed by spike reproduction).
+        hits="$(grep -ril -- "{{.Q}}" docs/adr/*.md 2>/dev/null || true)"
+        if [ -z "$hits" ]; then
+          echo "  (no filename/content match, try a narrower term)"
+        else
+          for f in $hits; do
+            status="$(grep -m1 '^Status:' "$f" | sed 's/^Status: *//')"
+            echo "  $f  [${status:-unknown}]"
+          done
+        fi
+      - echo "--- code comments citing an ADR (ast-grep) ---"
+      # Both enrichment sections degrade to a notice rather than failing the task:
+      # ast-grep is an optional host tool, and .gitnexus/ is gitignored so it is
+      # absent from every git worktree. Exiting non-zero there would withhold the
+      # ADR list above, which is the part that always works and the reason to run
+      # this at all.
+      - |
+        if command -v ast-grep >/dev/null 2>&1; then
+          ast-grep scan --rule docs/adr/adr-reference.sgrule.yml . 2>/dev/null || echo "  (none found)"
+        else
+          echo "  (skipped: ast-grep not installed — brew install ast-grep)"
+        fi
+      - echo "--- related code via GitNexus ---"
+      - |
+        if test -f .gitnexus/run.cjs; then
+          node .gitnexus/run.cjs augment "{{.Q}}" 2>&1 | { grep -v '^Progress:\|^\[WARN\]\|node_modules\|^Packages:\|^\+\+' || true; }
+        else
+          echo "  (skipped: no .gitnexus index here — npx gitnexus analyze)"
+        fi

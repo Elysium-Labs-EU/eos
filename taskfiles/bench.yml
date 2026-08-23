@@ -1,0 +1,60 @@
+version: '3'
+
+# ORB_MACHINE, BENCHMARKS_DIR come from the parent Taskfile.yml via this
+# include's vars: passthrough — do not redeclare them here (see
+# taskfiles/setup.yml for why).
+
+tasks:
+  mem:
+    desc: Run memory benchmarks on OrbStack ORB_MACHINE, save snapshot (all packages)
+    cmds:
+      - mkdir -p {{.BENCHMARKS_DIR}}
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test -bench=. -benchmem -count=5 ./... 2>&1 | tee {{.ROOT_DIR}}/{{.BENCHMARKS_DIR}}/mem.{{.COMMIT}}.txt"'
+      - echo "Snapshot {{.BENCHMARKS_DIR}}/mem.{{.COMMIT}}.txt"
+
+  cpu:
+    desc: Run CPU benchmarks on OrbStack ORB_MACHINE, save snapshot (all packages)
+    cmds:
+      - mkdir -p {{.BENCHMARKS_DIR}}
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test -bench=. -count=10 ./... 2>&1 | tee {{.ROOT_DIR}}/{{.BENCHMARKS_DIR}}/cpu.{{.COMMIT}}.txt"'
+      - echo "Snapshot {{.BENCHMARKS_DIR}}/cpu.{{.COMMIT}}.txt"
+
+  pprof-mem:
+    desc: Profile memory for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+    vars:
+      PKG: '{{.PKG | default "./internal/..."}}'
+    cmds:
+      - mkdir -p {{.BENCHMARKS_DIR}}
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test -bench=. -benchmem -count=5 -memprofile={{.ROOT_DIR}}/mem.out {{.PKG}}"'
+      - go tool pprof -http=":8082" mem.out
+
+  pprof-cpu:
+    desc: Profile CPU for PKG on OrbStack then open pprof UI (PKG=./internal/foo)
+    vars:
+      PKG: '{{.PKG | default "./internal/..."}}'
+    cmds:
+      - mkdir -p {{.BENCHMARKS_DIR}}
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test -bench=. -count=10 -cpuprofile={{.ROOT_DIR}}/cpu.out {{.PKG}}"'
+      - go tool pprof -http=":8081" cpu.out
+
+  diff:
+    desc: Compare two latest memory snapshots with benchstat
+    cmds:
+      - 'command -v benchstat >/dev/null 2>&1 || { echo "benchstat not found: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }'
+      - |
+        files=$(ls -t {{.BENCHMARKS_DIR}}/mem.*.txt 2>/dev/null | head -2)
+        if [ "$(echo "$files" | wc -w)" -lt 2 ]; then echo "Need >=2 snapshots — run bench:mem on two commits"; exit 1; fi
+        old=$(echo "$files" | awk 'NR==2'); new=$(echo "$files" | awk 'NR==1')
+        echo "comparing $old -> $new"; benchstat "$old" "$new"
+
+  db:
+    desc: Run database benchmarks locally (quick iteration, no snapshot)
+    cmds:
+      - go test -bench=. -benchmem -count=3 ./internal/database/...
+
+  db-orb:
+    desc: Run database benchmarks on OrbStack ORB_MACHINE, save snapshot
+    cmds:
+      - mkdir -p {{.BENCHMARKS_DIR}}
+      - 'orb run -m {{.ORB_MACHINE}} bash -lc "export PATH=/usr/local/go/bin:\$PATH; cd {{.ROOT_DIR}} && go test -bench=. -benchmem -count=5 ./internal/database/... 2>&1 | tee {{.ROOT_DIR}}/{{.BENCHMARKS_DIR}}/db.{{.COMMIT}}.txt"'
+      - echo "Snapshot {{.BENCHMARKS_DIR}}/db.{{.COMMIT}}.txt"
