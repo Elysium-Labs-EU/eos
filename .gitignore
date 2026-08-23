@@ -44,7 +44,8 @@ logs/*
 NOTES.md
 TODO.MD
 CLAUDE.local.md
-.claude
+.claude/settings.local.json
+.claude/argus/
 .zed/settings.json
 .ov/
 
