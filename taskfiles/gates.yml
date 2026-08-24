@@ -1,0 +1,105 @@
+version: '3'
+
+tasks:
+  # Shared "did the gate script or its self-test change vs the base branch ->
+  # run the self-test first, else skip" logic. The conditional self-call MUST
+  # stay inside this task's own cmds: shell `if` — never modeled as a Task
+  # `deps:` entry on the caller, or the self-test would run unconditionally on
+  # every invocation and defeat the whole point of this check.
+  gate-if-changed:
+    internal: true
+    vars:
+      BASE: '{{.BASE | default "origin/main"}}'
+    cmds:
+      - |
+        base="{{.BASE}}"
+        if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+          git fetch --quiet origin "${base#origin/}" 2>/dev/null || true
+        fi
+        changed=""
+        if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+          diff_base="$(git merge-base "$base" HEAD 2>/dev/null || echo "$base")"
+          changed="$(git diff --name-only "$diff_base" HEAD -- {{.PATHS}})$(git status --porcelain -- {{.PATHS}})"
+        else
+          changed="unknown-base"
+        fi
+        if [ -n "$changed" ]; then
+          echo "{{.PATHS}} changed vs $base (or base unresolvable) -- running {{.SELF_TEST_LABEL}}..."
+          {{.SELF_TEST_CMD}}
+        else
+          echo "{{.PATHS}} unchanged vs $base -- skipping {{.SELF_TEST_LABEL}} (run 'task {{.SELF_TEST_LABEL}}' to force it)."
+        fi
+
+  crap:
+    desc: Run go-crap change-risk analysis (hard gate on changed functions only, requires go-crap)
+    # Leading ":" escapes to the root namespace — a bare "test:coverage-check"
+    # here would resolve as "gates:test:coverage-check" (relative to this
+    # included file's own namespace) and fail with "task does not exist".
+    deps: [":test:coverage-check"]
+    vars:
+      GO_CRAP_BASE: '{{.GO_CRAP_BASE | default "origin/main"}}'
+    cmds:
+      - echo "Running go-crap change-risk analysis..."
+      - 'command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }'
+      - task: gate-if-changed
+        vars:
+          BASE: '{{.GO_CRAP_BASE}}'
+          PATHS: scripts/go-crap-gate.sh scripts/go-crap-gate_test.sh
+          SELF_TEST_LABEL: gates:crap-gate-test
+          SELF_TEST_CMD: task gates:crap-gate-test
+      - bash scripts/go-crap-gate.sh .
+
+  crap-gate-test:
+    desc: "Real end-to-end test of scripts/go-crap-gate.sh's OS-integration exemption + threshold logic (synthetic reverted commits, requires go-crap)"
+    cmds:
+      - echo "Running go-crap-gate.sh end-to-end self-test..."
+      - 'command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }'
+      - bash scripts/go-crap-gate_test.sh
+
+  crap-report:
+    desc: Full whole-repo go-crap debt report (informational, no gate)
+    cmds:
+      - 'command -v go-crap >/dev/null 2>&1 || { echo "go-crap not found. Run: go install github.com/padiazg/go-crap@latest"; exit 1; }'
+      - go-crap scan . --exclude '.*_test\.go'
+
+  check-diff-size:
+    desc: Block oversized files / accidental Git-LFS pointers in the diff vs origin/main (or CHECK_DIFF_SIZE_BASE override)
+    vars:
+      CHECK_DIFF_SIZE_BASE: '{{.CHECK_DIFF_SIZE_BASE | default "origin/main"}}'
+    cmds:
+      - echo "Checking diff for oversized files / LFS pointers..."
+      - task: gate-if-changed
+        vars:
+          BASE: '{{.CHECK_DIFF_SIZE_BASE}}'
+          PATHS: scripts/check-diff-size.sh scripts/check-diff-size_test.sh
+          SELF_TEST_LABEL: gates:check-diff-size-test
+          SELF_TEST_CMD: task gates:check-diff-size-test
+      - bash scripts/check-diff-size.sh
+
+  check-diff-size-test:
+    desc: Real end-to-end test of scripts/check-diff-size.sh (synthetic reverted commits)
+    cmds:
+      - echo "Running check-diff-size.sh end-to-end self-test..."
+      - bash scripts/check-diff-size_test.sh
+
+  check-plugin-api-diff:
+    desc: Fail on incompatible changes to the plugin/daemon wire contract (internal/types), requires apidiff
+    vars:
+      CHECK_API_DIFF_BASE: '{{.CHECK_API_DIFF_BASE | default "origin/main"}}'
+    cmds:
+      - echo "Checking plugin API surface for breaking changes..."
+      - 'command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }'
+      - task: gate-if-changed
+        vars:
+          BASE: '{{.CHECK_API_DIFF_BASE}}'
+          PATHS: scripts/check-plugin-api-diff.sh scripts/check-plugin-api-diff_test.sh
+          SELF_TEST_LABEL: gates:check-plugin-api-diff-test
+          SELF_TEST_CMD: task gates:check-plugin-api-diff-test
+      - bash scripts/check-plugin-api-diff.sh
+
+  check-plugin-api-diff-test:
+    desc: Real end-to-end test of scripts/check-plugin-api-diff.sh (synthetic reverted commits, requires apidiff)
+    cmds:
+      - echo "Running check-plugin-api-diff.sh end-to-end self-test..."
+      - 'command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }'
+      - bash scripts/check-plugin-api-diff_test.sh

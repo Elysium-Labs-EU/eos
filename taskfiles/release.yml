@@ -1,0 +1,57 @@
+version: '3'
+
+# LDFLAGS comes from the parent Taskfile.yml via this include's vars:
+# passthrough — do not redeclare it here (see taskfiles/setup.yml for why).
+
+tasks:
+  release-local:
+    desc: Build release binaries locally
+    cmds:
+      - echo "Building release binaries..."
+      - mkdir -p dist
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build {{.LDFLAGS}} -o dist/eos-linux-amd64 .
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build {{.LDFLAGS}} -o dist/eos-linux-arm64 .
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build {{.LDFLAGS}} -o dist/eos-darwin-amd64 .
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build {{.LDFLAGS}} -o dist/eos-darwin-arm64 .
+      - cd dist && sha256sum eos-linux-* eos-darwin-* > sha256sums.txt
+      - echo "Release binaries built in ./dist/"
+      - ls -lh dist/
+
+  changelog:
+    desc: Generate CHANGELOG.md from git history
+    cmds:
+      - echo "Generating CHANGELOG.md..."
+      - 'command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }'
+      - git cliff --output CHANGELOG.md
+      - echo "CHANGELOG.md updated"
+
+  changelog-preview:
+    desc: Preview unreleased changes (does not write to file)
+    cmds:
+      - 'command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }'
+      - git cliff --unreleased
+
+  release:
+    desc: Update changelog, tag and push a release (requires TAG=v1.2.0)
+    vars:
+      TAG: '{{.TAG}}'
+    cmds:
+      - |
+        if [ -z "{{.TAG}}" ]; then echo "Usage: task release:release TAG=v1.2.0"; exit 1; fi
+      - 'command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found. Install: https://git-cliff.org/docs/installation"; exit 1; }'
+      - git cliff --tag {{.TAG}} --output CHANGELOG.md
+      - git add CHANGELOG.md
+      - 'git diff --cached --quiet CHANGELOG.md || git commit -m "chore: update changelog for {{.TAG}}"'
+      - git push origin HEAD
+      - git tag -a {{.TAG}} -m "Release {{.TAG}}"
+      - git push origin {{.TAG}}
+
+  pre-release:
+    desc: Tag and push a pre-release (requires TAG=v1.2.0-rc.1, no changelog update)
+    vars:
+      TAG: '{{.TAG}}'
+    cmds:
+      - |
+        if [ -z "{{.TAG}}" ]; then echo "Usage: task release:pre-release TAG=v1.2.0-rc.1"; exit 1; fi
+      - git tag -a {{.TAG}} -m "Pre-release {{.TAG}}"
+      - git push origin {{.TAG}}

@@ -1,0 +1,37 @@
+version: '3'
+
+# VERSION, LDFLAGS, BINARY_NAME, GOBIN, INSTALL_PATH, GOLANGCI_LINT_CACHE all
+# come from the parent Taskfile.yml via this include's vars: passthrough — do
+# not redeclare them here (see taskfiles/setup.yml for why).
+
+tasks:
+  dev:
+    desc: Run eos locally
+    cmds:
+      - echo "Running eos in development mode..."
+      - go run . daemon
+
+  build:
+    desc: Build binary with version info
+    cmds:
+      - echo "Building eos {{.VERSION}}..."
+      - mkdir -p {{.GOBIN}}
+      - CGO_ENABLED=0 go build {{.LDFLAGS}} -o {{.GOBIN}}/{{.BINARY_NAME}} .
+      - echo "Binary built {{.GOBIN}}/{{.BINARY_NAME}}"
+
+  install:
+    desc: Install to ~/.local/bin
+    deps: [build]
+    cmds:
+      - echo "Installing to {{.INSTALL_PATH}}..."
+      - mkdir -p {{.INSTALL_PATH}}
+      - cp {{.GOBIN}}/{{.BINARY_NAME}} {{.INSTALL_PATH}}/
+      - "echo \"Installed! Run 'eos --help' to get started\""
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - echo "Cleaning..."
+      - rm -rf {{.GOBIN}} dist/ {{.GOLANGCI_LINT_CACHE}}
+      - go clean
+      - echo "Cleaned"

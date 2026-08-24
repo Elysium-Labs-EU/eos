@@ -1,0 +1,56 @@
+version: '3'
+
+vars:
+  COVERAGE_THRESHOLD: '{{.COVERAGE_THRESHOLD | default "49"}}'
+
+tasks:
+  test:
+    desc: Run tests
+    cmds:
+      - echo "Running tests..."
+      - go test . ./cmd ./internal/... -race -count=2
+
+  verify-mod:
+    desc: Verify on-disk module cache matches go.sum (defense-in-depth beyond go.sum presence)
+    cmds:
+      - echo "Verifying module cache..."
+      - go mod verify
+
+  integration:
+    desc: Compile+run integration-tagged tests IN PLACE (does not enter a VM despite the OrbStack line it prints; on macOS or without root/systemd, systemd-dependent cases just skip themselves; see orb:supervision for real coverage)
+    cmds:
+      - echo "Running integration tests..."
+      - 'echo "  On OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v -count=1"'
+      - go test ./cmd/... -tags integration -v -count=1
+
+  launchd:
+    desc: Run launchd install/start/stop/uninstall integration tests (native macOS, no orb needed — launchd is macOS-only)
+    cmds:
+      - echo "Running launchd integration tests..."
+      - go test ./cmd/... -tags integration -v -count=1 -run 'Launchd'
+
+  coverage:
+    desc: Get test coverage
+    cmds:
+      - echo "Getting test coverage..."
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out
+
+  coverage-check:
+    desc: Fail if total coverage is below COVERAGE_THRESHOLD (default 49%)
+    cmds:
+      - echo "Checking test coverage (threshold {{.COVERAGE_THRESHOLD}}%)..."
+      - go test -coverprofile=coverage.out ./... -covermode=atomic -count=1 2>&1 | grep -v "^?" || true
+      - |
+        total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,""); print $3}')
+        echo "Total coverage: ${total}%"
+        awk -v total="$total" -v threshold="{{.COVERAGE_THRESHOLD}}" \
+          'BEGIN { if (total+0 < threshold+0) { print "Coverage " total "% below threshold " threshold "%"; exit 1 } }'
+      - echo "Coverage check passed."
+
+  leak-test:
+    desc: Run tests with goroutine leak detection (-count=1, no -race to keep goleak output clean)
+    cmds:
+      - echo "Running tests with goroutine leak detection..."
+      - "echo \"Note: add 'defer goleak.VerifyNone(t)' or goleak.VerifyTestMain(m) to catch leaks.\""
+      - go test ./cmd ./internal/... -count=1 -timeout=60s -v 2>&1 | grep -E "(PASS|FAIL|leak|goroutine)" || true

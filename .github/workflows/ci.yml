@@ -1,7 +1,7 @@
 name: CI
 
-# The ci job calls `make ci` directly rather than re-declaring each check in
-# YAML: the Makefile is the single source of truth for what "passing" means
+# The ci job calls `task ci` directly rather than re-declaring each check in
+# YAML: Taskfile.yml is the single source of truth for what "passing" means
 # (test, lint, ast-grep, nilaway, coverage floor, go-crap change-risk gate),
 # so this workflow can't silently drift from it -- previously this job only
 # ran a hand-copied subset (test + coverage), skipping lint, ast-grep,
@@ -54,23 +54,32 @@ jobs:
       - name: Install ast-grep
         run: npm install -g @ast-grep/cli@0.45.0 --ignore-scripts
 
+      # Pinned to the commit for v3.53.1 (not the floating tag) so SonarCloud's
+      # dependency-predictability check treats this the same as the SHA-pinned
+      # actions/cache step below. go-task has no version file the way
+      # golangci-lint does -- bump this deliberately, not implicitly via @latest.
+      - name: Install go-task
+        run: go install github.com/go-task/task/v3/cmd/task@a10322cd63f94d8bc8b48bb5c0e80eec10eda1e7 # v3.53.1
+
       # ~/go/pkg/mod and ~/.cache/go-build are already cached by actions/setup-go;
-      # ~/go/bin (the installed tool binaries themselves) is not, and `make setup`
+      # ~/go/bin (the installed tool binaries themselves) is not, and `task setup`
       # was taking ~4.5min per run reinstalling golangci-lint/nilaway/go-crap/
-      # gitleaks/govulncheck from scratch every time.
+      # gitleaks/govulncheck from scratch every time. Keyed on Taskfile.yml +
+      # taskfiles/** now (was Makefile before the Taskfile migration) so a
+      # tool-version bump in either still invalidates the cache correctly.
       - name: Cache dev tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: devtools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          key: devtools-${{ runner.os }}-${{ hashFiles('Taskfile.yml', 'taskfiles/**') }}
           restore-keys: |
             devtools-${{ runner.os }}-
 
       - name: Install dev tools
-        run: make setup
+        run: task setup:setup
 
       - name: Run CI gate
-        run: make ci
+        run: task ci
 
   integration-test:
     name: Integration Test (root + systemd)

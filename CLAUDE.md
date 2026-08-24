@@ -1,10 +1,10 @@
-# Make Commands — Always Use These
+# Task Commands — Always Use These
 
-**Never run raw `go test`, `golangci-lint run`, `go build`, etc. Always use make.**
+**Never run raw `go test`, `golangci-lint run`, `go build`, etc. Always use `task`.**
 
-Run `make help` to list all available targets and find the right one for your task. The list may change — always check before reaching for a raw command.
+Run `task --list` to list all available tasks and find the right one for your work. The list may change — always check before reaching for a raw command.
 
-Before any commit or PR: `make ci`. If lint fails: `make fix`, then retry.
+Before any commit or PR: `task ci`. If lint fails: `task lint:fix`, then retry.
 
 ---
 
@@ -16,7 +16,7 @@ See [style.md](STYLE.md) — Go-FP + data-oriented design guide.
 
 # Architecture Decisions
 
-Before changing established design (daemon lifecycle, CI gates, test harness, config/permission model): check `docs/adr/` first. Run `make adr-find Q="concept"` to find the relevant ADR plus related code (ast-grep scan for existing ADR references, GitNexus for related symbols). The `docs/adr/` listing is the full set, and `make adr-find` prints each match with its status.
+Before changing established design (daemon lifecycle, CI gates, test harness, config/permission model): check `docs/adr/` first. Run `task setup:adr-find Q="concept"` to find the relevant ADR plus related code (ast-grep scan for existing ADR references, GitNexus for related symbols). The `docs/adr/` listing is the full set, and `task setup:adr-find` prints each match with its status.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
