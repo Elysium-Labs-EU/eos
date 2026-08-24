@@ -15,6 +15,44 @@ permissions:
   contents: read
 
 jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Block re-tagging an already-released version line
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # A pre-release always ranks below the stable release with the same
+          # MAJOR.MINOR.PATCH (semver), so a "-rc.N" tag cut after that version
+          # already shipped stable is permanently unreachable to any update
+          # check — silently. Block both that case and exact tag reuse.
+          BASE="${VERSION%%-*}"
+          IS_PRE=false
+          [[ "$VERSION" =~ -[a-zA-Z] ]] && IS_PRE=true
+
+          if gh release view "$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already has a release — refusing to re-tag/overwrite."
+            exit 1
+          fi
+
+          if [ "$IS_PRE" = true ] && gh release view "$BASE" --repo "${{ github.repository }}" --json isPrerelease -q '.isPrerelease' 2>/dev/null | grep -qx false; then
+            NEXT_PATCH="${BASE%.*}.$(( ${BASE##*.} + 1 ))"
+            echo "::error::$BASE already shipped as a stable release. A pre-release of it ($VERSION) can never be selected as an update target. Cut the next pre-release against an unreleased version instead, e.g. $NEXT_PATCH-rc.1"
+            exit 1
+          fi
+
+          echo "OK: $VERSION does not reuse an already-released version line."
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -51,7 +89,7 @@ jobs:
         run: go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
   build:
-    needs: [lint, test]
+    needs: [lint, test, tag-guard]
     strategy:
       matrix:
         include:
