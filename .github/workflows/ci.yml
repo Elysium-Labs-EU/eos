@@ -54,11 +54,12 @@ jobs:
       - name: Install ast-grep
         run: npm install -g @ast-grep/cli@0.45.0 --ignore-scripts
 
-      # Pinned to match the version verified during the Taskfile migration
-      # (see #295 discussion). go-task itself has no version file the way
+      # Pinned to the commit for v3.53.1 (not the floating tag) so SonarCloud's
+      # dependency-predictability check treats this the same as the SHA-pinned
+      # actions/cache step below. go-task has no version file the way
       # golangci-lint does -- bump this deliberately, not implicitly via @latest.
       - name: Install go-task
-        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+        run: go install github.com/go-task/task/v3/cmd/task@a10322cd63f94d8bc8b48bb5c0e80eec10eda1e7 # v3.53.1
 
       # ~/go/pkg/mod and ~/.cache/go-build are already cached by actions/setup-go;
       # ~/go/bin (the installed tool binaries themselves) is not, and `task setup`
