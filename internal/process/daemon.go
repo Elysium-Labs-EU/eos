@@ -386,7 +386,6 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	// Under sudo the daemon (re)starts as root even though the base dir was
 	// already chowned to the invoking user; align the freshly written PID file
 	// to that owner so an unprivileged `eos status` isn't locked out afterward.
-	// See issue #91.
 	if alignErr := ownership.Align(baseDir, pidFile); alignErr != nil {
 		errorMessage := fmt.Errorf("failed to align pid file ownership: %w", alignErr)
 		logger.Info(errorMessage.Error())
@@ -416,6 +415,13 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 	// keeps ls -l honest about who can even attempt to connect.
 	if chmodErr := os.Chmod(socketPath, 0600); chmodErr != nil {
 		errorMessage := fmt.Errorf("failed to set socket permissions: %w", chmodErr)
+		logger.Info(errorMessage.Error())
+		return nil, errorMessage
+	}
+	// Same self-healing as the PID file above: under sudo the socket is bound
+	// as root even though baseDir was already chowned to the invoking user.
+	if alignErr := ownership.Align(baseDir, socketPath); alignErr != nil {
+		errorMessage := fmt.Errorf("failed to align socket ownership: %w", alignErr)
 		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}

@@ -171,14 +171,13 @@ func ownerUID(t *testing.T, path string) int {
 	return int(stat.Uid)
 }
 
-// TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership verifies the
-// fix for issue #91: when newStandaloneDaemon runs as root, the PID file and
-// the log dir/file it creates are chowned to match baseDir's owner rather
-// than being left root-owned — the same self-healing behavior
-// alignDataFileOwnership already gives state.db (issue #14). PIDFile/LogDir
-// deliberately live under sockDir here, separate from baseDir (dbDir), to
-// prove ownership is aligned to baseDir's owner regardless of where those
-// paths sit relative to it.
+// TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership verifies that
+// when newStandaloneDaemon runs as root, the PID file, the log dir/file, and
+// the control socket it creates are all chowned to match baseDir's owner
+// rather than being left root-owned. PIDFile/LogDir/SocketPath deliberately
+// live under sockDir here, separate from baseDir (dbDir), to prove ownership
+// is aligned to baseDir's owner regardless of where those paths sit relative
+// to it.
 func TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to chown files to another uid")
@@ -203,7 +202,7 @@ func TestNewStandaloneDaemon_E2E_RootAlignsPIDFileAndLogOwnership(t *testing.T) 
 	defer d.shutdown(ctx)
 
 	logPath := filepath.Join(standalone.Log.LogDir, standalone.Log.LogFileName)
-	for _, p := range []string{standalone.PIDFile, standalone.Log.LogDir, logPath} {
+	for _, p := range []string{standalone.PIDFile, standalone.Log.LogDir, logPath, standalone.SocketPath} {
 		if got := ownerUID(t, p); got != targetUID {
 			t.Errorf("%s: expected owner uid %d (matching base dir), got %d", p, targetUID, got)
 		}
