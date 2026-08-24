@@ -419,6 +419,14 @@ func newStandaloneDaemon(ctx context.Context, logToFileAndConsole bool, verbose 
 		logger.Info(errorMessage.Error())
 		return nil, errorMessage
 	}
+	// Same self-healing as the PID file above: under sudo the socket is bound
+	// as root even though baseDir was already chowned to the invoking user.
+	// See issue #306.
+	if alignErr := ownership.Align(baseDir, socketPath); alignErr != nil {
+		errorMessage := fmt.Errorf("failed to align socket ownership: %w", alignErr)
+		logger.Info(errorMessage.Error())
+		return nil, errorMessage
+	}
 	logger.Debug("socket listening", "path", socketPath)
 
 	db, err := database.NewDB(ctx, baseDir)
