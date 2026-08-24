@@ -17,7 +17,7 @@ import (
 // Integration tests require:
 //   - Linux with systemd as PID 1
 //   - Root (or sudo)
-//   - Run via: make test-integration
+//   - Run via: task test:integration
 //     or on OrbStack: orb run -m <machine> -- sudo go test ./cmd/... -tags integration -v
 //
 // The two tests below carry "Supervised" in their names so make
@@ -28,7 +28,7 @@ import (
 func requireSystemd(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Logf("SKIP %s: needs root to enable/disable a real systemd unit; run via `make test-integration` on Linux as root (e.g. OrbStack). This systemd path is NOT covered on this run.", t.Name())
+		t.Logf("SKIP %s: needs root to enable/disable a real systemd unit; run via `task test:integration` on Linux as root (e.g. OrbStack). This systemd path is NOT covered on this run.", t.Name())
 		t.Skip("requires root")
 	}
 	runtime, err := detectActiveSystemRuntime()

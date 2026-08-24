@@ -16,7 +16,7 @@ for a CLI invocation that starts a service and returns almost immediately:
   drained by goroutines inside the launching process. Once that process
   exits, the pipes' read ends close; the service gets EPIPE on its next
   write. `nextjs` (writes a startup banner immediately) and `vite` (a build
-  that outlives the CLI) both hit this on `make test-fixtures-orb`; services
+  that outlives the CLI) both hit this on `task orb:test-fixtures`; services
   that write nothing before the CLI exits happened not to.
 - `buildLaunchCommand` passes `m.ctx` to `exec.CommandContext`. Cancelling
   that context stops the service — correct for the daemon, whose own
@@ -117,6 +117,6 @@ supervised daemon. In one line each, this is now the definition of what
 - `eos add`/`eos update` only ever write catalog rows, unaffected.
 - `eos reload` still refuses outside the daemon, unaffected.
 
-`make test-fixtures-orb` now backgrounds its `eos run` launches and signals
+`task orb:test-fixtures` now backgrounds its `eos run` launches and signals
 them to stop instead of relying on a fire-and-forget `eos api run`, which
 `eos api run` no longer permits in local mode.

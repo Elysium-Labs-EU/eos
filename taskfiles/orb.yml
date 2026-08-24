@@ -66,6 +66,15 @@ tasks:
     cmds:
       - 'orb run -m {{.ORB_MACHINE}} bash -lc "cd {{.ROOT_DIR}} && SKIP_NODE_INSTALL={{.SKIP_NODE_INSTALL}} SKIP_BUN_INSTALL={{.SKIP_BUN_INSTALL}} SKIP_PNPM_INSTALL={{.SKIP_PNPM_INSTALL}} SKIP_JQ_INSTALL={{.SKIP_JQ_INSTALL}} bash scripts/test-fixtures-orb.sh"'
 
+  test-matrix:
+    desc: Run e2e suites across every OrbStack golden VM in parallel, from a clean clone each time (MATRIX_SUITE=name to filter, MATRIX_NIGHTLY=true to include nightly suites)
+    deps: [":release:release-local"]
+    vars:
+      MATRIX_SUITE: '{{.MATRIX_SUITE | default ""}}'
+      MATRIX_NIGHTLY: '{{.MATRIX_NIGHTLY | default "false"}}'
+    cmds:
+      - go run ./tools/testmatrix -config test/matrix.yml -suite "{{.MATRIX_SUITE}}" -nightly={{.MATRIX_NIGHTLY}}
+
   profile:
     desc: 'Capture live heap from daemon on OrbStack (start with: EOS_PPROF_ADDR=:6060 eos daemon start)'
     vars:

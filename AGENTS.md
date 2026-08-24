@@ -1,10 +1,10 @@
-# Make Commands — Always Use These
+# Task Commands — Always Use These
 
-**Never run raw `go test`, `golangci-lint run`, `go build`, etc. directly. Always use the make target.**
+**Never run raw `go test`, `golangci-lint run`, `go build`, etc. directly. Always use the task target.**
 
-Run `make help` to list all available targets and find the right one for your task. The list may change — always check before reaching for a raw command.
+Run `task --list` to list all available tasks and find the right one for your work. The list may change — always check before reaching for a raw command.
 
-Before any commit or PR, run `make ci`. If lint fails, run `make fix` then retry.
+Before any commit or PR, run `task ci`. If lint fails, run `task lint:fix` then retry.
 
 ---
 

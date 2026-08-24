@@ -87,10 +87,11 @@ tasks:
     # Must be cmds: with explicit sequential task: calls, never deps: — Task
     # runs a deps: array concurrently, not left-to-right like Make's
     # prerequisite list. The Makefile equivalent (`ci: test verify-mod lint sg
-    # nilcheck typos test-coverage-check crap check-diff-size
-    # check-plugin-api-diff govulncheck secrets`) runs strictly in order;
-    # porting it as deps: would race unrelated test runs against each other
-    # (e.g. contention on coverage.out) and drop fail-fast-in-order behavior.
+    # nilcheck typos shellcheck test-coverage-check crap check-diff-size
+    # check-plugin-api-diff check-golangci-pin govulncheck secrets`) runs
+    # strictly in order; porting it as deps: would race unrelated test runs
+    # against each other (e.g. contention on coverage.out) and drop
+    # fail-fast-in-order behavior.
     cmds:
       - task: test:test
       - task: test:verify-mod
@@ -98,10 +99,12 @@ tasks:
       - task: lint:sg
       - task: lint:nilcheck
       - task: lint:typos
+      - task: lint:shellcheck
       - task: test:coverage-check
       - task: gates:crap
       - task: gates:check-diff-size
       - task: gates:check-plugin-api-diff
+      - task: lint:check-golangci-pin
       - task: lint:govulncheck
       - task: lint:secrets
       - echo "All CI checks passed!"

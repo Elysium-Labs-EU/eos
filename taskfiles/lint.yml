@@ -26,9 +26,9 @@ tasks:
       - typos
 
   fix:
-    desc: Fix go formatting
+    desc: Fix go formatting (always the pinned golangci-lint version, regardless of what's on PATH)
     cmds:
-      - golangci-lint fmt
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} fmt
       - go tool fieldalignment -fix ./...
 
   sg:
@@ -59,3 +59,22 @@ tasks:
     cmds:
       - 'command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run: task setup:setup"; exit 1; }'
       - govulncheck ./...
+
+  shellcheck:
+    desc: 'Lint shell scripts under scripts/ (warning severity and up -- info-level notes don''t gate CI; requires: brew install shellcheck, preinstalled on ubuntu-latest CI runners)'
+    cmds:
+      - echo "Running shellcheck..."
+      - 'command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck not found. Run: task setup:setup"; exit 1; }'
+      - shellcheck -S warning scripts/*.sh
+
+  check-golangci-pin:
+    desc: Fail if the golangci-lint version pin drifts from .golangci-lint-version (workflow hardcodes it, Taskfile/lefthook fall back to PATH)
+    cmds:
+      - echo "Checking golangci-lint version pin..."
+      - bash scripts/check-golangci-pin.sh
+
+  check-golangci-pin-test:
+    desc: Real end-to-end test of scripts/check-golangci-pin.sh (mutates and restores tracked files)
+    cmds:
+      - echo "Running check-golangci-pin.sh end-to-end self-test..."
+      - bash scripts/check-golangci-pin_test.sh

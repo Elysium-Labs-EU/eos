@@ -9,7 +9,7 @@
 #   A) clean tree (today's state) must PASS.
 #   B) a non-exact .golangci-lint-version (e.g. "latest") must FAIL.
 #   C) a workflow hardcoding `version: vX.Y.Z` next to golangci must FAIL.
-#   D) the Makefile's fix: target calling bare `golangci-lint fmt` must FAIL.
+#   D) taskfiles/lint.yml's fix: task calling bare `golangci-lint fmt` must FAIL.
 #   E) lefthook.yml hardcoding a version instead of reading the file must FAIL.
 set -euo pipefail
 
@@ -21,15 +21,17 @@ VERSION_FILE=".golangci-lint-version"
 RELEASE_WORKFLOW=".github/workflows/release.yml"
 
 backup_dir="$(mktemp -d)"
+TASKFILE="taskfiles/lint.yml"
+
 cp "$VERSION_FILE" "$backup_dir/version"
 cp "$RELEASE_WORKFLOW" "$backup_dir/release.yml"
-cp Makefile "$backup_dir/Makefile"
+cp "$TASKFILE" "$backup_dir/lint.yml"
 cp lefthook.yml "$backup_dir/lefthook.yml"
 
 restore() {
     cp "$backup_dir/version" "$VERSION_FILE"
     cp "$backup_dir/release.yml" "$RELEASE_WORKFLOW"
-    cp "$backup_dir/Makefile" Makefile
+    cp "$backup_dir/lint.yml" "$TASKFILE"
     cp "$backup_dir/lefthook.yml" lefthook.yml
     rm -rf "$backup_dir"
 }
@@ -68,17 +70,17 @@ else
 fi
 cp "$backup_dir/release.yml" "$RELEASE_WORKFLOW"
 
-# D) Makefile fix: target reverted to a bare, unpinned call -- must fail.
-sed -i.bak 's|go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@\$(GOLANGCI_LINT_VERSION) fmt|golangci-lint fmt|' Makefile
-rm -f Makefile.bak
+# D) taskfiles/lint.yml fix: task reverted to a bare, unpinned call -- must fail.
+sed -i.bak 's|go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{\.GOLANGCI_LINT_VERSION}} fmt|golangci-lint fmt|' "$TASKFILE"
+rm -f "${TASKFILE}.bak"
 if bash "$GATE" >/tmp/check-golangci-pin-test-d.log 2>&1; then
-    echo "FAIL: bare 'golangci-lint fmt' in Makefile was not rejected:"
+    echo "FAIL: bare 'golangci-lint fmt' in ${TASKFILE} was not rejected:"
     cat /tmp/check-golangci-pin-test-d.log
     fail=1
 else
-    echo "PASS: bare Makefile invocation correctly rejected"
+    echo "PASS: bare ${TASKFILE} invocation correctly rejected"
 fi
-cp "$backup_dir/Makefile" Makefile
+cp "$backup_dir/lint.yml" "$TASKFILE"
 
 # E) lefthook.yml hardcoding a version -- must fail.
 sed -i.bak 's|golangci-lint@\$(cat "\$(git rev-parse --show-toplevel)/\.golangci-lint-version")|golangci-lint@v2.0.0|g' lefthook.yml

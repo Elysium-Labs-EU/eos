@@ -12,17 +12,18 @@ pre-push:
 
 pre-commit:
   commands:
-    # GOLANGCI_LINT_CACHE is set inline rather than inherited from the Makefile:
-    # these run golangci-lint directly, so the Makefile's export never reaches
-    # them. Without it they fall back to the one shared per-user cache, which is
-    # keyed on file content - identical sources in two worktrees collide and one
-    # tree is served the other's stored findings. That matters most here, since
-    # this hook decides whether a commit is allowed. show-toplevel resolves to
-    # the linked worktree's own root, so each tree isolates itself.
+    # GOLANGCI_LINT_CACHE is set inline rather than inherited from the Taskfile:
+    # these run golangci-lint directly, so the Taskfile's env: export never
+    # reaches them. Without it they fall back to the one shared per-user cache,
+    # which is keyed on file content - identical sources in two worktrees
+    # collide and one tree is served the other's stored findings. That matters
+    # most here, since this hook decides whether a commit is allowed.
+    # show-toplevel resolves to the linked worktree's own root, so each tree
+    # isolates itself.
     #
     # The version comes from .golangci-lint-version via go run rather than from
-    # a PATH lookup, for the same reason make lint reads it: a lint verdict must
-    # not depend on whose golangci-lint happens to come first on PATH. Three
+    # a PATH lookup, for the same reason task lint:lint reads it: a lint verdict
+    # must not depend on whose golangci-lint happens to come first on PATH. Three
     # versions have already disagreed about one unchanged line in a sibling repo,
     # and this hook is what decides whether a commit is allowed at all.
     format:

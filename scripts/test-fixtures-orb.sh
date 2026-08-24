@@ -10,8 +10,8 @@
 # gap called out in eos#181: the fixture corpus + OrbStack VPS simulator
 # existed but were never wired into anything that runs them.
 #
-# Must run *inside* the target VM (see the `test-fixtures-orb` Makefile
-# target, which orb-runs this script with the repo's $PWD shared in).
+# Must run *inside* the target VM (see the `orb:test-fixtures` Taskfile
+# task, which orb-runs this script with the repo's $PWD shared in).
 #
 # Env vars:
 #   EOS_BIN            path to the eos binary to install (default: dist/eos-linux-<arch>)

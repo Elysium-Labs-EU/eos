@@ -2,17 +2,17 @@
 
 ## Prerequisites
 
-Go 1.26.4 or later and `make` are required. Verify with `go version` and `make --version`.
+Go 1.26.4 or later and [`task`](https://taskfile.dev) (go-task) are required. Verify with `go version` and `task --version`.
 
 ## Setup
 
 ```bash
 git clone https://github.com/Elysium-Labs-EU/eos
 cd eos
-make setup
+task setup:setup
 ```
 
-`make setup` installs the development toolchain (golangci-lint, lefthook, sg). Run `make help` to see all available targets; always prefer a make target over raw `go` or tool commands.
+`task setup:setup` installs the development toolchain (golangci-lint, lefthook, sg). Run `task --list` to see all available tasks; always prefer a task over raw `go` or tool commands.
 
 ## Making Changes
 
@@ -27,12 +27,12 @@ Branch from `main` and name the branch after the change: `feat/service-labels`, 
 ## Running Tests
 
 ```bash
-make ci
+task ci
 ```
 
-This runs the full lint and test suite. It must pass before opening a PR. If lint reports violations, `make fix` resolves most of them automatically; run `make ci` again after.
+This runs the full lint and test suite. It must pass before opening a PR. If lint reports violations, `task lint:fix` resolves most of them automatically; run `task ci` again after.
 
-`make ci` runs on your local OS only. If your change touches OS-facing code (process groups, signals, `/proc`, systemd — e.g. `internal/procutil`, `internal/process`, `internal/manager`), also run `make ci-full` (or at least `make test-linux`) before opening a PR: some behavior (like zombie-process signal semantics) only diverges on Linux and won't fail on macOS. Don't rely on CI to catch it first.
+`task ci` runs on your local OS only. If your change touches OS-facing code (process groups, signals, `/proc`, systemd — e.g. `internal/procutil`, `internal/process`, `internal/manager`), also run `task ci-full` (or at least `task orb:test-linux`) before opening a PR: some behavior (like zombie-process signal semantics) only diverges on Linux and won't fail on macOS. Don't rely on CI to catch it first.
 
 ## Commit Format
 
@@ -53,4 +53,4 @@ Breaking changes go in the commit footer: `BREAKING CHANGE: <description>`.
 
 Fill in the PR template. The summary should explain *why* the change is needed, not just what it does. Link the issue it resolves with `Closes #N`.
 
-All CI checks must be green. A PR that breaks `make ci` will not be reviewed until it is fixed.
+All CI checks must be green. A PR that breaks `task ci` will not be reviewed until it is fixed.

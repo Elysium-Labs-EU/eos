@@ -31,8 +31,8 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) (string,
 type Orb struct {
 	Runner CmdRunner
 	// Workdir is a host-side directory (typically the repo root) to run
-	// suite commands from inside the VM, mirroring the "cd $(PWD)" every
-	// existing OrbStack Makefile target does. OrbStack shares and
+	// suite commands from inside the VM, mirroring the "cd {{.ROOT_DIR}}"
+	// every existing OrbStack Taskfile task does. OrbStack shares and
 	// translates host paths into the VM automatically. Empty means run
 	// from the VM's default directory.
 	Workdir string
@@ -44,7 +44,7 @@ func NewOrb() *Orb {
 }
 
 // goPathPrefix mirrors the "export PATH=/usr/local/go/bin:$PATH;" every
-// existing go-test Makefile target prepends, since golden VMs install Go by
+// existing go-test Taskfile task prepends, since golden VMs install Go by
 // tarball rather than through a package manager that puts it on PATH.
 const goPathPrefix = "export PATH=/usr/local/go/bin:$PATH; "
 
@@ -59,8 +59,8 @@ func (o *Orb) Clone(ctx context.Context, golden, name string) error {
 }
 
 // Run executes script inside machine vm via a login shell, mirroring the
-// "orb run -m $(ORB_MACHINE) bash -lc ..." pattern used by the existing
-// Makefile targets.
+// "orb run -m {{.ORB_MACHINE}} bash -lc ..." pattern used by the existing
+// Taskfile tasks.
 func (o *Orb) Run(ctx context.Context, vm, script string) (string, error) {
 	args := []string{"run", "-m", vm}
 	if o.Workdir != "" {
