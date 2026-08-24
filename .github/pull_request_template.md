@@ -8,9 +8,9 @@
 
 ## Test plan
 
-<!-- How was this tested? Did you run make ci? Any manual steps? -->
+<!-- How was this tested? Did you run task ci? Any manual steps? -->
 
-- [ ] `make ci` passes locally
+- [ ] `task ci` passes locally
 
 ## Notes for reviewer
 

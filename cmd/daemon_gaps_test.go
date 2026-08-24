@@ -30,7 +30,7 @@ package cmd
 //   - printAllDaemons' DiscoverDaemons() error branch (~line 844) and
 //     openrcDaemonController.Start/Stop's rc-service delegation (~lines 406,
 //     419): all three sit behind an `os.Getuid() != 0` guard that returns before
-//     ever reaching them; neither this sandbox nor the non-integration `make ci`
+//     ever reaching them; neither this sandbox nor the non-integration `task ci`
 //     job runs as root, so they are structurally unreachable in the graded run
 //     (the separate root+systemd integration-test CI job is -tags integration
 //     and isn't part of this coverage measurement either).

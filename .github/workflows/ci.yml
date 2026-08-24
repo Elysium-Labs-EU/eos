@@ -46,7 +46,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # make setup does not install ast-grep (the sg target expects it
+      # task setup:setup does not install ast-grep (the sg target expects it
       # preinstalled, e.g. via brew locally); the npm package is the simplest
       # reliable install on a GitHub-hosted runner (node is preinstalled).
       # Version pinned (not a floating tag) and --ignore-scripts blocks

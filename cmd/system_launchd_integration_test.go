@@ -17,7 +17,7 @@ import (
 
 // Integration tests require:
 //   - macOS (launchd as PID 1)
-//   - Run via: make test-launchd
+//   - Run via: task test:launchd
 //
 // Unlike systemd, "launchctl bootstrap/bootout" resolve jobs by domain + label, not by
 // a fixed search path, so these tests can use a throwaway plist in t.TempDir() instead

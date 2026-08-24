@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Fails if the golangci-lint version stops having exactly one source of truth.
 #
-# The version lives in .golangci-lint-version and is read by the Makefile
+# The version lives in .golangci-lint-version and is read by taskfiles/lint.yml
 # (lint: and fix:), the pre-commit hook (lefthook.yml), and the release
 # workflow. Nothing about that arrangement is self-enforcing: a hardcoded
-# version in a workflow, or a Makefile/lefthook command calling whatever
+# version in a workflow, or a Taskfile/lefthook command calling whatever
 # golangci-lint happens to be on PATH, reintroduces the split quietly and
 # only shows up when two of them disagree about a specific line.
 #
@@ -51,27 +51,29 @@ for workflow in .github/workflows/*.yml; do
 done
 
 # A bare `golangci-lint run|fmt` resolves from PATH, which is the divergence
-# this whole arrangement exists to prevent. Both the lint: and fix: targets
-# must go through the pinned `go run .../golangci-lint@$(GOLANGCI_LINT_VERSION)`
+# this whole arrangement exists to prevent. Both the lint: and fix: tasks
+# must go through the pinned `go run .../golangci-lint@{{.GOLANGCI_LINT_VERSION}}`
 # form instead.
-if grep -nE '^\tgolangci-lint (run|fmt)' Makefile >/dev/null 2>&1; then
-    fail "Makefile calls golangci-lint from PATH; use \$(GOLANGCI_LINT_VERSION)"
-    grep -nE '^\tgolangci-lint (run|fmt)' Makefile | sed 's/^/    /' >&2
+readonly TASKFILE="taskfiles/lint.yml"
+
+if grep -nE '^\s*-\s*golangci-lint (run|fmt)' "$TASKFILE" >/dev/null 2>&1; then
+    fail "${TASKFILE} calls golangci-lint from PATH; use {{.GOLANGCI_LINT_VERSION}}"
+    grep -nE '^\s*-\s*golangci-lint (run|fmt)' "$TASKFILE" | sed 's/^/    /' >&2
 fi
 
 for target in lint fix; do
-    # Extract the target's recipe lines (tab-indented lines following its
-    # "name:" header, up to the next unindented line) and require the
-    # pinned invocation to appear somewhere in them.
-    recipe="$(awk -v t="^${target}:" '
+    # Extract the task's cmds: lines (2-space-indented body following its
+    # "  name:" header, up to the next task at the same indent) and require
+    # the pinned invocation to appear somewhere in them.
+    recipe="$(awk -v t="^  ${target}:" '
         $0 ~ t { in_target=1; next }
-        in_target && /^[^\t]/ { in_target=0 }
+        in_target && /^  [a-zA-Z_-]+:/ { in_target=0 }
         in_target { print }
-    ' Makefile)"
+    ' "$TASKFILE")"
     if [ -z "$recipe" ]; then
-        fail "Makefile has no ${target}: target"
-    elif ! printf '%s\n' "$recipe" | grep -q 'golangci-lint/v2/cmd/golangci-lint@\$(GOLANGCI_LINT_VERSION)'; then
-        fail "Makefile's ${target}: target does not use the pinned golangci-lint invocation"
+        fail "${TASKFILE} has no ${target}: task"
+    elif ! printf '%s\n' "$recipe" | grep -q 'golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}'; then
+        fail "${TASKFILE}'s ${target}: task does not use the pinned golangci-lint invocation"
     fi
 done
 
