@@ -143,6 +143,14 @@ eos is a service supervisor.
 	return rootCmd
 }
 
+// NewRootCmdForDocs builds the full command tree for documentation
+// generation only (see tools/gendocs). It must never be executed: flags
+// and RunE closures assume a live daemon/manager that generation never
+// provides.
+func NewRootCmdForDocs() *cobra.Command {
+	return newRootCmd()
+}
+
 func newRootCmd() *cobra.Command {
 	// rootCmd declared before assignment so lazyInit can capture the variable.
 	// By the time any closure executes (at RunE time), rootCmd is non-nil.

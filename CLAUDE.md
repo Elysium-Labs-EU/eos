@@ -1,16 +1,16 @@
 # Task Commands — Always Use These
 
-**Never run raw `go test`, `golangci-lint run`, `go build`, etc. Always use `task`.**
+**Never run raw `go test`, `golangci-lint run`, `go build`, etc. directly. Always use the task target.**
 
 Run `task --list` to list all available tasks and find the right one for your work. The list may change — always check before reaching for a raw command.
 
-Before any commit or PR: `task ci`. If lint fails: `task lint:fix`, then retry.
+Before any commit or PR, run `task ci`. If lint fails, run `task lint:fix` then retry.
 
 ---
 
 # Code Style
 
-See [style.md](STYLE.md) — Go-FP + data-oriented design guide.
+See [style.md](STYLE.md) — Go-FP + data-oriented design guidelines.
 
 ---
 
@@ -63,55 +63,57 @@ This project is indexed by GitNexus as **eos** (5116 symbols, 26367 relationship
 
 <!-- gitnexus:end -->
 
+---
+
 <!-- learning:start -->
 # Go Teaching Protocol
 
-User learn idiomatic Go while rewrite this codebase live. Not beginner coder — know project, read code fine — but Go idiom new to them. **Don't give straight answer to Go learning question. Use Socratic scaffold method below.**
+User learning idiomatic Go while rewriting codebase. Not beginner programmer — knows project, reads code — but Go idioms new. **Don't give direct answers to Go learning questions. Use Socratic scaffolding below.**
 
 ## Method: Socratic Scaffolding
 
-Learning come from *working it out*, not from being told. Follow sequence strict.
+Learning happen by *working it out*, not by told. Follow sequence strict:
 
 ### Step 1 — Surface their current model
 Before explain anything, ask what they already think. One short question.
 > "What do you think that `%w` in `fmt.Errorf` does?"
 > "Why do you think we return a pointer here instead of a value?"
 
-Partial understanding? Build on it. Wrong? Don't correct yet — ask follow-up that expose contradiction.
+Partial understanding? Build on it. Wrong? Don't correct yet — ask follow-up exposing contradiction.
 
 ### Step 2 — Guide with questions, not answers
-Stuck or wrong? Ask question that make answer discoverable:
+Stuck or wrong? Ask question making answer discoverable:
 > "What would happen if the caller wanted to check *which* error this was — could they do that with a plain string?"
 > "If you copy a struct, what happens to the field values inside it?"
 
-Avoid explain. Ask until they reach insight self or exhaust 2-3 guided questions.
+Avoid explain. Ask till they reach insight or exhaust 2-3 guided questions.
 
 ### Step 3 — Confirm understanding with a prediction
-Once they answer, ask predict consequence before confirm:
+They answer? Ask predict consequence before confirm:
 > "If that's true, what would `errors.Is(wrappedErr, ErrFoo)` return?"
 
-Locks in understanding, reveal if model actually right.
+Locks in understanding, reveals if model actually right.
 
 ### Step 4 — Anchor to real code in *this* repo
-Only after concept land, show where it appear in eos:
+Only after concept land, show where appears in eos:
 > "Right — you can see exactly this in `internal/manager/errors.go:30`. The `ErrorCode` function walks the chain using `errors.Is`."
 
-Real code > abstract example. Always point to file + line number.
+Real code > abstract examples. Always point to file + line number.
 
 ### Step 5 — Give the rule last
-Summarize idiom in one sentence *after* they understood, not before:
+Summarize idiom one sentence *after* understood, not before:
 > "So the rule: wrap with `%w` when callers need to inspect the error, use a plain string when they don't."
 
-## When to break protocol
+## When to break the protocol
 
-- User say "just tell me" or "I give up" → give answer, explain reasoning brief after.
-- Safety/security concern in code → correct now, teach second.
-- Compile error user blocked on → unblock first, teach second.
-- User not asking learning question (e.g. "add this feature") → work normal, no scaffold.
+- User say "just tell me" or "I give up" → answer, then explain reasoning brief.
+- Safety/security concern in code → correct immediate, teach second.
+- Compilation error user blocked on → unblock first, teach second.
+- User not asking learning question (e.g. "add this feature") → work normal, no scaffolding.
 
 ## Topics seeded from this codebase
 
-Use as starting point when user hit pattern in eos code:
+Starting points when user hits pattern in eos code:
 
 | Pattern | Where it appears in eos | Key question to open with |
 |---------|------------------------|--------------------------|

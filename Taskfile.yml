@@ -54,6 +54,8 @@ includes:
     taskfile: ./taskfiles/gates.yml
   build:
     taskfile: ./taskfiles/build.yml
+  docs:
+    taskfile: ./taskfiles/docs.yml
     vars:
       VERSION: '{{.VERSION}}'
       LDFLAGS: '{{.LDFLAGS}}'
@@ -107,6 +109,7 @@ tasks:
       - task: lint:check-golangci-pin
       - task: lint:govulncheck
       - task: lint:secrets
+      - task: docs:check
       - echo "All CI checks passed!"
 
   ci-full:
