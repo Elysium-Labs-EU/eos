@@ -1,0 +1,51 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Nightly Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Get nightly version
+        id: version
+        run: |
+          DATE=$(date +%Y%m%d)
+          echo "version=nightly-$DATE" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        run: |
+          VERSION_PKG="$(go list -m)/internal/buildinfo"
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build \
+            -ldflags="-s -w \
+              -X '${VERSION_PKG}.Version=${{ steps.version.outputs.version }}' \
+              -X '${VERSION_PKG}.GitCommit=${{ github.sha }}' \
+              -X '${VERSION_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+            -o eos-${{ matrix.goos }}-${{ matrix.goarch }}-nightly .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eos-nightly-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: eos-${{ matrix.goos }}-${{ matrix.goarch }}-nightly
+          retention-days: 7

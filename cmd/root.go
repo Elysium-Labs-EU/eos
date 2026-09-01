@@ -140,6 +140,17 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig, testDaemonConfig, noLocalMode))
 	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
+	// Add top-level version command for better discoverability (test)
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print the version information",
+		Long:  `Print the current eos version, git commit hash, and build date.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Println(buildinfo.Get())
+		},
+	}
+	rootCmd.AddCommand(versionCmd)
+
 	return rootCmd
 }
 
@@ -200,6 +211,13 @@ eos is a service supervisor.
 	capabilities for your VPS infrastructure.`, buildinfo.GetVersionOnly()),
 		Version: buildinfo.Get(),
 
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) == 0 {
+				fmt.Printf("eos %s\n", buildinfo.GetVersionOnly())
+				_ = cmd.Help()
+			}
+		},
+
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if cleanup != nil {
 				cleanup()
@@ -236,6 +254,17 @@ eos is a service supervisor.
 	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	rootCmd.AddCommand(newAPICmd(getManager, getConfig, getDaemonConfig, managerModeFn))
+
+	// Add top-level version command for better discoverability
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print the version information",
+		Long:  `Print the current eos version, git commit hash, and build date.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Println(buildinfo.Get())
+		},
+	}
+	rootCmd.AddCommand(versionCmd)
 
 	return rootCmd
 }

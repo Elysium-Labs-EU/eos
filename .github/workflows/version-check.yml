@@ -1,0 +1,43 @@
+name: Version Check
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  version-command:
+    name: Version Command Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build with test version
+        run: |
+          go build -ldflags="-X github.com/Elysium-Labs-EU/eos/internal/buildinfo.Version=test-1.2.3 -X github.com/Elysium-Labs-EU/eos/internal/buildinfo.GitCommit=abc123def -X github.com/Elysium-Labs-EU/eos/internal/buildinfo.BuildDate=2024-01-01T00:00:00Z" -o eos-test .
+
+      - name: Test version command
+        run: |
+          ./eos-test version
+
+      - name: Test empty command (version printing)
+        run: |
+          ./eos-test | head -1 | grep -q "eos test-1.2.3" || exit 1
+
+      - name: Test version flag
+        run: |
+          ./eos-test --version | grep -q "test-1.2.3" || exit 1
