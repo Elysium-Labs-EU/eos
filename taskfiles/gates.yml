@@ -103,3 +103,22 @@ tasks:
       - echo "Running check-plugin-api-diff.sh end-to-end self-test..."
       - 'command -v apidiff >/dev/null 2>&1 || { echo "apidiff not found. Run: go install golang.org/x/exp/cmd/apidiff@latest"; exit 1; }'
       - bash scripts/check-plugin-api-diff_test.sh
+
+  check-arrow-notation:
+    desc: Fail if markdown prose uses arrow notation (ASCII, unicode, or HTML entity)
+    vars:
+      CHECK_ARROW_NOTATION_BASE: '{{.CHECK_ARROW_NOTATION_BASE | default "origin/main"}}'
+    cmds:
+      - task: gate-if-changed
+        vars:
+          BASE: '{{.CHECK_ARROW_NOTATION_BASE}}'
+          PATHS: scripts/check-arrow-notation.sh scripts/check-arrow-notation_test.sh
+          SELF_TEST_LABEL: gates:check-arrow-notation-test
+          SELF_TEST_CMD: task gates:check-arrow-notation-test
+      - bash scripts/check-arrow-notation.sh
+
+  check-arrow-notation-test:
+    desc: Real end-to-end test of scripts/check-arrow-notation.sh
+    cmds:
+      - echo "Running check-arrow-notation.sh end-to-end self-test..."
+      - bash scripts/check-arrow-notation_test.sh

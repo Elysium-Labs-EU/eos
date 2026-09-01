@@ -34,14 +34,14 @@ diagnosis.
 ## Workflow
 
 ```
-0. list_repos {}                                          → Bind repo
-1. query({search_query: "<error or symptom>"})            → Find related execution flows
-2. context({name: "<suspect>"})                    → See callers/callees/processes
-3. READ gitnexus://repo/{name}/process/{name}                → Trace execution flow
-4. cypher({statement: "MATCH path..."})                 → Custom traces if needed
+0. list_repos {}                                          , then  Bind repo
+1. query({search_query: "<error or symptom>"})            , then  Find related execution flows
+2. context({name: "<suspect>"})                    , then  See callers/callees/processes
+3. READ gitnexus://repo/{name}/process/{name}                , then  Trace execution flow
+4. cypher({statement: "MATCH path..."})                 , then  Custom traces if needed
 ```
 
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> If "Index is stale", run `node .gitnexus/run.cjs analyze` in terminal.
 
 ## Checklist
 
@@ -61,10 +61,10 @@ diagnosis.
 
 | Symptom              | GitNexus Approach                                          |
 | -------------------- | ---------------------------------------------------------- |
-| Error message        | `query` for error text → `context` on throw sites |
-| Wrong return value   | `context` on the function → trace callees for data flow    |
-| Intermittent failure | `context` → look for external calls, async deps            |
-| Performance issue    | `context` → find symbols with many callers (hot paths)     |
+| Error message        | `query` for error text, then `context` on throw sites |
+| Wrong return value   | `context` on the function, then trace callees for data flow    |
+| Intermittent failure | `context`, then look for external calls, async deps            |
+| Performance issue    | `context`, then find symbols with many callers (hot paths)     |
 | Recent regression    | `detect_changes` to see what your changes affect — pass `worktree` for a linked worktree |
 | "How does A reach B?" | `trace` between the two symbols — shortest call chain in one call |
 
@@ -74,17 +74,17 @@ diagnosis.
 
 ```
 query({search_query: "payment validation error", repo: "my-app"})
-→ Processes: CheckoutFlow, ErrorHandling
-→ Symbols: validatePayment, handlePaymentError, PaymentException
+, then  Processes: CheckoutFlow, ErrorHandling
+, then  Symbols: validatePayment, handlePaymentError, PaymentException
 ```
 
 **context** — full context for a suspect:
 
 ```
 context({name: "validatePayment", repo: "my-app"})
-→ Incoming calls: processCheckout, webhookHandler
-→ Outgoing calls: verifyCard, fetchRates (external API!)
-→ Processes: CheckoutFlow (step 3/7)
+, then  Incoming calls: processCheckout, webhookHandler
+, then  Outgoing calls: verifyCard, fetchRates (external API!)
+, then  Processes: CheckoutFlow (step 3/7)
 ```
 
 **cypher** — custom call chain traces. Pass `repo` alongside the statement; the
@@ -100,9 +100,9 @@ RETURN [n IN nodes(path) | n.name] AS chain
 
 ```
 trace({ from: "processCheckout", to: "fetchRates", repo: "my-app" })
-→ status: ok, hopCount: 3
-→ hops: processCheckout → validatePayment → verifyCard → fetchRates
-→ edges: CALLS (1.0), CALLS (0.95), CALLS (1.0)
+, then  status: ok, hopCount: 3
+, then  hops: processCheckout , then  validatePayment , then  verifyCard , then  fetchRates
+, then  edges: CALLS (1.0), CALLS (0.95), CALLS (1.0)
 ```
 
 When no path exists, `trace` reports the furthest reachable node — exactly where the chain breaks (dynamic dispatch, reflection, or an external boundary).
@@ -111,17 +111,17 @@ When no path exists, `trace` reports the furthest reachable node — exactly whe
 
 ```
 0. list_repos {}
-   → total: 2 (my-app, billing-api) — bind my-app explicitly on every call
+   , then  total: 2 (my-app, billing-api) — bind my-app explicitly on every call
 
 1. query({search_query: "payment error handling", repo: "my-app"})
-   → Processes: CheckoutFlow, ErrorHandling
-   → Symbols: validatePayment, handlePaymentError
+   , then  Processes: CheckoutFlow, ErrorHandling
+   , then  Symbols: validatePayment, handlePaymentError
 
 2. context({name: "validatePayment", repo: "my-app"})
-   → Outgoing calls: verifyCard, fetchRates (external API!)
+   , then  Outgoing calls: verifyCard, fetchRates (external API!)
 
 3. READ gitnexus://repo/my-app/process/CheckoutFlow
-   → Step 3: validatePayment → calls fetchRates (external)
+   , then  Step 3: validatePayment , then  calls fetchRates (external)
 
 4. Root cause: fetchRates calls external API without proper timeout
    Repository: my-app  Index: current

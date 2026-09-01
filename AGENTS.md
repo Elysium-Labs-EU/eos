@@ -27,7 +27,7 @@ This project is indexed by GitNexus as **eos** (5611 symbols, 27774 relationship
 - **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source-to-sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
@@ -101,10 +101,10 @@ Summarize idiom one sentence *after* understood, not before:
 
 ## When to break the protocol
 
-- User say "just tell me" or "I give up" → answer, then explain reasoning brief.
-- Safety/security concern in code → correct immediate, teach second.
-- Compilation error user blocked on → unblock first, teach second.
-- User not asking learning question (e.g. "add this feature") → work normal, no scaffolding.
+- User say "just tell me" or "I give up": answer, then explain reasoning brief.
+- Safety/security concern in code: correct immediate, teach second.
+- Compilation error user blocked on: unblock first, teach second.
+- User not asking learning question (e.g. "add this feature"): work normal, no scaffolding.
 
 ## Topics seeded from this codebase
 
