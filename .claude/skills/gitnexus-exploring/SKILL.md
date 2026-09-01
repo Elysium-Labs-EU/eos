@@ -28,14 +28,14 @@ the bound repository and index freshness alongside your explanation.
 ## Workflow
 
 ```
-1. list_repos {} or READ gitnexus://repos                          → Discover indexed repos
-2. READ gitnexus://repo/{name}/context             → Codebase overview, check staleness
-3. query({search_query: "<what you want to understand>"})  → Find related execution flows
-4. context({name: "<symbol>"})            → Deep dive on specific symbol
-5. READ gitnexus://repo/{name}/process/{name}      → Trace full execution flow
+1. list_repos {} or READ gitnexus://repos                          , then  Discover indexed repos
+2. READ gitnexus://repo/{name}/context             , then  Codebase overview, check staleness
+3. query({search_query: "<what you want to understand>"})  , then  Find related execution flows
+4. context({name: "<symbol>"})            , then  Deep dive on specific symbol
+5. READ gitnexus://repo/{name}/process/{name}      , then  Trace full execution flow
 ```
 
-> If step 2 says "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> If step 2 says "Index is stale" , then  run `node .gitnexus/run.cjs analyze` in terminal.
 
 ## Checklist
 
@@ -65,17 +65,17 @@ the bound repository and index freshness alongside your explanation.
 
 ```
 query({search_query: "payment processing", repo: "my-app"})
-→ Processes: CheckoutFlow, RefundFlow, WebhookHandler
-→ Symbols grouped by flow with file locations
+, then  Processes: CheckoutFlow, RefundFlow, WebhookHandler
+, then  Symbols grouped by flow with file locations
 ```
 
 **context** — 360-degree view of a symbol:
 
 ```
 context({name: "validateUser", repo: "my-app"})
-→ Incoming calls: loginHandler, apiMiddleware
-→ Outgoing calls: checkToken, getUserById
-→ Processes: LoginFlow (step 2/5), TokenRefresh (step 1/3)
+, then  Incoming calls: loginHandler, apiMiddleware
+, then  Outgoing calls: checkToken, getUserById
+, then  Processes: LoginFlow (step 2/5), TokenRefresh (step 1/3)
 ```
 
 `repo` is required once more than one repository is indexed, and may be omitted
@@ -84,14 +84,14 @@ with a single one.
 ## Example: "How does payment processing work?"
 
 ```
-1. list_repos {}                             → total: 1 (my-app) — bind it
-   READ gitnexus://repo/my-app/context       → 918 symbols, 45 processes
+1. list_repos {}                             , then  total: 1 (my-app) — bind it
+   READ gitnexus://repo/my-app/context       , then  918 symbols, 45 processes
 2. query({search_query: "payment processing"})
-   → CheckoutFlow: processPayment → validateCard → chargeStripe
-   → RefundFlow: initiateRefund → calculateRefund → processRefund
+   , then  CheckoutFlow: processPayment , then  validateCard , then  chargeStripe
+   , then  RefundFlow: initiateRefund , then  calculateRefund , then  processRefund
 3. context({name: "processPayment"})
-   → Incoming: checkoutHandler, webhookHandler
-   → Outgoing: validateCard, chargeStripe, saveTransaction
+   , then  Incoming: checkoutHandler, webhookHandler
+   , then  Outgoing: validateCard, chargeStripe, saveTransaction
 4. Read src/payments/processor.ts for implementation details
 5. Answer, noting: Repository my-app, index current
 ```
