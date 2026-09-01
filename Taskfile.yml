@@ -107,6 +107,7 @@ tasks:
       - task: lint:check-golangci-pin
       - task: lint:govulncheck
       - task: lint:secrets
+      - task: gates:check-arrow-notation
       - echo "All CI checks passed!"
 
   ci-full:

@@ -38,14 +38,14 @@ checkout and reports nothing changed, which reads as a verified refactor.
 ## Workflow
 
 ```
-0. list_repos {}                                  → Bind repo (and worktree)
-1. impact({target: "X", direction: "upstream"})  → Map all dependents
-2. query({search_query: "X"})                            → Find execution flows involving X
-3. context({name: "X"})                           → See all incoming/outgoing refs
-4. Plan update order: interfaces → implementations → callers → tests
+0. list_repos {}                                  , then  Bind repo (and worktree)
+1. impact({target: "X", direction: "upstream"})  , then  Map all dependents
+2. query({search_query: "X"})                            , then  Find execution flows involving X
+3. context({name: "X"})                           , then  See all incoming/outgoing refs
+4. Plan update order: interfaces , then  implementations , then  callers , then  tests
 ```
 
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> If "Index is stale", run `node .gitnexus/run.cjs analyze` in terminal.
 
 ## Checklists
 
@@ -92,26 +92,26 @@ checkout and reports nothing changed, which reads as a verified refactor.
 
 ```
 rename({symbol_name: "validateUser", new_name: "authenticateUser", repo: "my-app", dry_run: true})
-→ 12 edits across 8 files
-→ 10 graph edits (high confidence), 2 text_search edits (review)
-→ Changes: [{file_path, edits: [{line, old_text, new_text, confidence}]}]
+, then  12 edits across 8 files
+, then  10 graph edits (high confidence), 2 text_search edits (review)
+, then  Changes: [{file_path, edits: [{line, old_text, new_text, confidence}]}]
 ```
 
 **impact** — map all dependents first:
 
 ```
 impact({target: "validateUser", repo: "my-app", direction: "upstream"})
-→ d=1: loginHandler, apiMiddleware, testUtils
-→ Affected Processes: LoginFlow, TokenRefresh
+, then  d=1: loginHandler, apiMiddleware, testUtils
+, then  Affected Processes: LoginFlow, TokenRefresh
 ```
 
 **detect_changes** — verify your changes after refactoring:
 
 ```
 detect_changes({scope: "all"})
-→ Changed: 8 files, 12 symbols
-→ Affected processes: LoginFlow, TokenRefresh
-→ Risk: MEDIUM
+, then  Changed: 8 files, 12 symbols
+, then  Affected processes: LoginFlow, TokenRefresh
+, then  Risk: MEDIUM
 ```
 
 `partial: true` (a graph query failed) or `truncated: true` (the changed-symbol
@@ -143,20 +143,20 @@ RETURN caller.name, caller.filePath ORDER BY caller.filePath
 
 ```
 0. list_repos {}
-   → total: 2 (my-app, billing-api) — both define validateUser, so bind explicitly
+   , then  total: 2 (my-app, billing-api) — both define validateUser, so bind explicitly
 
 1. rename({symbol_name: "validateUser", new_name: "authenticateUser", repo: "my-app", dry_run: true})
-   → 12 edits: 10 graph (safe), 2 text_search (review)
-   → Files: validator.ts, login.ts, middleware.ts, config.json...
+   , then  12 edits: 10 graph (safe), 2 text_search (review)
+   , then  Files: validator.ts, login.ts, middleware.ts, config.json...
 
 2. Review text_search edits (config.json: dynamic reference!)
 
 3. rename({symbol_name: "validateUser", new_name: "authenticateUser", repo: "my-app", dry_run: false})
-   → Applied 12 edits across 8 files
+   , then  Applied 12 edits across 8 files
 
 4. detect_changes({scope: "all", repo: "my-app"})
-   → Affected: LoginFlow, TokenRefresh
-   → Risk: MEDIUM — run tests for these flows
+   , then  Affected: LoginFlow, TokenRefresh
+   , then  Risk: MEDIUM — run tests for these flows
    Repository: my-app (/abs/path/my-app)  Worktree: same  Index: current
 ```
 
