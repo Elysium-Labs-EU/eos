@@ -1581,6 +1581,47 @@ func TestServiceInstancesOrEmpty(t *testing.T) {
 	}
 }
 
+// TestDaemonWait_SIGCHLDThenContextCancelBoundedReturn proves wait()'s select
+// loop both drains a SIGCHLD (handleSIGCHLDRequest runs synchronously inline,
+// not in a background goroutine) and, independent of that, returns promptly
+// once its context is canceled - it must never block past ctx.Done() firing.
+func TestDaemonWait_SIGCHLDThenContextCancelBoundedReturn(t *testing.T) {
+	db, _, _ := testutil.SetupTestDB(t, database.MigrationsFS, database.MigrationsPath)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	d := &daemon{
+		ctx:     ctx,
+		logger:  testutil.NewTestLogger(t),
+		db:      db,
+		sigChan: make(chan os.Signal, 1),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		d.wait()
+		close(done)
+	}()
+
+	// A SIGCHLD with no actual children just drains to reapStop immediately;
+	// what this proves is that wait() processes it inline and loops back to
+	// select, rather than exiting or hanging on the first signal it sees.
+	d.sigChan <- syscall.SIGCHLD
+
+	select {
+	case <-done:
+		t.Fatal("wait() returned after a SIGCHLD alone; it must keep looping until ctx.Done()")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait() did not return within a bounded time after context cancellation")
+	}
+}
+
 // TestDaemonServe proves serve launches both the IPC command listener and the
 // health monitor as background goroutines rather than blocking the caller.
 func TestDaemonServe(t *testing.T) {
@@ -1609,7 +1650,11 @@ func TestDaemonServe(t *testing.T) {
 
 	// Dial the listener so handleIncomingCommands's Accept loop actually
 	// hands a connection off to handleConnection, not just starts up idle.
-	conn, dialErr := net.Dial("tcp", ln.Addr().String())
+	addr := ln.Addr()
+	if addr == nil {
+		t.Fatal("listener returned a nil address")
+	}
+	conn, dialErr := net.Dial("tcp", addr.String())
 	if dialErr != nil {
 		t.Fatalf("dial: %v", dialErr)
 	}
