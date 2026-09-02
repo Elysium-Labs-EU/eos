@@ -86,7 +86,7 @@ else
   echo "PASS: renamed LogSink field correctly rejected"
 fi
 
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
   echo "check-plugin-api-diff_test: FAILED"
   exit 1
 fi

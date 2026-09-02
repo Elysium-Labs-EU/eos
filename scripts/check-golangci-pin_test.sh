@@ -94,7 +94,7 @@ else
 fi
 cp "$backup_dir/lefthook.yml" lefthook.yml
 
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
     echo "check-golangci-pin_test: FAILED"
     exit 1
 fi

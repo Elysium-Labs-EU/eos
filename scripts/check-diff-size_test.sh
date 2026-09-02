@@ -19,7 +19,7 @@ GATE="scripts/check-diff-size.sh"
 SCRATCH_DIR="scripts/diffsizescratch"
 SCRATCH_FILE="$SCRATCH_DIR/scratch.bin"
 
-if [ -e "$SCRATCH_DIR" ]; then
+if [[ -e "$SCRATCH_DIR" ]]; then
   echo "check-diff-size_test: $SCRATCH_DIR already exists; aborting rather than risk clobbering it (this test owns that path exclusively)." >&2
   exit 1
 fi
@@ -92,7 +92,7 @@ else
   echo "PASS: LFS pointer blob correctly rejected"
 fi
 
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
   echo "check-diff-size_test: FAILED"
   exit 1
 fi
