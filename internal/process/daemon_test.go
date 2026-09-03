@@ -1609,7 +1609,11 @@ func TestDaemonServe(t *testing.T) {
 
 	// Dial the listener so handleIncomingCommands's Accept loop actually
 	// hands a connection off to handleConnection, not just starts up idle.
-	conn, dialErr := net.Dial("tcp", ln.Addr().String())
+	addr := ln.Addr()
+	if addr == nil {
+		t.Fatal("listener has no address")
+	}
+	conn, dialErr := net.Dial("tcp", addr.String())
 	if dialErr != nil {
 		t.Fatalf("dial: %v", dialErr)
 	}
