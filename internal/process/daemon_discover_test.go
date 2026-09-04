@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -174,5 +175,99 @@ func TestDiscoverDaemonsInDeadPID(t *testing.T) {
 	}
 	if summaries[0].StaleBinary {
 		t.Error("a non-running daemon should never be flagged stale")
+	}
+}
+
+func TestInodeOf(t *testing.T) {
+	t.Run("existing file returns a nonzero inode", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "f")
+		if err := os.WriteFile(f, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if got := inodeOf(f); got == 0 {
+			t.Error("expected a nonzero inode for an existing file")
+		}
+	})
+
+	t.Run("missing file returns zero", func(t *testing.T) {
+		if got := inodeOf(filepath.Join(t.TempDir(), "does-not-exist")); got != 0 {
+			t.Errorf("expected 0 for a missing file, got %d", got)
+		}
+	})
+}
+
+func TestCurrentExecutableInode(t *testing.T) {
+	if got := CurrentExecutableInode(); got == 0 {
+		t.Error("expected a nonzero inode for the running test binary")
+	}
+}
+
+// TestRunningExeInode exercises both branches of the /proc/<pid>/exe lookup
+// across platforms: on linux the magic symlink resolves for a real pid, and
+// on darwin (no /proc) the underlying os.Stat fails, hitting inodeOf's own
+// error return.
+func TestRunningExeInode(t *testing.T) {
+	got := RunningExeInode(os.Getpid())
+	if runtime.GOOS == "linux" {
+		if got == 0 {
+			t.Error("expected a nonzero inode via /proc/<pid>/exe on linux")
+		}
+		return
+	}
+	if got != 0 {
+		t.Errorf("expected 0 without /proc on %s, got %d", runtime.GOOS, got)
+	}
+}
+
+// TestReadHomeDirs proves readHomeDirs never errors on a missing /home (the
+// common case off Linux) and returns whatever entries exist otherwise -
+// /home's actual contents vary by host, so this only asserts the no-panic,
+// no-spurious-error contract rather than a specific directory list.
+func TestReadHomeDirs(t *testing.T) {
+	dirs, err := readHomeDirs()
+	if err != nil {
+		t.Fatalf("readHomeDirs: %v", err)
+	}
+	for _, d := range dirs {
+		if filepath.Dir(d) != "/home" {
+			t.Errorf("expected entry rooted at /home, got %q", d)
+		}
+	}
+}
+
+func TestCandidateHomeDirs(t *testing.T) {
+	dirs, err := candidateHomeDirs()
+	if err != nil {
+		t.Fatalf("candidateHomeDirs: %v", err)
+	}
+	if _, statErr := os.Stat("/root"); statErr == nil {
+		found := false
+		for _, d := range dirs {
+			if d == "/root" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected /root among candidate home dirs when it exists")
+		}
+	}
+}
+
+// TestDiscoverDaemons exercises the exported entry point: it's linux-only by
+// contract, so anywhere else it must fail loud with an actionable error
+// rather than silently scanning the wrong filesystem layout.
+func TestDiscoverDaemons(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		_, err := DiscoverDaemons()
+		if err == nil {
+			t.Fatal("expected an error on non-linux platforms")
+		}
+		if !strings.Contains(err.Error(), "linux") {
+			t.Errorf("expected a linux-only error, got: %v", err)
+		}
+		return
+	}
+	if _, err := DiscoverDaemons(); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
