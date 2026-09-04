@@ -65,15 +65,18 @@ jobs:
       # ~/go/bin (the installed tool binaries themselves) is not, and `task setup`
       # was taking ~4.5min per run reinstalling golangci-lint/nilaway/go-crap/
       # gitleaks/govulncheck from scratch every time. Keyed on Taskfile.yml +
-      # taskfiles/** now (was Makefile before the Taskfile migration) so a
-      # tool-version bump in either still invalidates the cache correctly.
+      # taskfiles/** + go.mod so a tool-version bump OR a go directive bump
+      # (which rebuilds go-installed tools like nilaway against a different
+      # toolchain) still invalidates the cache correctly. No restore-keys
+      # fallback: most of these tools (nilaway, go-crap, gitleaks, ...) are
+      # presence-only checked by install-tool-go, so a fallback hit on a stale
+      # prefix would restore binaries built against the old toolchain and
+      # `task setup:setup` would skip reinstalling them since they "exist".
       - name: Cache dev tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: devtools-${{ runner.os }}-${{ hashFiles('Taskfile.yml', 'taskfiles/**') }}
-          restore-keys: |
-            devtools-${{ runner.os }}-
+          key: devtools-${{ runner.os }}-${{ hashFiles('Taskfile.yml', 'taskfiles/**', 'go.mod') }}
 
       - name: Install dev tools
         run: task setup:setup

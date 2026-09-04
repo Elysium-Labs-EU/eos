@@ -22,8 +22,14 @@ tasks:
           NAME: git-cliff
           INSTALL: cargo install git-cliff
           FALLBACK_MSG: "cargo not found — install git-cliff manually: https://git-cliff.org/docs/installation"
+      # Pinned (not @latest): v1.13.3+ pulls in a kaptinlin/jsonschema bump
+      # whose go-json-experiment/json dependency references json.SkipFunc /
+      # json.DiscardUnknownMembers, symbols Go 1.27's experimental jsonv2
+      # stdlib package doesn't have. v1.13.2 is the newest tag that still
+      # builds under go1.27; bump this once lefthook or its dependency ships
+      # a fix.
       - task: install-tool-go
-        vars: {NAME: lefthook, INSTALL: "go install github.com/evilmartians/lefthook@latest"}
+        vars: {NAME: lefthook, INSTALL: "go install github.com/evilmartians/lefthook@v1.13.2"}
       - task: install-tool-go
         vars: {NAME: nilaway, DESC: "nilaway (nil pointer static analysis)", INSTALL: "go install go.uber.org/nilaway/cmd/nilaway@latest"}
       - task: install-tool-go
