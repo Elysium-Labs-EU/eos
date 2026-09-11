@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  COVERAGE_THRESHOLD: '{{.COVERAGE_THRESHOLD | default "49"}}'
+  COVERAGE_THRESHOLD: '{{.COVERAGE_THRESHOLD | default "84"}}'
 
 tasks:
   test:
