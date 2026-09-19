@@ -2,6 +2,104 @@
 
 All notable changes to eos are documented here.
 
+## [0.0.14] - 2026-09-19
+
+### Bug Fixes
+- Align control socket ownership under sudo daemon restart (#307) ([`5f99bcc`](https://github.com/Elysium-Labs-EU/eos/commit/5f99bcc44f907bd98a9400a4a3685abe83b41efd))
+- Skip SonarQube scan when SONAR_TOKEN is unavailable ([`2d2d2c2`](https://github.com/Elysium-Labs-EU/eos/commit/2d2d2c2f24429cd0f62cc82b019f7fc1f1511146))
+- Bump google.golang.org/grpc to v1.83.2 (GHSA-2v4p-qf9q-27wj) (#331) ([`e81b061`](https://github.com/Elysium-Labs-EU/eos/commit/e81b06179a42c11ad1bef591f00fb10089ac5959))
+
+
+### CI/CD
+- Block re-tagging an already-released version as pre-release ([`6dae915`](https://github.com/Elysium-Labs-EU/eos/commit/6dae9154d3cf8dc61aec37f0c6059f74fa1a6005))
+
+
+### Features
+- Add version printing on empty command and top-level version command (#319) ([`97bf4eb`](https://github.com/Elysium-Labs-EU/eos/commit/97bf4eb621309b3511b9f76436b7b78a4b16aa36))
+
+
+### Maintenance
+- Port remaining Make gates to Taskfile, delete Makefile (#308) ([`83670f4`](https://github.com/Elysium-Labs-EU/eos/commit/83670f455f03be3bc1f344ec9648d02bc6f1ec1d))
+- Bump modernc.org/sqlite in the go-dependencies group (#309) ([`de623a7`](https://github.com/Elysium-Labs-EU/eos/commit/de623a7ffd6c93a2ed9d52e4d8dc2156540e78df))
+- Restructures system commands into dedicated files (#311) ([`aa22210`](https://github.com/Elysium-Labs-EU/eos/commit/aa222108332bdf61a9b15889150ac63624fdf6af))
+- Ban arrow notation in markdown prose (#312) ([`8bb49a7`](https://github.com/Elysium-Labs-EU/eos/commit/8bb49a715b82950eb34f83f5a5be4432f594e201))
+- Bump softprops/action-gh-release from 3.0.2 to 3.0.3 (#323) ([`ec774c1`](https://github.com/Elysium-Labs-EU/eos/commit/ec774c152bd6b9faffb31923d8cf32c7b329a66a))
+- Bump github/codeql-action from 3 to 4 (#325) ([`6513e6b`](https://github.com/Elysium-Labs-EU/eos/commit/6513e6ba5812e1d8d65237e4a50efe036354fc1e))
+- Bump crate-ci/typos from 1.49.0 to 1.50.1 (#326) ([`b8ea04a`](https://github.com/Elysium-Labs-EU/eos/commit/b8ea04a1bb9f43c480886b494890baec749c1331))
+- Bump the go-dependencies group with 8 updates (#324) ([`ba9dd40`](https://github.com/Elysium-Labs-EU/eos/commit/ba9dd406ebb8fa4b1e320ac49b47ef37712a6776))
+- Bump go directive to 1.27.0 (#301) ([`72505a8`](https://github.com/Elysium-Labs-EU/eos/commit/72505a892e128dc9261aea69351c72027a0d94c7))
+- Raise coverage threshold 49% -> 84% to lock in test-coverage gains (#330) ([`65fbaf7`](https://github.com/Elysium-Labs-EU/eos/commit/65fbaf745d283177e0fe23dea2845a145552b36a))
+- Bump the go-dependencies group across 1 directory with 4 updates (#328) ([`e354020`](https://github.com/Elysium-Labs-EU/eos/commit/e354020d05ad6945c77853b92dc81d199cd5edd3))
+- Bump github.com/golang-migrate/migrate/v4 (#332) ([`2383361`](https://github.com/Elysium-Labs-EU/eos/commit/238336136c6c697b575360cb05a10688cf5598ee))
+- Bump crate-ci/typos from 1.50.1 to 1.50.2 (#333) ([`8325edf`](https://github.com/Elysium-Labs-EU/eos/commit/8325edf1348a64cfcc264257a6021da180af8100))
+
+
+### Testing
+- Cover daemon.go reap, discover, and wait lifecycle paths (#321) ([`f8cd56d`](https://github.com/Elysium-Labs-EU/eos/commit/f8cd56d2b4440a487cf233bdf627c70ca4b24ed8))
+- Cover internal/config service-manager detection to 92% (#327) ([`327c0bf`](https://github.com/Elysium-Labs-EU/eos/commit/327c0bfbf428eefe4cebf0b6545794f6d2a8f583))
+- Cover local_manager subprocess lifecycle and log-pipe goroutines (#329) ([`ec346de`](https://github.com/Elysium-Labs-EU/eos/commit/ec346de406e89d32d9b7afd5489694ca98f26b0d))
+
+## [0.0.14-rc.1] - 2026-08-24
+
+### Bug Fixes
+- Remove the installer staging dir on exit (#285) ([`3b98317`](https://github.com/Elysium-Labs-EU/eos/commit/3b98317ff26f8a1d6ad6f79293903c6df3cdcf05))
+- Scope OSV scan to go.mod so testdata fixtures cant fail it (#288) ([`7e47767`](https://github.com/Elysium-Labs-EU/eos/commit/7e47767ffff0e175841d04d1660fc627f0ce4432))
+- Add mode and address to log_sinks inline object (#290) ([`d9c6b9f`](https://github.com/Elysium-Labs-EU/eos/commit/d9c6b9f679dbd1229ef5de1b7c1bc94d2116f784))
+- Pin golangci-lint in make fix, add pin-drift guard (#294) ([`1c287a6`](https://github.com/Elysium-Labs-EU/eos/commit/1c287a6c4628a70692862454ff940ecdd9b2ee6b))
+
+
+### Documentation
+- Adopt datetimestamp ADR ids to end numbering collisions (#284) ([`22cfbcf`](https://github.com/Elysium-Labs-EU/eos/commit/22cfbcfe12e4be2e3e193d8f6e81b4ac5238cce7))
+- Add ADR authoring skill (#304) ([`fc33841`](https://github.com/Elysium-Labs-EU/eos/commit/fc33841f89a55c1441568c408e1a390aad71670f))
+
+
+### Features
+- Add Taskfile alongside Makefile, cut CI/hooks over to task (#302) ([`132b560`](https://github.com/Elysium-Labs-EU/eos/commit/132b5605bef0c2d41acc013f01cfe6fe95fab900))
+
+
+### Maintenance
+- Bump golang.org/x/mod (#281) ([`7f73207`](https://github.com/Elysium-Labs-EU/eos/commit/7f7320719ec67eee23a4c0bc02f6f18b4b0ee8e3))
+- Track the agent instruction files and anchor stale ignore rules (#283) ([`05cb706`](https://github.com/Elysium-Labs-EU/eos/commit/05cb70632549604e1e71cbdbacafb05dde188a9c))
+- Bump golang.org/x/mod in the go-dependencies group (#299) ([`ad10f2a`](https://github.com/Elysium-Labs-EU/eos/commit/ad10f2a238e972d39c09ffb17152ce41d86da00c))
+
+
+### Miscellaneous
+- Bump Go toolchain to 1.26.6 for stdlib security fixes (#282) ([`7e0170a`](https://github.com/Elysium-Labs-EU/eos/commit/7e0170a5203a1ba5c17b90197df833c327df7c2d))
+- Pin golangci-lint version for make lint and pre-commit hook (#289) ([`0db603a`](https://github.com/Elysium-Labs-EU/eos/commit/0db603a4f3598f2bfd3083fd8826f983843f85f1))
+- Cross-distro OrbStack e2e test matrix harness (#298)
+
+* feat: cross-distro OrbStack e2e test matrix harness
+
+Adds a golden-image-plus-clone e2e harness (internal/testmatrix,
+tools/testmatrix) that clones each target distro's long-lived OrbStack VM
+per run, runs suites concurrently, and reports pass/fail per target/suite
+instead of hand-poking N SSH sessions.
+
+- test/matrix.yml declares targets (debian/ubuntu/fedora/alpine) and
+  suites (install/lifecycle/supervision/openrc/fixtures), mirroring the
+  matrix-config pattern used by Test Kitchen / Ansible Molecule.
+- scripts/provision-golden-orb.sh builds/refreshes one golden VM per
+  distro: go toolchain, gcc (cgo, for -race), node (internal/monitor's
+  test suite needs it outside the nightly fixtures suite too), and a
+  warmed go module cache (clones would otherwise all re-download the
+  full dependency graph over network on first run).
+- make test-matrix-orb wires it into the existing Makefile alongside
+  test-linux/test-openrc-orb/etc.
+
+First real run against the golden VMs surfaced three pre-existing gaps
+this harness was built to catch (filed separately, not fixed here):
+cmd/system_test.go's systemd-branch tests assume all Linux is systemd
+and fail on real OpenRC; two timing-sensitive tests only flake under
+genuine concurrent CPU load; and orbctl has an exit-code propagation bug
+under `set -e` + nested `if` + explicit `exit 0` that provisioning works
+around by restructuring rather than relying on that pattern.
+
+* fix: address sonarcloud findings on testmatrix harness
+
+Split LoadConfig's validation into validateTargets/validateSuites to
+bring cognitive complexity under the gate, and switch [ ] to [[ ]] in
+provision-golden-orb.sh's conditionals for shellcheck/POSIX-test safety. ([`2f2f45c`](https://github.com/Elysium-Labs-EU/eos/commit/2f2f45c25a096b42bd88f43f23f607e5b227c35a))
+
 ## [0.0.13] - 2026-08-13
 
 ### Bug Fixes
