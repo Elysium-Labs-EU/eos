@@ -73,7 +73,8 @@ jobs:
       - name: Validate CHANGELOG entry
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if ! grep -q "## $VERSION" CHANGELOG.md; then
+          # cliff.toml strips the leading "v" in headers: "## [0.0.14]", not "## v0.0.14".
+          if ! grep -q "## \[${VERSION#v}\]" CHANGELOG.md; then
             echo "::error::CHANGELOG.md missing entry for $VERSION"
             exit 1
           fi
