@@ -1711,7 +1711,7 @@ func validateCommandBinary(config *types.ServiceConfig, serviceDirectoryPath str
 	return commandNotFoundError(binary, config)
 }
 
-// lmResolveRuntimeDir expands a relative runtime path against the user's
+// lmResolveRuntimeDir expands relative and ~/ runtime paths against the user's
 // home directory; an absolute path is returned unchanged.
 func lmResolveRuntimeDir(path string) (string, error) {
 	if filepath.IsAbs(path) {
@@ -1721,7 +1721,7 @@ func lmResolveRuntimeDir(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting homeDir for runtime validation: %w", err)
 	}
-	return filepath.Join(homeDir, path), nil
+	return filepath.Join(homeDir, strings.TrimPrefix(path, "~/")), nil
 }
 
 // lmCheckRuntimeBinary verifies that binaryName exists directly under
@@ -1770,7 +1770,13 @@ func ValidateRuntimePath(runtime types.Runtime) error {
 func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) ([]string, error) {
 	env := os.Environ()
 
-	env = lmApplyRuntimePathEnv(config.Runtime.Path, env)
+	if config.Runtime.Path != "" {
+		runtimePath, err := lmResolveRuntimeDir(config.Runtime.Path)
+		if err != nil {
+			return nil, err
+		}
+		env = lmApplyRuntimePathEnv(runtimePath, env)
+	}
 	env = lmApplyPortEnv(config.Port, env)
 
 	if config.EnvFile != "" {
