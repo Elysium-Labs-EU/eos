@@ -4,28 +4,29 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/Elysium-Labs-EU/eos/internal/buildinfo"
 	"github.com/Elysium-Labs-EU/eos/internal/process"
 )
 
 // TestRunningExeVersion_Resolved covers the fixed happy path: exec'ing a live
 // process's own /proc/<pid>/exe, unaffected by whatever readlink of that path
-// would report.
+// would report. The live process is this test binary (see answerVersionProbe).
 func TestRunningExeVersion_Resolved(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc/<pid>/exe resolution is Linux-only")
 	}
-	child := spawnDisposableChild(t)
 
-	version, err := runningExeVersion(t.Context(), child.Process.Pid)
+	version, err := runningExeVersion(t.Context(), os.Getpid())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if version == "" {
-		t.Error("expected a non-empty version string from GNU coreutils sleep --version")
+	if version != buildinfo.Get() {
+		t.Errorf("expected %q from the test binary's --version, got %q", buildinfo.Get(), version)
 	}
 }
 
