@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check for typos
-        uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
+        uses: crate-ci/typos@276087d9a4f06398b3e04825487805e2d7375888 # v1.52.2
 
   ci:
     name: CI
@@ -42,6 +42,7 @@ jobs:
           fetch-depth: 0 # go-crap-gate diffs changed functions against origin/main
 
       - name: Setup Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -64,10 +65,14 @@ jobs:
       # ~/go/pkg/mod and ~/.cache/go-build are already cached by actions/setup-go;
       # ~/go/bin (the installed tool binaries themselves) is not, and `task setup`
       # was taking ~4.5min per run reinstalling golangci-lint/nilaway/go-crap/
-      # gitleaks/govulncheck from scratch every time. Keyed on Taskfile.yml +
-      # taskfiles/** + go.mod so a tool-version bump OR a go directive bump
-      # (which rebuilds go-installed tools like nilaway against a different
-      # toolchain) still invalidates the cache correctly. No restore-keys
+      # gitleaks/govulncheck from scratch every time. Keyed on the installed Go
+      # version + Taskfile.yml + taskfiles/** + .golangci-lint-version, so a
+      # tool-version bump OR a toolchain bump (which rebuilds go-installed tools
+      # like nilaway against a different toolchain) still invalidates the cache.
+      # Not keyed on go.mod: `go install pkg@version` ignores this module's
+      # dependencies, and keying on it made every dependency bump miss the
+      # cache; in the merge queue that cold install (~6 min) pushed CI past the
+      # queue's check timeout. No restore-keys
       # fallback: most of these tools (nilaway, go-crap, gitleaks, ...) are
       # presence-only checked by install-tool-go, so a fallback hit on a stale
       # prefix would restore binaries built against the old toolchain and
@@ -76,7 +81,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: devtools-${{ runner.os }}-${{ hashFiles('Taskfile.yml', 'taskfiles/**', 'go.mod') }}
+          key: devtools-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('Taskfile.yml', 'taskfiles/**', '.golangci-lint-version') }}
 
       - name: Install dev tools
         run: task setup:setup

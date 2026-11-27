@@ -789,16 +789,15 @@ func installFakeSystemctlEmptyOutput(t *testing.T) {
 // systemdDaemonRunningVersion actually resolves a version string: this
 // requires following /proc/<pid>/exe, which is Linux-only (there is no /proc
 // on macOS), so it's skipped on other platforms and instead exercised by CI's
-// ubuntu-latest runner. A real "sleep" child is spawned so /proc/<pid>/exe
-// resolves to a real, executable binary that understands --version (GNU
-// coreutils sleep).
+// ubuntu-latest runner. The stubbed MainPID is this test binary, so
+// /proc/<pid>/exe resolves to a real, executable binary that understands
+// --version (see answerVersionProbe).
 func TestPrintSystemdDaemonDetails_RunningVersionResolved(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc/<pid>/exe resolution is Linux-only")
 	}
 
-	child := spawnDisposableChild(t)
-	stubSystemctl(t, child.Process.Pid)
+	stubSystemctl(t, os.Getpid())
 
 	var out, errOut bytes.Buffer
 	cmd := newTestRootCmd(nil)

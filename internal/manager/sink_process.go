@@ -344,7 +344,7 @@ func (s *sinkProcess) sinkAwaitExit(cmd *exec.Cmd, pumpErr error) error {
 	case <-shutdownTimer.C:
 		s.logger.Warn("sink plugin did not exit in time, killing", "sink", s.sink.Type)
 		_ = cmd.Process.Kill()
-		<-exitCh
+		<-exitCh //nolint:errcheck // killed above; only waiting for the reap, Wait's error is not actionable
 	}
 
 	return pumpErr
