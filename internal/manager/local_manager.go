@@ -1711,19 +1711,6 @@ func validateCommandBinary(config *types.ServiceConfig, serviceDirectoryPath str
 	return commandNotFoundError(binary, config)
 }
 
-// lmResolveRuntimeDir expands relative and ~/ runtime paths against the user's
-// home directory; an absolute path is returned unchanged.
-func lmResolveRuntimeDir(path string) (string, error) {
-	if filepath.IsAbs(path) {
-		return path, nil
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("getting homeDir for runtime validation: %w", err)
-	}
-	return filepath.Join(homeDir, strings.TrimPrefix(path, "~/")), nil
-}
-
 // lmCheckRuntimeBinary verifies that binaryName exists directly under
 // runtimeDir, is not itself a directory, and is executable.
 func lmCheckRuntimeBinary(runtimeDir, binaryName string) error {
@@ -1741,10 +1728,13 @@ func lmCheckRuntimeBinary(runtimeDir, binaryName string) error {
 	return nil
 }
 
+// ValidateRuntimePath checks an already-resolved runtime.path. The config
+// loader makes it absolute (cfgvLoadAndParseConfig); a relative value here
+// means the config skipped the loader, which is a bug, not user input.
 func ValidateRuntimePath(runtime types.Runtime) error {
-	runtimePath, err := lmResolveRuntimeDir(runtime.Path)
-	if err != nil {
-		return err
+	runtimePath := runtime.Path
+	if !filepath.IsAbs(runtimePath) {
+		return fmt.Errorf("runtime path %q is not absolute; it should have been resolved when the config was loaded", runtimePath)
 	}
 
 	dirInfo, err := os.Stat(runtimePath)
@@ -1771,11 +1761,8 @@ func buildEnvironment(config *types.ServiceConfig, serviceDirectoryPath string) 
 	env := os.Environ()
 
 	if config.Runtime.Path != "" {
-		runtimePath, err := lmResolveRuntimeDir(config.Runtime.Path)
-		if err != nil {
-			return nil, err
-		}
-		env = lmApplyRuntimePathEnv(runtimePath, env)
+		// Already absolute: resolved once by the config loader.
+		env = lmApplyRuntimePathEnv(config.Runtime.Path, env)
 	}
 	env = lmApplyPortEnv(config.Port, env)
 
