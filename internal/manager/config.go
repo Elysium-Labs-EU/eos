@@ -41,14 +41,9 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 		return nil, fmt.Errorf("configFilePath is empty, got %s", configFilePath)
 	}
 	cleanedConfigFilePath := filepath.Clean(configFilePath)
-	data, err := os.ReadFile(cleanedConfigFilePath)
+	config, err := cfgvLoadAndParseConfig(cleanedConfigFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("reading configFilePath has failed with: %w", err)
-	}
-	var config types.ServiceConfig
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return nil, fmt.Errorf("yaml parsing failed with: %w", err)
+		return nil, err
 	}
 	if err := ValidateServiceName(config.Name); err != nil {
 		return nil, fmt.Errorf("invalid service name in %s: %w", cleanedConfigFilePath, err)
@@ -57,7 +52,7 @@ func LoadServiceConfig(configFilePath string) (*types.ServiceConfig, error) {
 		return nil, fmt.Errorf("service command is required in %s", cleanedConfigFilePath)
 	}
 
-	return &config, nil
+	return config, nil
 }
 
 // maxServiceNameLength keeps names well under typical filesystem filename
@@ -137,6 +132,10 @@ func ValidateServiceConfig(configFilePath string) (*types.ServiceConfig, []error
 	return config, nil
 }
 
+// cfgvLoadAndParseConfig is the one place a service.yaml becomes a
+// ServiceConfig; LoadServiceConfig and ValidateServiceConfig both go through
+// it. Values that need interpreting are resolved here, once, so every
+// consumer sees the same clean value (see issue #359).
 func cfgvLoadAndParseConfig(configFilePath string) (*types.ServiceConfig, error) {
 	cleanedConfigFilePath := filepath.Clean(configFilePath)
 	data, err := os.ReadFile(cleanedConfigFilePath)
@@ -144,10 +143,49 @@ func cfgvLoadAndParseConfig(configFilePath string) (*types.ServiceConfig, error)
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
 	var config types.ServiceConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err = yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("yaml parsing: %w", err)
 	}
+	runtimePath, err := cfgvResolveRuntimePath(config.Runtime.Path)
+	if err != nil {
+		return nil, err
+	}
+	config.Runtime.Path = runtimePath
 	return &config, nil
+}
+
+// cfgvResolveRuntimePath looks up the home directory only when runtime.path
+// needs it. The home is the loading process's own (os.UserHomeDir): a service
+// runs in the environment of the process that launches it, and the daemon
+// loads the config itself right before launching.
+func cfgvResolveRuntimePath(path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving runtime.path %q against the home directory: %w", path, err)
+	}
+	return resolveRuntimePath(path, home)
+}
+
+// resolveRuntimePath turns a runtime.path value into an absolute path. Pure:
+// home is passed in. Empty and absolute paths are returned unchanged; "~" is
+// home; "~/x" and a plain relative "x" are joined onto home. "~user/x" is
+// rejected rather than guessed at.
+func resolveRuntimePath(path, home string) (string, error) {
+	switch {
+	case path == "" || filepath.IsAbs(path):
+		return path, nil
+	case path == "~":
+		return home, nil
+	case strings.HasPrefix(path, "~/"):
+		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+	case strings.HasPrefix(path, "~"):
+		return "", fmt.Errorf("runtime.path %q: ~user paths are not supported; use ~/ or an absolute path", path)
+	default:
+		return filepath.Join(home, path), nil
+	}
 }
 
 func cfgvValidateServiceFields(config *types.ServiceConfig) []error {

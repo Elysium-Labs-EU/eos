@@ -2730,33 +2730,11 @@ func TestLmOverlayEnvVars(t *testing.T) {
 	}
 }
 
-func TestLmResolveRuntimeDir(t *testing.T) {
-	t.Run("absolute path is returned unchanged", func(t *testing.T) {
-		got, err := lmResolveRuntimeDir("/abs/path")
-		if err != nil || got != "/abs/path" {
-			t.Fatalf("got %q, err %v", got, err)
-		}
-	})
-
-	t.Run("relative path joins the home dir", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		got, err := lmResolveRuntimeDir("bin")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		want := filepath.Join(home, "bin")
-		if got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("errors when the home dir cannot be resolved", func(t *testing.T) {
-		t.Setenv("HOME", "")
-		if _, err := lmResolveRuntimeDir("bin"); err == nil {
-			t.Fatal("expected error when HOME is unset")
-		}
-	})
+func TestValidateRuntimePathRejectsUnresolvedPath(t *testing.T) {
+	err := ValidateRuntimePath(types.Runtime{Type: "node", Path: "node/bin"})
+	if err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("expected a not-absolute error for an unresolved path, got %v", err)
+	}
 }
 
 func TestLmPollPendingExits(t *testing.T) {

@@ -5,10 +5,76 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
-
-	"github.com/Elysium-Labs-EU/eos/internal/types"
 )
+
+func TestResolveRuntimePath(t *testing.T) {
+	const home = "/home/me"
+	for _, tc := range []struct {
+		name, path, want string
+		wantErr          bool
+	}{
+		{name: "empty", path: "", want: ""},
+		{name: "absolute", path: "/opt/node/bin", want: "/opt/node/bin"},
+		{name: "bare tilde", path: "~", want: home},
+		{name: "tilde slash", path: "~/", want: home},
+		{name: "tilde-relative", path: "~/node/bin", want: "/home/me/node/bin"},
+		{name: "home-relative", path: "node/bin", want: "/home/me/node/bin"},
+		{name: "tilde user", path: "~bob/node/bin", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveRuntimePath(tc.path, home)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// writeServiceYAML writes a minimal service.yaml into dir and returns its path.
+func writeServiceYAML(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "service.yaml")
+	if err := os.WriteFile(path, []byte("name: cms\ncommand: node\n"+body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// Both loaders hand back an absolute runtime.path, so every consumer
+// (validation, launch, eos info) sees the same value.
+func TestLoadersResolveRuntimePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgPath := writeServiceYAML(t, t.TempDir(), "runtime:\n  type: node\n  path: ~/node/bin\n")
+	want := filepath.Join(home, "node", "bin")
+
+	loaded, err := LoadServiceConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadServiceConfig: %v", err)
+	}
+	if loaded.Runtime.Path != want {
+		t.Errorf("LoadServiceConfig runtime.path = %q, want %q", loaded.Runtime.Path, want)
+	}
+
+	parsed, err := cfgvLoadAndParseConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("cfgvLoadAndParseConfig: %v", err)
+	}
+	if parsed.Runtime.Path != want {
+		t.Errorf("cfgvLoadAndParseConfig runtime.path = %q, want %q", parsed.Runtime.Path, want)
+	}
+}
 
 func TestRuntimePathValidationAndLaunchAgree(t *testing.T) {
 	home := t.TempDir()
@@ -36,8 +102,11 @@ func TestRuntimePathValidationAndLaunchAgree(t *testing.T) {
 		{"tilde-relative", "~/node/bin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			config := &types.ServiceConfig{Command: "node", Runtime: types.Runtime{Type: "node", Path: tc.path}}
-			if err := ValidateRuntimeBinary(config.Runtime); err != nil {
+			config, err := LoadServiceConfig(writeServiceYAML(t, serviceDir, "runtime:\n  type: node\n  path: "+tc.path+"\n"))
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if err = ValidateRuntimeBinary(config.Runtime); err != nil {
 				t.Fatalf("validate runtime: %v", err)
 			}
 			env, err := buildEnvironment(config, serviceDir)
@@ -67,35 +136,33 @@ func TestRuntimePathValidationAndLaunchAgree(t *testing.T) {
 
 func TestRuntimePathMissingHome(t *testing.T) {
 	t.Setenv("HOME", "")
-	ambientPath := t.TempDir()
-	t.Setenv("PATH", ambientPath)
+	absolute := t.TempDir()
 	for _, tc := range []struct {
 		name, path string
 		wantError  bool
 	}{
 		{"empty", "", false},
-		{"absolute", t.TempDir(), false},
+		{"absolute", absolute, false},
 		{"home-relative", "node/bin", true},
 		{"tilde-relative", "~/node/bin", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			config := &types.ServiceConfig{Runtime: types.Runtime{Path: tc.path}}
-			env, err := buildEnvironment(config, t.TempDir())
+			body := ""
+			if tc.path != "" {
+				body = "runtime:\n  path: " + tc.path + "\n"
+			}
+			config, err := LoadServiceConfig(writeServiceYAML(t, t.TempDir(), body))
 			if tc.wantError {
-				if err == nil {
-					t.Fatal("expected an error resolving the runtime without HOME")
+				if err == nil || !strings.Contains(err.Error(), "home directory") {
+					t.Fatalf("expected a home directory error loading %q, got %v", tc.path, err)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("unexpected HOME dependency: %v", err)
 			}
-			wantPath := "PATH=" + ambientPath
-			if tc.path != "" {
-				wantPath = "PATH=" + tc.path + string(os.PathListSeparator) + ambientPath
-			}
-			if !slices.Contains(env, wantPath) {
-				t.Errorf("launch environment does not contain %q", wantPath)
+			if config.Runtime.Path != tc.path {
+				t.Errorf("runtime.path = %q, want %q unchanged", config.Runtime.Path, tc.path)
 			}
 		})
 	}
@@ -108,10 +175,9 @@ func TestRuntimePathPreservesEnvironmentOverrides(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(serviceDir, ".env"), []byte("PATH=/service/bin\nSERVICE_MODE=test\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config := &types.ServiceConfig{
-		Runtime: types.Runtime{Path: "~/node/bin"},
-		EnvFile: ".env",
-		Port:    4321,
+	config, err := LoadServiceConfig(writeServiceYAML(t, serviceDir, "runtime:\n  path: ~/node/bin\nenv_file: .env\nport: 4321\n"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
 	}
 	env, err := buildEnvironment(config, serviceDir)
 	if err != nil {
