@@ -12,6 +12,8 @@ Before any commit or PR, run `task ci`. If lint fails, run `task lint:fix` then 
 
 See [style.md](STYLE.md) — Go-FP + data-oriented design guidelines.
 
+Never reference ADRs in code comments (no "per ADR 0010", no "see docs/adr/..."). State the reason itself in the comment; ADRs are for decisions, not for explaining code.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
