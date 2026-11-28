@@ -10,13 +10,7 @@
 
 Lightweight service supervisor for your VPS. Register services, start them, keep them running.
 
-## Features
-
-* **Auto-restarts crashed processes** with exponential backoff, retrying indefinitely so a service self-heals whenever the underlying cause clears.
-* **Memory enforcement**, warns at soft thresholds, restarts at hard limits.
-* **Log rotation** out of the box; tail logs live with `eos logs --follow`.
-* **Boot persistence** via systemd (Linux) or launchd (macOS), system-wide or per-user, generates fitting unit file.
-* **Zero runtime dependencies** single static binary.
+eos restarts crashed processes with exponential backoff, retrying indefinitely so a service self-heals whenever the underlying cause clears. It enforces memory limits, warning at a soft threshold and restarting at a hard one, and rotates logs out of the box; tail them live with `eos logs --follow`. Boot persistence runs through systemd on Linux or launchd on macOS, system-wide or per-user, with eos generating the fitting unit file. eos itself ships as a single static binary with zero runtime dependencies.
 
 If you've used PM2 and want something smaller and self-contained, eos covers the core workflow.
 
@@ -56,23 +50,13 @@ eos status
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `eos add <path>` | Register a service from a directory |
-| `eos run <name>` | Start or restart a service |
-| `eos run -f <file>` | Register and start from a file in one step |
-| `eos run --once <name>` | Start only if not already running |
-| `eos status` | Show all services with status, memory, uptime |
-| `eos info <name>` | Detailed view: config, logs, process stats |
-| `eos logs <name>` | View output logs |
-| `eos logs --error <name>` | View error logs |
-| `eos logs --follow <name>` | Tail logs in real time |
-| `eos stop <name>` | Stop a service |
-| `eos reload <name>` | Zero-downtime reload (see below) |
+`eos add <path>` registers a service from a directory, and `eos run <name>` starts or restarts it; `eos run -f <file>` registers and starts from a file in one step, and `eos run --once <name>` starts only if it isn't already running. `eos status` shows every service with its status, memory, and uptime, while `eos info <name>` gives the detailed view: config, logs, process stats. `eos logs <name>` views output logs (`--error` for error logs, `--follow` to tail live), and `eos stop <name>` stops a service. `eos reload <name>` does a zero-downtime reload (see below).
 
 `eos system` covers boot startup, updates, uninstall, and version; run `eos system --help` for the full list.
 
 `eos config` covers viewing, scaffolding, and validating `~/.eos/config.yaml` (see [Configuration](#configuration)); run `eos config --help` for the full list.
+
+The full command reference, generated from the CLI itself, starts at [docs/reference/eos.md](docs/reference/eos.md).
 
 ## Zero-downtime Reload
 
@@ -225,6 +209,10 @@ The [eos-deploy-action](https://github.com/Elysium-Labs-EU/eos-deploy-action) ha
 ```
 
 Add it to your release workflow and pushes to `main` deploy automatically.
+
+## Architecture
+
+Curious how the CLI, daemon, and log sinks fit together? See [docs/architecture.md](docs/architecture.md).
 
 ## Security
 

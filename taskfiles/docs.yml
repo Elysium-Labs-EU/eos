@@ -1,0 +1,18 @@
+version: '3'
+
+tasks:
+  gen:
+    desc: Regenerate docs/reference/ from the live Cobra command tree
+    cmds:
+      - go run ./tools/gendocs
+
+  check:
+    desc: Fail if docs/reference/ is stale relative to the Cobra command tree
+    cmds:
+      - task: gen
+      - |
+        if ! git diff --quiet -- docs/reference; then
+          echo "docs/reference/ is stale -- run 'task docs:gen' and commit the result."
+          git diff --stat -- docs/reference
+          exit 1
+        fi

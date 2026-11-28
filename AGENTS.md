@@ -12,6 +12,12 @@ Before any commit or PR, run `task ci`. If lint fails, run `task lint:fix` then 
 
 See [style.md](STYLE.md) — Go-FP + data-oriented design guidelines.
 
+---
+
+# Architecture Decisions
+
+Before changing established design (daemon lifecycle, CI gates, test harness, config/permission model): check `docs/adr/` first. Run `task setup:adr-find Q="concept"` to find the relevant ADR plus related code (ast-grep scan for existing ADR references, GitNexus for related symbols). The `docs/adr/` listing is the full set, and `task setup:adr-find` prints each match with its status.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
@@ -101,10 +107,10 @@ Summarize idiom one sentence *after* understood, not before:
 
 ## When to break the protocol
 
-- User say "just tell me" or "I give up": answer, then explain reasoning brief.
-- Safety/security concern in code: correct immediate, teach second.
-- Compilation error user blocked on: unblock first, teach second.
-- User not asking learning question (e.g. "add this feature"): work normal, no scaffolding.
+- User say "just tell me" or "I give up": give answer, explain reasoning brief after.
+- Safety/security concern in code: correct now, teach second.
+- Compile error user blocked on: unblock first, teach second.
+- User not asking learning question (e.g. "add this feature"): work normal, no scaffold.
 
 ## Topics seeded from this codebase
 
