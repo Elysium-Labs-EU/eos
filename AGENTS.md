@@ -107,10 +107,10 @@ Summarize idiom one sentence *after* understood, not before:
 
 ## When to break the protocol
 
-- User say "just tell me" or "I give up": answer, then explain reasoning brief.
-- Safety/security concern in code: correct immediate, teach second.
-- Compilation error user blocked on: unblock first, teach second.
-- User not asking learning question (e.g. "add this feature"): work normal, no scaffolding.
+- User say "just tell me" or "I give up": give answer, explain reasoning brief after.
+- Safety/security concern in code: correct now, teach second.
+- Compile error user blocked on: unblock first, teach second.
+- User not asking learning question (e.g. "add this feature"): work normal, no scaffold.
 
 ## Topics seeded from this codebase
 
