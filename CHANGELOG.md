@@ -2,6 +2,24 @@
 
 All notable changes to eos are documented here.
 
+## [0.0.15] - 2026-11-28
+
+### Bug Fixes
+- Match changelog validation to git-cliff's bracketed, v-stripped header ([`62b0f82`](https://github.com/Elysium-Labs-EU/eos/commit/62b0f82937adb423065635e55fe5a23e986b4b0c))
+- Unblock required checks (x/net, Go 1.27.4, uutils, golangci-lint) (#355) ([`cb9e12c`](https://github.com/Elysium-Labs-EU/eos/commit/cb9e12c76e9c311663b0db7bd7405b81e426e37c))
+- Key dev-tools cache on Go version, not go.mod (#356) ([`b1d5552`](https://github.com/Elysium-Labs-EU/eos/commit/b1d555218c55fd9db97857e7d9ea6504aaa61ecb))
+- Resolve home-relative runtime paths consistently (#344) ([`0f070c8`](https://github.com/Elysium-Labs-EU/eos/commit/0f070c800d2455d0d0fd860ba52382da46873343))
+
+
+### Maintenance
+- Bump crate-ci/typos from 1.50.2 to 1.52.2 (#348) ([`31bc6df`](https://github.com/Elysium-Labs-EU/eos/commit/31bc6df20ed4a083398505feb445932d9454a1a3))
+- Bump actions/download-artifact from 8.0.1 to 8.0.2 (#340) ([`84a6cde`](https://github.com/Elysium-Labs-EU/eos/commit/84a6cdeb9a434625d1f7f4724946125b6b934d2f))
+- Bump SonarSource/sonarqube-scan-action from 8.2.1 to 8.5.1 (#358) ([`9f2164f`](https://github.com/Elysium-Labs-EU/eos/commit/9f2164f2366b23132e500f1c5bc6513b8f6a7a4b))
+- Bump the go-dependencies group across 1 directory with 5 updates (#357) ([`c7a48fc`](https://github.com/Elysium-Labs-EU/eos/commit/c7a48fcf7617975537357cb1debb974961418baf))
+- Bump softprops/action-gh-release from 3.0.3 to 3.0.4 (#349) ([`8a3d6df`](https://github.com/Elysium-Labs-EU/eos/commit/8a3d6df8d5372ab83b80e365257ba01da97e9467))
+- Bump actions/upload-artifact from 7.0.1 to 7.0.2 (#342) ([`225f58c`](https://github.com/Elysium-Labs-EU/eos/commit/225f58ce2cfcacecbaf07d348eaa92c9c89e441c))
+- Bump actions/setup-go from 7.0.0 to 7.1.0 (#353) ([`23a9ebf`](https://github.com/Elysium-Labs-EU/eos/commit/23a9ebf6e2e953a26d4e8dc60abe8a9ad9df3f5b))
+
 ## [0.0.14] - 2026-09-19
 
 ### Bug Fixes
